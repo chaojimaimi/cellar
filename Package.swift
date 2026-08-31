@@ -15,8 +15,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "CellarCore"),
-        // CLT-only 环境的本地验证工具（无 XCTest 依赖）：跑 §5.5 全部场景 + 真机冒烟。
-        // CI 与装有 Xcode 的环境仍以 swift test（XCTest）为准，两者场景保持同步。
+        // CLT-only 环境的本地验证工具（无 XCTest 依赖）：76 个场景 + 真机诊断。
+        // CellarCoreCheck 是唯一测试栈（公开仓库无 Tests/，本地 XCTest 已移除）。
         .executableTarget(
             name: "CellarCoreCheck",
             dependencies: ["CellarCore"]
@@ -33,10 +33,6 @@ let package = Package(
         .executableTarget(
             name: "cellar-daemon",
             dependencies: ["CellarCore"]
-        ),
-        .testTarget(
-            name: "CellarCoreTests",
-            dependencies: ["CellarCore", "CellarCLI"]
         ),
     ],
     swiftLanguageModes: [.v6]
