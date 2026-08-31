@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 46 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35 + WP3 用例 36–46）
+//   swift run CellarCoreCheck          # 跑全部 59 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35 + WP3 用例 36–46 + WP4 用例 47–59）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -38,9 +38,11 @@ private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: S
     check(actual == expected, scenario, actual == expected ? message : "\(message)（实际 \(actual)，期望 \(expected)）")
 }
 
-/// 泛化断言：抛出的错误须等于 `expected`（SMCError / BackendError / BatteryMonitorError 均 Equatable）。
+/// 泛化断言：抛出的错误须等于 `expected`（SMCError / BackendError / BatteryMonitorError /
+/// LimitPolicyError 均 Equatable）。
 /// 前导点成员语法（`.keyNotFound(...)`）无法在泛型参数上解析类型，故提供
-/// SMCError/BackendError/BatteryMonitorError 三个具体重载（WP1/WP2 既有调用点保持零改动）；
+/// SMCError/BackendError/BatteryMonitorError/LimitPolicyError 四个具体重载
+/// （WP1/WP2 既有调用点保持零改动）；
 /// ⚠️ 用例 46 断言 `.serviceNotFound` 时因 SMCError 亦有同名 case，必须写全类型前缀
 /// `BatteryMonitorError.serviceNotFound`，否则前导点歧义编译失败。
 /// `expected` 为 nil 时仅要求抛错、不校验类型。
@@ -94,6 +96,26 @@ private func expectThrows<T>(
         _ = try body()
         check(false, scenario, "\(message)——但未抛错")
     } catch let error as BatteryMonitorError {
+        if let expected {
+            check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
+        } else {
+            check(true, scenario, message)
+        }
+    } catch {
+        check(false, scenario, "\(message)——实际 \(error)")
+    }
+}
+
+private func expectThrows<T>(
+    _ body: @autoclosure () throws -> T,
+    as expected: LimitPolicyError?,
+    _ scenario: String,
+    _ message: String
+) {
+    do {
+        _ = try body()
+        check(false, scenario, "\(message)——但未抛错")
+    } catch let error as LimitPolicyError {
         if let expected {
             check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
         } else {
@@ -179,6 +201,31 @@ private struct ThrowingPropertySource: BatteryPropertySource {
     func properties() throws -> [String: Any] { throw error }
 }
 
+// MARK: - WP4 mock（用例 47–59）
+
+/// WP4 内存态后端 mock（评审 E-3 契约：name="tahoe"、keyNames=["CHTE"]）：
+/// 可变 enabled 内部态 + 写调用计数 + 可注入"写不生效"故障开关（ignoreWrites）。
+/// 纯内存，不触碰任何 SMC/IOKit 传输。与 Tests/CellarCoreTests/LimitControllerTests.swift
+/// 的内联 MockChargingBackend 行为一致，两边必须同步修改。
+private final class MockChargingBackend: ChargingBackend, @unchecked Sendable {
+    var name: String { "tahoe" }
+    var keyNames: [String] { ["CHTE"] }
+    private(set) var enabled: Bool
+    private(set) var writeCount = 0
+    var ignoreWrites = false
+
+    init(enabled: Bool) {
+        self.enabled = enabled
+    }
+
+    func chargingEnabled() throws -> Bool { enabled }
+
+    func setChargingEnabled(_ enabled: Bool) throws {
+        writeCount += 1
+        if !ignoreWrites { self.enabled = enabled }
+    }
+}
+
 /// WP3 fixture 基准字典：与 Tests/CellarCoreTests/BatterySnapshotTests.swift 的
 /// makeSampleProps() 值一致（规格 §4），两边必须同步修改。工厂函数而非 static let
 /// （评审 C-2：Swift 6 下 static let 存非 Sendable 的 [String: Any] 编译不过）。
@@ -219,7 +266,7 @@ struct Main {
         if CommandLine.arguments.contains("--battery") { battery(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 46 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 59 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -839,6 +886,177 @@ struct Main {
             expectThrows(try monitor.snapshot(),
                          as: BatteryMonitorError.serviceNotFound,
                          "用例46", "source 的 .serviceNotFound 原样传播")
+        }
+
+        // MARK: - 场景（WP4 规格 §3 用例 47–59）
+        // 纯逻辑决策：不经 SMC/IOKit 传输，全部经文件作用域 MockChargingBackend 内存态。
+
+        // 用例 47：合法策略 upperLimit=80, hysteresis=2 → 属性可读。
+        do {
+            let policy = try LimitPolicy(upperLimit: 80, hysteresis: 2)
+            check(policy.upperLimit == 80 && policy.hysteresis == 2, "用例47", "upperLimit=80/hysteresis=2 构造成功且属性可读")
+        }
+
+        // 用例 48：构造边界——59→floor；101→ceiling；hys=0 与 21→outOfRange。
+        do {
+            expectThrows(try LimitPolicy(upperLimit: 59, hysteresis: 2),
+                         as: LimitPolicyError.upperLimitBelowFloor(minimum: 60),
+                         "用例48", "59 抛 .upperLimitBelowFloor(minimum:60)")
+            expectThrows(try LimitPolicy(upperLimit: 101, hysteresis: 2),
+                         as: LimitPolicyError.upperLimitAboveCeiling(maximum: 100),
+                         "用例48", "101 抛 .upperLimitAboveCeiling(maximum:100)")
+            expectThrows(try LimitPolicy(upperLimit: 80, hysteresis: 0),
+                         as: LimitPolicyError.hysteresisOutOfRange(validRange: 1...20),
+                         "用例48", "hys=0 抛 .hysteresisOutOfRange(1...20)")
+            expectThrows(try LimitPolicy(upperLimit: 80, hysteresis: 21),
+                         as: LimitPolicyError.hysteresisOutOfRange(validRange: 1...20),
+                         "用例48", "hys=21 抛 .hysteresisOutOfRange(1...20)")
+        }
+
+        // 用例 49：决策——电池供电（!external, enabled=true, percent=50）→ noop。
+        do {
+            let policy = try LimitPolicy(upperLimit: 80, hysteresis: 2)
+            let action = policy.decide(context: ChargingContext(percent: 50, externalConnected: false, chargingEnabled: true))
+            check(action == .noop, "用例49", "电池供电恒 noop（无可控制）")
+        }
+
+        // 用例 50：决策停充侧——(external, enabled=true, percent∈{79, 80, 85, 100})：
+        // 79→noop（未到上限）；80/85/100→disable（>= 判定，含 percent=100 边界）。
+        do {
+            let policy = try LimitPolicy(upperLimit: 80, hysteresis: 2)
+            check(policy.decide(context: ChargingContext(percent: 79, externalConnected: true, chargingEnabled: true)) == .noop,
+                  "用例50", "percent=79（<80）→ noop")
+            var ok = true
+            for percent in [80, 85, 100] {
+                if policy.decide(context: ChargingContext(percent: percent, externalConnected: true, chargingEnabled: true)) != .disableCharging {
+                    ok = false
+                }
+            }
+            check(ok, "用例50", "percent∈{80, 85, 100}（>=80）→ disable")
+        }
+
+        // 用例 51：决策恢复侧——(external, enabled=false, percent∈{0, 50, 77}) 皆 enable
+        // （严格小于恢复阈值 78，含 percent=0 边界）。
+        do {
+            let policy = try LimitPolicy(upperLimit: 80, hysteresis: 2)
+            var ok = true
+            for percent in [0, 50, 77] {
+                if policy.decide(context: ChargingContext(percent: percent, externalConnected: true, chargingEnabled: false)) != .enableCharging {
+                    ok = false
+                }
+            }
+            check(ok, "用例51", "percent∈{0, 50, 77}（<78）→ enable")
+        }
+
+        // 用例 52：决策保持侧——(external, enabled=false, percent∈{78, 79}) 皆 noop
+        // （percent == 恢复阈值不恢复，边界定版）。
+        do {
+            let policy = try LimitPolicy(upperLimit: 80, hysteresis: 2)
+            var ok = true
+            for percent in [78, 79] {
+                if policy.decide(context: ChargingContext(percent: percent, externalConnected: true, chargingEnabled: false)) != .noop {
+                    ok = false
+                }
+            }
+            check(ok, "用例52", "percent∈{78, 79}（>=78）→ noop（保持区间）")
+        }
+
+        // 用例 53：地板角点 upper=60, hys=20（恢复阈值 40，不受 60 地板约束，评审 A-2）：
+        // stopped+39→enable；stopped+40→noop；enabled+60→disable。
+        do {
+            let policy = try LimitPolicy(upperLimit: 60, hysteresis: 20)
+            check(policy.decide(context: ChargingContext(percent: 39, externalConnected: true, chargingEnabled: false)) == .enableCharging,
+                  "用例53", "upper=60/hys=20：stopped+39（<40）→ enable")
+            check(policy.decide(context: ChargingContext(percent: 40, externalConnected: true, chargingEnabled: false)) == .noop,
+                  "用例53", "upper=60/hys=20：stopped+40（==40）→ noop")
+            check(policy.decide(context: ChargingContext(percent: 60, externalConnected: true, chargingEnabled: true)) == .disableCharging,
+                  "用例53", "upper=60/hys=20：enabled+60（>=60）→ disable")
+        }
+
+        // 用例 54：sleepAction 三断言——{external+enabled→disable}、{!external→noop}、{external+stopped→noop}。
+        do {
+            check(PowerEventPolicy.sleepAction(externalConnected: true, currentChargingEnabled: true) == .disableCharging,
+                  "用例54", "外接且允许充电 → 停充")
+            check(PowerEventPolicy.sleepAction(externalConnected: false, currentChargingEnabled: true) == .noop,
+                  "用例54", "电池供电 → noop")
+            check(PowerEventPolicy.sleepAction(externalConnected: true, currentChargingEnabled: false) == .noop,
+                  "用例54", "外接但已停充 → noop")
+        }
+
+        // 用例 55：requiresReevaluation 七种事件皆 true（事件即触发契约，评审 A-1）。
+        do {
+            let events: [PowerEvent] = [
+                .powerConnected, .powerDisconnected,
+                .batteryLevelChanged(percent: 50), .periodicTick,
+                .systemSleep, .systemWake, .policyChanged,
+            ]
+            check(events.allSatisfy { PowerEventPolicy.requiresReevaluation(on: $0) },
+                  "用例55", "七种事件 requiresReevaluation 恒 true")
+        }
+
+        // 用例 56：enforce noop——context=电池供电 → 返回 .noop 且 backend 调用计数 == 0。
+        do {
+            let controller = LimitController(policy: try LimitPolicy(upperLimit: 80, hysteresis: 2))
+            let backend = MockChargingBackend(enabled: true)
+            let action = try controller.enforce(
+                context: ChargingContext(percent: 50, externalConnected: false, chargingEnabled: true),
+                backend: backend
+            )
+            check(action == .noop && backend.writeCount == 0, "用例56", "noop 返回且零 backend 写调用")
+        }
+
+        // 用例 57：enforce disable/enable 两段 context，mock 正常生效——状态翻转 + 回读一致 + 返回对应动作。
+        do {
+            let controller = LimitController(policy: try LimitPolicy(upperLimit: 80, hysteresis: 2))
+            let backend = MockChargingBackend(enabled: true)
+
+            let disable = try controller.enforce(
+                context: ChargingContext(percent: 80, externalConnected: true, chargingEnabled: true),
+                backend: backend
+            )
+            check(disable == .disableCharging && backend.enabled == false && backend.writeCount == 1,
+                  "用例57", "段一：disable 生效（态翻转 + 回读一致 + 返回 .disableCharging）")
+
+            let enable = try controller.enforce(
+                context: ChargingContext(percent: 77, externalConnected: true, chargingEnabled: false),
+                backend: backend
+            )
+            check(enable == .enableCharging && backend.enabled == true && backend.writeCount == 2,
+                  "用例57", "段二：enable 生效（态翻转 + 回读一致 + 返回 .enableCharging）")
+        }
+
+        // 用例 58：enforce 校验失败（双向）——故障开关下 desired=false/actual=true 与
+        // desired=true/actual=false 皆抛 .verifyFailed（key=="CHTE"）。
+        do {
+            let controller = LimitController(policy: try LimitPolicy(upperLimit: 80, hysteresis: 2))
+
+            let backendDisable = MockChargingBackend(enabled: true)
+            backendDisable.ignoreWrites = true
+            expectThrows(try controller.enforce(
+                context: ChargingContext(percent: 80, externalConnected: true, chargingEnabled: true),
+                backend: backendDisable
+            ), as: BackendError.verifyFailed(key: "CHTE", desired: false, actual: true),
+            "用例58", "写停充不生效 → .verifyFailed(CHTE, desired:false, actual:true)")
+            check(backendDisable.writeCount == 1, "用例58", "故障开关只吞生效，写调用已发出")
+
+            let backendEnable = MockChargingBackend(enabled: false)
+            backendEnable.ignoreWrites = true
+            expectThrows(try controller.enforce(
+                context: ChargingContext(percent: 77, externalConnected: true, chargingEnabled: false),
+                backend: backendEnable
+            ), as: BackendError.verifyFailed(key: "CHTE", desired: true, actual: false),
+            "用例58", "写使能不生效 → .verifyFailed(CHTE, desired:true, actual:false)")
+            check(backendEnable.writeCount == 1, "用例58", "故障开关只吞生效，写调用已发出")
+        }
+
+        // 用例 59：updatePolicy 80→90 后，(external, stopped, 85) 从 noop 变 enable——新策略生效。
+        do {
+            var controller = LimitController(policy: try LimitPolicy(upperLimit: 80, hysteresis: 2))
+            let stoppedAt85 = ChargingContext(percent: 85, externalConnected: true, chargingEnabled: false)
+            check(controller.decide(context: stoppedAt85) == .noop, "用例59", "旧策略（阈值 78）：85>=78 → noop")
+            try controller.updatePolicy(LimitPolicy(upperLimit: 90, hysteresis: 2))
+            check(controller.policy.upperLimit == 90 && controller.decide(context: stoppedAt85) == .enableCharging,
+                  "用例59", "新策略（阈值 88）：85<88 → enable，且 policy 已换为 upperLimit=90")
         }
     }
 
