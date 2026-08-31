@@ -30,7 +30,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CellarCoreTests",
-            dependencies: ["CellarCore"]
+            dependencies: ["CellarCore", "CellarCLI"]
         ),
     ],
     swiftLanguageModes: [.v6]

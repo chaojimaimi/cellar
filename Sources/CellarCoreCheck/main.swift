@@ -5,10 +5,11 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 62 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62）
+//   swift run CellarCoreCheck          # 跑全部 68 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
+//   swift run CellarCoreCheck --doctor-report  # doctor 报告生成纯函数演示（内存构造，无需真机）
 //
 // 注意：本工具使用字面偏移量（规格 §5.3）而非 SMCParam 内部常量——
 // 作为对实现常量的独立交叉验证（第二双眼睛）。
@@ -265,9 +266,10 @@ struct Main {
         if CommandLine.arguments.contains("--smoke") { smoke(); return }
         if CommandLine.arguments.contains("--write-perm") { writePerm(); return }
         if CommandLine.arguments.contains("--battery") { battery(); return }
+        if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 62 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 68 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -1144,6 +1146,128 @@ struct Main {
             check(backend.enabled == false && backend.writeCount == 1,
                   "用例62", "perform 应用动作且回读一致")
         }
+
+        // MARK: - 场景（WP5 规格 §4 用例 63–68）
+        // doctor 报告生成纯函数：DoctorInputs 内存构造，直接调 generate 与 exitCode；
+        // ConflictScan.classify 用字面数组（本工具不触碰真实 LaunchDaemons 等目录）。
+
+        // 用例 63：ConflictScan.classify 命中——exact 白名单标识 / generic 词根
+        // （大小写不敏感）/ 去重排序 / hasConflict。
+        do {
+            let result = ConflictScan.classify([
+                "com.foo.battery.helper",
+                "batt.daemon.plist",
+                "com.apphousekitchen.aldente-pro.helper",
+                "BaTTERy-mon.plist",
+                "org.smc.tool",
+                "my.power.monitor",
+            ])
+            expectEqual(result.exact, ["batt.daemon.plist", "com.apphousekitchen.aldente-pro.helper"],
+                        "用例63", "exact 命中条目标识（batt.daemon + apphousekitchen/aldente-pro；按条目名去重排序）")
+            expectEqual(result.generic,
+                        ["BaTTERy-mon.plist", "com.foo.battery.helper", "my.power.monitor", "org.smc.tool"],
+                        "用例63", "generic 词根命中（大小写不敏感，去重排序）")
+            check(result.hasConflict, "用例63", "hasConflict == true")
+        }
+
+        // 用例 64：classify 排除 com.apple. 前缀（系统条目豁免，零命中）。
+        do {
+            let result = ConflictScan.classify(["com.apple.powerd.plist", "com.apple.batterd"])
+            check(result.exact.isEmpty && result.generic.isEmpty && !result.hasConflict,
+                  "用例64", "com.apple. 前缀条目全部豁免（零命中）")
+        }
+
+        // 用例 65–68 共用快照 fixture（WP3 fixture 经解析器构造，与 BatterySnapshotTests 一致）。
+        let healthySnapshot: BatterySnapshot
+        do {
+            healthySnapshot = try BatterySnapshotParser.parse(batteryProps(), timestamp: timeZero)
+        } catch {
+            check(false, "用例65", "快照 fixture 构造失败：\(error)")
+            return
+        }
+
+        // 用例 65：Doctor 全健康（root + detected + 控制键已知 + 快照 + 零命中）。
+        do {
+            let inputs = DoctorInputs(
+                isRoot: true,
+                smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: false,
+                chargingError: nil,
+                snapshot: healthySnapshot,
+                snapshotError: nil,
+                conflict: ConflictScanResult(exact: [], generic: [])
+            )
+            let report = DoctorReportGenerator.generate(inputs)
+            check(report.checks.count == 7 && report.checks.allSatisfy({ $0.status == .pass }),
+                  "用例65", "7 checks 全 pass")
+            check(report.worstStatus == .pass && report.exitCode == 0,
+                  "用例65", "worstStatus==pass && exitCode==0")
+        }
+
+        // 用例 66：非 root（其余同 65）——检查 1/7 info，不抬升 worstStatus/退出码。
+        do {
+            let inputs = DoctorInputs(
+                isRoot: false,
+                smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: false,
+                chargingError: nil,
+                snapshot: healthySnapshot,
+                snapshotError: nil,
+                conflict: ConflictScanResult(exact: [], generic: [])
+            )
+            let report = DoctorReportGenerator.generate(inputs)
+            check(report.checks[0].status == .info && report.checks[6].status == .info,
+                  "用例66", "检查 1/7 为 info")
+            check(report.checks[1...5].allSatisfy({ $0.status == .pass }),
+                  "用例66", "其余五项 pass")
+            check(report.worstStatus == .pass && report.exitCode == 0,
+                  "用例66", "info 不抬升 worstStatus/exitCode")
+        }
+
+        // 用例 67：共存命中（exact+generic 各一）——检查 6 WARN，
+        // detail 含条目名与 generic"疑似"标注（power 词根）。
+        do {
+            let inputs = DoctorInputs(
+                isRoot: true,
+                smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: true,
+                chargingError: nil,
+                snapshot: healthySnapshot,
+                snapshotError: nil,
+                conflict: ConflictScanResult(exact: ["batt.daemon"], generic: ["my.power.monitor"])
+            )
+            let report = DoctorReportGenerator.generate(inputs)
+            let check6 = report.checks[5]
+            check(check6.status == .warn, "用例67", "检查 6 WARN")
+            check(check6.detail.contains("batt.daemon") && check6.detail.contains("my.power.monitor（疑似）"),
+                  "用例67", "detail 含条目名与 generic 疑似标注")
+            check(report.worstStatus == .warn && report.exitCode == 1,
+                  "用例67", "worstStatus==warn && exitCode==1")
+        }
+
+        // 用例 68：后端不可用（noneAvailable）+ 控制键失败 + 快照失败——
+        // 检查 3 INFO（只读模式；判定规则以规格 §3 表格为准）、检查 4/5 FAIL。
+        do {
+            let inputs = DoctorInputs(
+                isRoot: true,
+                smcConnected: true,
+                probe: .noneAvailable,
+                chargingEnabled: nil,
+                chargingError: .transportFailure(kr: badArgumentKR),
+                snapshot: nil,
+                snapshotError: .serviceNotFound,
+                conflict: ConflictScanResult(exact: [], generic: [])
+            )
+            let report = DoctorReportGenerator.generate(inputs)
+            check(report.checks[2].status == .info, "用例68", "检查 3 INFO（noneAvailable → 只读模式）")
+            check(report.checks[3].status == .fail && report.checks[4].status == .fail,
+                  "用例68", "检查 4/5 FAIL（控制键/快照读取失败）")
+            check(report.worstStatus == .fail && report.exitCode == 2,
+                  "用例68", "worstStatus==fail && exitCode==2")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）
@@ -1200,5 +1324,44 @@ struct Main {
             print("❌ 探测失败：\(error)")
             exit(1)
         }
+    }
+
+    // MARK: - doctor 报告生成演示（--doctor-report）
+    // DoctorInputs 内存构造（与场景 65/67 相同构造），直接调 DoctorReportGenerator；
+    // 渲染格式与 cellar doctor 可执行层一致。纯函数演示，无需真机、不触碰任何系统状态。
+
+    static func doctorReport() {
+        print("=== doctor 报告生成演示（内存构造，只读）===")
+        let healthy = DoctorInputs(
+            isRoot: true,
+            smcConnected: true,
+            probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+            chargingEnabled: false,
+            chargingError: nil,
+            snapshot: try? BatterySnapshotParser.parse(batteryProps(), timestamp: Date()),
+            snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: [])
+        )
+        renderDoctorDemo(DoctorReportGenerator.generate(healthy))
+
+        let coexisting = DoctorInputs(
+            isRoot: false,
+            smcConnected: true,
+            probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+            chargingEnabled: false,
+            chargingError: nil,
+            snapshot: try? BatterySnapshotParser.parse(batteryProps(), timestamp: Date()),
+            snapshotError: nil,
+            conflict: ConflictScanResult(exact: ["batt.daemon"], generic: ["my.power.monitor"])
+        )
+        renderDoctorDemo(DoctorReportGenerator.generate(coexisting))
+        exit(0)
+    }
+
+    private static func renderDoctorDemo(_ report: DoctorReport) {
+        for check in report.checks {
+            print("[\(check.status.rawValue.uppercased())] \(check.name)：\(check.detail)")
+        }
+        print("worstStatus=\(report.worstStatus.rawValue) · exitCode=\(report.exitCode)\n")
     }
 }

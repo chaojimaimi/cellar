@@ -1,0 +1,227 @@
+/// 诊断报告类型（WP5 规格 §2/§3）：报告生成（纯函数，CellarCore 可测）与渲染
+/// （可执行层只渲染）严格分离；exitCode 计算落 CellarCore。
+///
+/// 严重序：pass < info < warn < fail；info 不参与 worstStatus 与退出码——
+/// 健康机器无 sudo 跑 doctor 即 0 分，脚本化可区分"仅非 root"与"真异常"（评审 P1-3）。
+
+/// 检查状态四级。
+public enum CheckStatus: String, Equatable, Sendable {
+    case pass, info, warn, fail
+}
+
+/// 单项检查结果。
+public struct DoctorCheck: Equatable, Sendable {
+    public let name: String
+    public let status: CheckStatus
+    public let detail: String
+
+    public init(name: String, status: CheckStatus, detail: String) {
+        self.name = name
+        self.status = status
+        self.detail = detail
+    }
+}
+
+/// doctor 报告：固定顺序七项检查（身份 → SMC 服务 → 后端 → 控制键 → 电池 → 共存 → 写权限）+ 汇总。
+public struct DoctorReport: Equatable, Sendable {
+    public let checks: [DoctorCheck]
+
+    public init(checks: [DoctorCheck]) {
+        self.checks = checks
+    }
+
+    /// 最严重状态（fail > warn > pass）；info 不参与（不抬升，评审 P1-3）。
+    public var worstStatus: CheckStatus {
+        var worst: CheckStatus = .pass
+        for check in checks where check.status != .info {
+            switch check.status {
+            case .fail:
+                return .fail
+            case .warn:
+                worst = .warn
+            case .pass, .info:
+                break
+            }
+        }
+        return worst
+    }
+
+    /// 退出码：fail→2；warn→1；其余→0（评审 P1-4，CellarCore 可测）。
+    public var exitCode: Int {
+        switch worstStatus {
+        case .fail: return 2
+        case .warn: return 1
+        case .pass, .info: return 0
+        }
+    }
+}
+
+/// 后端探测结果（结构化失败分类，评审 P1-1；失败携带原始错误，非字符串）。
+public enum ProbeOutcome: Equatable, Sendable {
+    case detected(name: String, keyNames: [String])
+    /// `.noBackendAvailable`（预期降级只读，非故障）。
+    case noneAvailable
+    /// `makeDefault` 失败：serviceNotFound / openFailed。
+    case serviceUnavailable
+    /// 探测传输故障（结构化，原样保留 SMCError）。
+    case failed(SMCError)
+}
+
+/// doctor 检查输入（可执行层组装，报告生成纯函数消费）。
+public struct DoctorInputs: Sendable {
+    /// 检查 1/7：运行是否 root。
+    public let isRoot: Bool
+    /// 检查 2：AppleSMC 打开成功。
+    public let smcConnected: Bool
+    /// 检查 3。
+    public let probe: ProbeOutcome
+    /// 检查 4：控制键状态（读取失败时为 nil，原因见 chargingError）。
+    public let chargingEnabled: Bool?
+    /// 检查 4 失败原因。
+    public let chargingError: SMCError?
+    /// 检查 5。
+    public let snapshot: BatterySnapshot?
+    /// 检查 5 失败原因（结构化）。
+    public let snapshotError: BatteryMonitorError?
+    /// 检查 6。
+    public let conflict: ConflictScanResult
+
+    public init(
+        isRoot: Bool,
+        smcConnected: Bool,
+        probe: ProbeOutcome,
+        chargingEnabled: Bool?,
+        chargingError: SMCError?,
+        snapshot: BatterySnapshot?,
+        snapshotError: BatteryMonitorError?,
+        conflict: ConflictScanResult
+    ) {
+        self.isRoot = isRoot
+        self.smcConnected = smcConnected
+        self.probe = probe
+        self.chargingEnabled = chargingEnabled
+        self.chargingError = chargingError
+        self.snapshot = snapshot
+        self.snapshotError = snapshotError
+        self.conflict = conflict
+    }
+}
+
+/// 检查/报告生成器：纯函数，输入 → 七项检查报告（顺序与判定规则见规格 §3）。
+public enum DoctorReportGenerator {
+    public static func generate(_ inputs: DoctorInputs) -> DoctorReport {
+        DoctorReport(checks: [
+            identity(inputs),
+            smcService(inputs),
+            backendProbe(inputs),
+            chargingKey(inputs),
+            batteryReading(inputs),
+            coexistence(inputs),
+            writePermission(inputs),
+        ])
+    }
+
+    // MARK: - 检查 1：运行身份
+
+    private static func identity(_ inputs: DoctorInputs) -> DoctorCheck {
+        if inputs.isRoot {
+            return DoctorCheck(name: "运行身份", status: .pass, detail: "具备写入能力")
+        }
+        return DoctorCheck(name: "运行身份", status: .info, detail: "读取可用；写入需 root（限充控制经 daemon）")
+    }
+
+    // MARK: - 检查 2：SMC 服务
+
+    private static func smcService(_ inputs: DoctorInputs) -> DoctorCheck {
+        if inputs.smcConnected {
+            return DoctorCheck(name: "SMC 服务", status: .pass, detail: "AppleSMC 连接正常")
+        }
+        return DoctorCheck(name: "SMC 服务", status: .fail, detail: "AppleSMC 连接失败（服务未找到或打开失败）")
+    }
+
+    // MARK: - 检查 3：后端探测
+
+    private static func backendProbe(_ inputs: DoctorInputs) -> DoctorCheck {
+        switch inputs.probe {
+        case .detected(let name, let keyNames):
+            return DoctorCheck(
+                name: "后端探测", status: .pass,
+                detail: "探测到 \(name) 后端（控制键：\(keyNames.joined(separator: ", "))）"
+            )
+        case .noneAvailable:
+            return DoctorCheck(
+                name: "后端探测", status: .info,
+                detail: "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）"
+            )
+        case .serviceUnavailable:
+            return DoctorCheck(
+                name: "后端探测", status: .fail,
+                detail: "SMC 服务不可用，无法探测控制后端"
+            )
+        case .failed(let error):
+            return DoctorCheck(name: "后端探测", status: .fail, detail: "\(error)")
+        }
+    }
+
+    // MARK: - 检查 4：控制键状态
+
+    private static func chargingKey(_ inputs: DoctorInputs) -> DoctorCheck {
+        if let error = inputs.chargingError {
+            return DoctorCheck(name: "控制键状态", status: .fail, detail: "\(error)")
+        }
+        if let enabled = inputs.chargingEnabled {
+            return DoctorCheck(
+                name: "控制键状态", status: .pass,
+                detail: enabled ? "充电使能" : "已停充"
+            )
+        }
+        // 输入域外（错误与值皆缺）：按失败呈现，不静默。
+        return DoctorCheck(name: "控制键状态", status: .fail, detail: "控制键状态未知（读取异常）")
+    }
+
+    // MARK: - 检查 5：电池读数（检查 5 定版为 FAIL：电池工具无电池读数即失败，评审 P0-3）
+
+    private static func batteryReading(_ inputs: DoctorInputs) -> DoctorCheck {
+        if let snapshot = inputs.snapshot {
+            return DoctorCheck(
+                name: "电池读数", status: .pass,
+                detail: "电量 \(snapshot.percent)%（\(snapshot.isCharging ? "充电中" : "未充电")）"
+            )
+        }
+        if let error = inputs.snapshotError {
+            return DoctorCheck(name: "电池读数", status: .fail, detail: "\(error)")
+        }
+        // 输入域外（快照与错误皆缺）：按失败呈现，不静默。
+        return DoctorCheck(name: "电池读数", status: .fail, detail: "无电池读数")
+    }
+
+    // MARK: - 检查 6：共存检测
+
+    private static func coexistence(_ inputs: DoctorInputs) -> DoctorCheck {
+        guard inputs.conflict.hasConflict else {
+            return DoctorCheck(name: "共存检测", status: .pass, detail: "未检测到其他充电管理工具")
+        }
+        var entries: [String] = []
+        entries.append(contentsOf: inputs.conflict.exact)
+        for name in inputs.conflict.generic {
+            // 通用词根兜底命中（尤其 power 词根易误报）在报告 detail 标注"疑似"。
+            entries.append(name.lowercased().contains("power") ? "\(name)（疑似）" : name)
+        }
+        return DoctorCheck(
+            name: "共存检测", status: .warn,
+            detail: "检测到 \(entries.joined(separator: "、"))：控制操作前请退出其他充电管理工具"
+        )
+    }
+
+    // MARK: - 检查 7：写权限
+
+    private static func writePermission(_ inputs: DoctorInputs) -> DoctorCheck {
+        if inputs.isRoot {
+            return DoctorCheck(name: "写权限", status: .pass, detail: "具备")
+        }
+        return DoctorCheck(
+            name: "写权限", status: .info,
+            detail: "不具备（写入需 root；安装 daemon 后经 XPC 执行）"
+        )
+    }
+}
