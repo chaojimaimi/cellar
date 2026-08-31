@@ -25,13 +25,24 @@ public struct LimitController: Sendable {
     /// 决策 + 应用 + 回读校验（评审 B-3 定版）。非 mutating（评审 C-2：无内部状态）。
     ///
     /// - noop → 不触碰 backend，直接返回。
-    /// - enable/disable → `backend.setChargingEnabled` → **回读校验**：key 取
-    ///   `backend.keyNames.first ?? backend.name`；回读自身抛错（传输故障）**原样透传**，
-    ///   不得包装；值不一致 → `BackendError.verifyFailed(key:desired:actual:)`。
+    /// - enable/disable → 经 `perform(_:backend:)` 执行（写后回读校验）。
     /// - ⚠️ 若外部写者（同类工具/手动 smc）在写读之间翻转状态，verifyFailed 触发是
     ///   **期望行为**（冲突显式化），WP6 不得把它误诊为协议故障。
     public func enforce(context: ChargingContext, backend: any ChargingBackend) throws -> ChargingAction {
         let action = decide(context: context)
+        try perform(action, backend: backend)
+        return action
+    }
+
+    /// 执行单个动作并回读校验——所有"外部决策的动作"（如 PowerEventPolicy.sleepAction
+    /// 产出的睡前停充）共用的同一校验规格（审计中-2：避免 WP6 复制校验逻辑或伪造 context）。
+    ///
+    /// - noop → 不触碰 backend。
+    /// - enable/disable → `backend.setChargingEnabled` → **回读校验**：key 取
+    ///   `backend.keyNames.first ?? backend.name`；回读自身抛错（传输故障）**原样透传**，
+    ///   不得包装；值不一致 → `BackendError.verifyFailed(key:desired:actual:)`。
+    @discardableResult
+    public func perform(_ action: ChargingAction, backend: any ChargingBackend) throws -> ChargingAction {
         guard action != .noop else { return .noop }
 
         let desired = action == .enableCharging

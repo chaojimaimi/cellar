@@ -17,36 +17,37 @@ public struct LegacyBackend: ChargingBackend, Sendable {
     public var keyNames: [String] { ["CH0B", "CH0C"] }
 
     public func chargingEnabled() throws -> Bool {
-        let bytes = try client.read("CH0B")
-        // 防御：先验证长度恰为 1 再取下标（长度异常按未知状态显式报错，禁止越界/猜测）。
-        guard bytes.count == 1 else {
-            throw BackendError.unknownChargingState(key: "CH0B", bytes: bytes)
+        // 双键一致性校验（审计中-1）：CH0B 与 CH0C 分裂时显式报错，
+        // 禁止只读 CH0B 把分裂状态伪装成正常态（enforce 回读会被误导）。
+        let b = try client.read("CH0B")
+        let c = try client.read("CH0C")
+        guard b.count == 1, c.count == 1, b[0] == c[0] else {
+            throw BackendError.legacyKeysInconsistent(ch0b: b.first ?? 0xFF,
+                                                      ch0c: c.first ?? 0xFF)
         }
-        switch bytes[0] {
+        switch b[0] {
         case 0x00:
             return true
         case 0x02:
             return false
         default:
-            throw BackendError.unknownChargingState(key: "CH0B", bytes: bytes)
+            throw BackendError.unknownChargingState(key: "CH0B", bytes: [b[0]])
         }
     }
 
     public func setChargingEnabled(_ enabled: Bool) throws {
         let value: UInt8 = enabled ? 0x00 : 0x02
-        // 1. 预读 CH0B 旧值：仅用于失败补偿；读失败不阻断主流程（try?，评审 P1-4）。
-        let previous = try? client.read("CH0B")
+        // 1. 预读 CH0B 旧值：补偿的前提条件。预读失败 → fail-fast 拒绝双键写
+        //    （审计中-1：无旧值就没有回滚能力，不允许在无补偿条件下开写）。
+        let previous = try client.read("CH0B")
         // 2. 固定顺序写：先 CH0B 后 CH0C（各写同值）。
-        //    CH0B 自身失败 → 原样上抛 SMCError（无补偿必要）。
         try client.write("CH0B", bytes: [value])
         do {
             try client.write("CH0C", bytes: [value])
         } catch let cause as SMCError {
-            // 3. CH0C 失败 → 尽力回写 CH0B 旧值（回写本身失败不覆盖主错误，
-            //    仍以 .partialWrite 上报第一键已写 + 第二键失败的事实）。
-            if let previous {
-                _ = try? client.write("CH0B", bytes: previous)
-            }
+            // 3. CH0C 失败 → 回写 CH0B 旧值（补偿）。回写本身失败不覆盖主错误，
+            //    仍以 .partialWrite 上报第一键已写 + 第二键失败的事实。
+            _ = try? client.write("CH0B", bytes: previous)
             throw BackendError.partialWrite(failedKey: "CH0C", cause: cause)
         }
     }

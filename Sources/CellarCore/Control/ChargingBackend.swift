@@ -23,6 +23,8 @@ public enum BackendError: Error, Equatable, Sendable {
     case noBackendAvailable
     /// Legacy 双键写部分失败：第一键已写、第二键失败且已尽力回滚第一键旧值。
     case partialWrite(failedKey: String, cause: SMCError)
+    /// Legacy 双键状态分裂：CH0B 与 CH0C 读值不一致（审计中-1 补充；显式报错，禁止只读单键掩盖）
+    case legacyKeysInconsistent(ch0b: UInt8, ch0c: UInt8)
     /// 写后回读校验不一致（enforce 红线 5）：写入 desired 后回读得 actual。
     /// ⚠️ 外部写者（同类工具/手动 smc）在写读之间翻转状态时触发是期望行为（冲突显式化，
     /// WP6 不得误诊为协议故障）。

@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 59 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35 + WP3 用例 36–46 + WP4 用例 47–59）
+//   swift run CellarCoreCheck          # 跑全部 62 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -260,13 +260,14 @@ private func batteryProps() -> [String: Any] {
 struct Main {
     static func main() throws {
         if CommandLine.arguments.contains("--dump-input") { dumpInput(); return }
+        if CommandLine.arguments.contains("--matrix") { matrixSweep(); return }
         if CommandLine.arguments.contains("--probe") { probe(); return }
         if CommandLine.arguments.contains("--smoke") { smoke(); return }
         if CommandLine.arguments.contains("--write-perm") { writePerm(); return }
         if CommandLine.arguments.contains("--battery") { battery(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 59 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 62 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -335,6 +336,48 @@ struct Main {
             print("❌ 读取失败：\(error)")
             exit(1)
         }
+    }
+
+    /// 穷举扫描：决策矩阵实现 vs 独立期望函数（不同写法），全边界组合逐点比对。
+    static func matrixSweep() {
+        // 独立期望：与 LimitPolicy.decide 不同的写法（查表式边界三分支）
+        func expected(percent: Int, external: Bool, enabled: Bool, upper: Int, resume: Int) -> ChargingAction {
+            if !external { return .noop }
+            if enabled && percent >= upper { return .disableCharging }
+            if !enabled && percent < resume { return .enableCharging }
+            return .noop
+        }
+
+        var checked = 0
+        var mismatches = 0
+        let combos: [(upper: Int, hys: Int)] = [(60, 1), (60, 20), (61, 19), (80, 2), (80, 20), (100, 1), (100, 20)]
+        let percents = [-5, 0, 1, 39, 40, 41, 58, 59, 60, 61, 77, 78, 79, 80, 81, 85, 99, 100, 105]
+
+        for combo in combos {
+            guard let policy = try? LimitPolicy(upperLimit: combo.upper, hysteresis: combo.hys) else {
+                print("  ✗ Policy(\(combo.upper), \(combo.hys)) 构造失败"); mismatches += 1; continue
+            }
+            let resume = combo.upper - combo.hys
+            // 聚焦边界：恢复阈值 ±1 与上限 ±1 附近全查 + 少量远点
+            let focus = [resume - 1, resume, resume + 1, combo.upper - 1, combo.upper, combo.upper + 1]
+            for percent in (focus + percents).sorted() {
+                for external in [true, false] {
+                    for enabled in [true, false] {
+                        let ctx = ChargingContext(percent: percent, externalConnected: external, chargingEnabled: enabled)
+                        let actual = policy.decide(context: ctx)
+                        let want = expected(percent: percent, external: external,
+                                            enabled: enabled, upper: combo.upper, resume: resume)
+                        checked += 1
+                        if actual != want {
+                            mismatches += 1
+                            print("  ✗ upper=\(combo.upper) hys=\(combo.hys) percent=\(percent) external=\(external) enabled=\(enabled)：实现=\(actual) 期望=\(want)")
+                        }
+                    }
+                }
+            }
+        }
+        print("穷举 \(checked) 个组合点：\(mismatches == 0 ? "实现与独立期望完全一致 ✅" : "\(mismatches) 处不一致 ❌")")
+        exit(mismatches == 0 ? 0 : 1)
     }
 
     /// 诊断：打印 keyInfo("CHTE") 实际发出的 80 字节（与 M0 探针脚本逐字节比对用）。
@@ -603,42 +646,50 @@ struct Main {
                          "用例23", "写传输故障原样上抛 .transportFailure")
         }
 
-        // 用例 24：Legacy 使能（读 00）。
+        // 用例 24：Legacy 使能（双键读 00/00，审计中-1 后 chargingEnabled 读两键）。
         do {
             let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
             mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
             mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
+            mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
             let enabled = try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled()
-            check(enabled == true, "用例24", "CH0B 00 → chargingEnabled() == true")
+            check(enabled == true, "用例24", "CH0B/CH0C 00 → chargingEnabled() == true")
         }
 
-        // 用例 25：Legacy 停充（读 02）。
+        // 用例 25：Legacy 停充（双键读 02/02）。
         do {
             let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
             mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
             mock.enqueue(reply(bytes: [0x02]), for: Spec.read)
+            mock.enqueue(reply(bytes: [0x02]), for: Spec.read)
             let enabled = try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled()
-            check(enabled == false, "用例25", "CH0B 02 → chargingEnabled() == false")
+            check(enabled == false, "用例25", "CH0B/CH0C 02 → chargingEnabled() == false")
         }
 
-        // 用例 26：Legacy 未知值（读 01）。
+        // 用例 26：Legacy 未知值（双键读 01/01）。
         do {
             let mock = CheckTransport()
             mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x01]), for: Spec.read)
             mock.enqueue(reply(bytes: [0x01]), for: Spec.read)
             expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
                          as: BackendError.unknownChargingState(key: "CH0B", bytes: [1]),
                          "用例26", "CH0B 01 报 .unknownChargingState")
         }
 
-        // 用例 27：Legacy 长度防御（keyInfo size=0 → 读 []，防越界下标崩溃）。
+        // 用例 27：Legacy 长度防御（keyInfo size=0 → 双键读空 → 不越界，按分裂态显式报错）。
         do {
             let mock = CheckTransport()
             mock.enqueue(reply(dataSize: 0, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(dataSize: 0, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(), for: Spec.read)
             mock.enqueue(reply(), for: Spec.read)
             expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
-                         as: BackendError.unknownChargingState(key: "CH0B", bytes: []),
-                         "用例27", "空值报 .unknownChargingState（不越界）")
+                         as: BackendError.legacyKeysInconsistent(ch0b: 255, ch0c: 255),
+                         "用例27", "空值报 .legacyKeysInconsistent（不越界）")
         }
 
         // 用例 28：Legacy set(false) → 两次写调用（预读 keyInfo→read 后，CH0B、CH0C 各写 02）。
@@ -1057,6 +1108,41 @@ struct Main {
             try controller.updatePolicy(LimitPolicy(upperLimit: 90, hysteresis: 2))
             check(controller.policy.upperLimit == 90 && controller.decide(context: stoppedAt85) == .enableCharging,
                   "用例59", "新策略（阈值 88）：85<88 → enable，且 policy 已换为 upperLimit=90")
+        }
+
+        // ===== 审计修复回归（code-reviewer 中-1 / 中-2，2026-08-31）=====
+
+        // 用例 60：Legacy 双键分裂（CH0B=00、CH0C=02）→ .legacyKeysInconsistent。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
+            mock.enqueue(reply(bytes: [0x02]), for: Spec.read)
+            expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: BackendError.legacyKeysInconsistent(ch0b: 0, ch0c: 2),
+                         "用例60", "双键分裂显式报错（不伪装成正常态）")
+        }
+
+        // 用例 61：set 预读失败 → fail-fast（.keyNotFound 原样上抛），零写调用（审计中-1）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(result: 132), for: Spec.keyInfo)
+            expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).setChargingEnabled(false),
+                         as: SMCError.keyNotFound("CH0B"),
+                         "用例61", "预读失败拒绝开写")
+            let writes = mock.inputs.filter { $0[Spec.data8Offset] == Spec.write }
+            check(writes.isEmpty, "用例61", "预读失败后零写调用")
+        }
+
+        // 用例 62：perform(.disableCharging) 直通路（睡眠停充共用校验底座，审计中-2）：
+        // mock 正常生效 → 状态翻转 + 无抛错。
+        do {
+            let backend = MockChargingBackend(enabled: true)
+            let controller = LimitController(policy: try LimitPolicy(upperLimit: 80, hysteresis: 2))
+            try controller.perform(.disableCharging, backend: backend)
+            check(backend.enabled == false && backend.writeCount == 1,
+                  "用例62", "perform 应用动作且回读一致")
         }
     }
 
