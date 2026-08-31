@@ -133,7 +133,7 @@ private func reply(
     r[Spec.dataSizeOffset + 2] = UInt8((dataSize >> 16) & 0xFF)
     r[Spec.dataSizeOffset + 3] = UInt8((dataSize >> 24) & 0xFF)
     if let type {
-        for (i, b) in Array(type.utf8.prefix(4)).enumerated() { r[Spec.dataTypeOffset + i] = b }
+        for (i, b) in Array(type.utf8.prefix(4).reversed()).enumerated() { r[Spec.dataTypeOffset + i] = b }
     }
     for (i, b) in bytes.enumerated() { r[Spec.bytesOffset + i] = b }
     return r
@@ -153,12 +153,57 @@ private final class KRTransport: SMCTransport, @unchecked Sendable {
 @main
 struct Main {
     static func main() throws {
+        if CommandLine.arguments.contains("--dump-input") { dumpInput(); return }
         if CommandLine.arguments.contains("--probe") { probe(); return }
         if CommandLine.arguments.contains("--smoke") { smoke(); return }
+        if CommandLine.arguments.contains("--write-perm") { writePerm(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 35 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    /// 诊断：写权限探测——原值回写 CHTE（状态不变，仅验证当前身份是否有写权限）。
+    static func writePerm() {
+        print("=== CHTE 写权限探测（原值回写，状态不变） ===")
+        print("uid=\(getuid())")
+        do {
+            let client = try SMCClient.makeDefault()
+            let current = try client.read("CHTE")
+            print("当前 CHTE = \(current.map { String(format: "%02X", $0) }.joined())")
+            try client.write("CHTE", bytes: current)
+            let back = try client.read("CHTE")
+            print("✅ 写入成功且回读一致 → 当前身份**有**写权限")
+            exit(0)
+        } catch let e as SMCError {
+            print("❌ 写入被拒：\(e) → 当前身份**无**写权限（需要 root）")
+            exit(1)
+        } catch {
+            print("❌ 其他错误：\(error)")
+            exit(1)
+        }
+    }
+
+    /// 诊断：打印 keyInfo("CHTE") 实际发出的 80 字节（与 M0 探针脚本逐字节比对用）。
+    static func dumpInput() {
+        final class Capture: SMCTransport, @unchecked Sendable {
+            var last: [UInt8] = []
+            func call(input: [UInt8]) -> (output: [UInt8], kr: Int32) {
+                last = input
+                var r = [UInt8](repeating: 0, count: 80)
+                r[28] = 4
+                r[32] = 0x75; r[33] = 0x69; r[34] = 0x33; r[35] = 0x32  // "ui32"
+                return (r, 0)
+            }
+        }
+        let transport = Capture()
+        do {
+            let info = try SMCClient(transport: transport).keyInfo("CHTE")
+            print("info:", info)
+        } catch {
+            print("keyInfo 失败：\(error)")
+        }
+        print("input:", transport.last.map { String(format: "%02X", $0) }.joined(separator: " "))
     }
 
     static func runScenarios() throws {
@@ -177,7 +222,7 @@ struct Main {
             let mock = CheckTransport()
             mock.enqueue(reply(), for: Spec.keyInfo)
             _ = try? SMCClient(transport: mock).keyInfo("CHTE")
-            expectEqual(Array(mock.inputs[0][0..<4]), [0x43, 0x48, 0x54, 0x45], "用例2", "CHTE 大端打包正确")
+            expectEqual(Array(mock.inputs[0][0..<4]), [0x45, 0x54, 0x48, 0x43], "用例2", "CHTE LE uint32 打包（字符序反转）正确")
         }
 
         // 用例 3/4：非法 key → .invalidKey 且零传输调用。
@@ -455,8 +500,8 @@ struct Main {
             let writes = inputs.filter { $0[Spec.data8Offset] == Spec.write }
             let ok = inputs.count == 4
                 && writes.count == 2
-                && Array(writes[0][0..<4]) == Array("CH0B".utf8)
-                && Array(writes[1][0..<4]) == Array("CH0C".utf8)
+                && Array(writes[0][0..<4]) == Array("CH0B".utf8.reversed())
+                && Array(writes[1][0..<4]) == Array("CH0C".utf8.reversed())
                 && Array(writes[0][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
                 && Array(writes[1][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
                 && writes.allSatisfy { $0[Spec.dataSizeOffset] == 1 && $0[Spec.data8Offset] == Spec.write }
@@ -473,8 +518,8 @@ struct Main {
             try LegacyBackend(client: SMCClient(transport: mock)).setChargingEnabled(true)
             let writes = mock.inputs.filter { $0[Spec.data8Offset] == Spec.write }
             let ok = writes.count == 2
-                && Array(writes[0][0..<4]) == Array("CH0B".utf8)
-                && Array(writes[1][0..<4]) == Array("CH0C".utf8)
+                && Array(writes[0][0..<4]) == Array("CH0B".utf8.reversed())
+                && Array(writes[1][0..<4]) == Array("CH0C".utf8.reversed())
                 && Array(writes[0][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
                 && Array(writes[1][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
                 && writes.allSatisfy { $0[Spec.dataSizeOffset] == 1 }
@@ -509,13 +554,13 @@ struct Main {
                 && inputs[1][Spec.data8Offset] == Spec.read
                 && inputs[1][Spec.dataSizeOffset] == 1
                 && inputs[2][Spec.data8Offset] == Spec.write
-                && Array(inputs[2][0..<4]) == Array("CH0B".utf8)
+                && Array(inputs[2][0..<4]) == Array("CH0B".utf8.reversed())
                 && Array(inputs[2][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
                 && inputs[3][Spec.data8Offset] == Spec.write
-                && Array(inputs[3][0..<4]) == Array("CH0C".utf8)
+                && Array(inputs[3][0..<4]) == Array("CH0C".utf8.reversed())
                 && Array(inputs[3][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
                 && inputs[4][Spec.data8Offset] == Spec.write
-                && Array(inputs[4][0..<4]) == Array("CH0B".utf8)
+                && Array(inputs[4][0..<4]) == Array("CH0B".utf8.reversed())
                 && Array(inputs[4][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
             check(seqOK, "用例30", "第 4 次写调用（下标 4）为 CH0B 回滚 00")
         }
@@ -573,7 +618,7 @@ struct Main {
     static func smoke() {
         print("=== CellarCore WP1 真机冒烟 ===")
         let isRoot = getuid() == 0
-        print("uid=\(getuid())(\(isRoot ? "root：严格断言" : "非 root：信息模式（严格断言请用 sudo）"))")
+        print("uid=\(getuid())(\(isRoot ? "root" : "非 root（读级验证；写入需 root，见 --write-perm）"))")
         do {
             let client = try SMCClient.makeDefault()
             print("✅ AppleSMC 服务连接成功（IOKitSMCTransport / selector 2）")
@@ -604,7 +649,7 @@ struct Main {
     static func probe() {
         print("=== CellarCore 运行时探测（--probe）===")
         if !RuntimeProbe.isRunningAsRoot {
-            print("⚠️ 非 root，探测结果不可信（非 root 实测波动）")
+            print("ℹ️ 以非 root 运行（读级探测；写权限另见 --write-perm）")
         }
         do {
             let client = try SMCClient.makeDefault()

@@ -3,10 +3,14 @@
 /// ⚠️ 禁止用 Swift struct 复刻 C ABI 布局：实测 Swift 嵌套结构为 76 字节 ≠ C 的 80 字节
 /// （macOS 26 实测 76B≠80B），一律以 `[UInt8]` + 本类型的偏移常量手工封包。
 ///
-/// 偏移表（规格 §5.3，与 M0 探针 `Tools/m0-smc-probe.swift` 实测一致）：
+/// ⚠️ 字节序（2026-08-31 二次实测修正）：`key` 与 `dataType` 4CC 均以**小端 uint32** 传输，
+/// 缓冲内字符序与字符串相反（"CHTE" → 缓冲 `45 54 48 43`）；正序打包驱动一律返回 132。
+/// 键值 bytes 为原始字节，无字节序变换。
 ///
-///     key@0(4B, BE 打包 "CHTE"→43 48 54 45) · vers@4(6B) · padding@10(2B) · pLimitData@12(16B)
-///     dataSize@28(UInt32, LE) · dataType@32(4B, BE 4CC) · attributes@36(存在但忽略)
+/// 偏移表：
+///
+///     key@0(4B, LE uint32) · vers@4(6B) · padding@10(2B) · pLimitData@12(16B)
+///     dataSize@28(UInt32, LE) · dataType@32(4B, LE 4CC) · attributes@36(存在但忽略)
 ///     result@40 · status@41 · data8@42 · data32@44 · bytes[32]@48
 ///
 /// 所有出站输入以全零缓冲为基线构造：vers / padding / pLimitData / status /
@@ -26,6 +30,11 @@ public enum SMCParam {
 
     // MARK: - 出站输入构造
 
+    /// 键字符 → LE uint32 缓冲字节（字符序反转："CHTE" → [45, 54, 48, 43]）。
+    static func keyWireBytes(_ key: [UInt8]) -> [UInt8] {
+        key.reversed()
+    }
+
     /// 全零 80 字节缓冲（出站字段的基线）。
     static func zeroed() -> [UInt8] {
         [UInt8](repeating: 0, count: size)
@@ -35,7 +44,7 @@ public enum SMCParam {
     static func keyInfoInput(key: [UInt8]) -> [UInt8] {
         precondition(key.count == 4, "key 必须先经 SMCClient 校验为 4 字节")
         var buffer = zeroed()
-        buffer.replaceSubrange(keyRange, with: key)
+        buffer.replaceSubrange(keyRange, with: keyWireBytes(key))
         buffer[data8Offset] = SMCCommand.keyInfo.rawValue
         return buffer
     }
@@ -44,7 +53,7 @@ public enum SMCParam {
     static func readInput(key: [UInt8], dataSize: UInt32) -> [UInt8] {
         precondition(key.count == 4, "key 必须先经 SMCClient 校验为 4 字节")
         var buffer = zeroed()
-        buffer.replaceSubrange(keyRange, with: key)
+        buffer.replaceSubrange(keyRange, with: keyWireBytes(key))
         setUInt32(dataSize, at: dataSizeOffset, in: &buffer)
         buffer[data8Offset] = SMCCommand.read.rawValue
         return buffer
@@ -55,7 +64,7 @@ public enum SMCParam {
         precondition(key.count == 4, "key 必须先经 SMCClient 校验为 4 字节")
         precondition((1...32).contains(payload.count), "payload 必须先经 SMCClient 校验为 1...32 字节")
         var buffer = zeroed()
-        buffer.replaceSubrange(keyRange, with: key)
+        buffer.replaceSubrange(keyRange, with: keyWireBytes(key))
         setUInt32(UInt32(payload.count), at: dataSizeOffset, in: &buffer)
         buffer[data8Offset] = SMCCommand.write.rawValue
         buffer.replaceSubrange(bytesOffset..<(bytesOffset + payload.count), with: payload)
@@ -75,9 +84,9 @@ public enum SMCParam {
         uint32(at: dataSizeOffset, in: reply)
     }
 
-    /// keyInfo 回复的 4CC 类型（offset 32..36，BE 字符序，如 "ui32"）。
+    /// keyInfo 回复的 4CC 类型（offset 32..36，LE uint32；读出后按字符序还原，如 "ui32"）。
     static func dataType(of reply: [UInt8]) -> String {
-        String(decoding: reply[dataTypeRange], as: UTF8.self)
+        String(decoding: reply[dataTypeRange].reversed(), as: UTF8.self)
     }
 
     // MARK: - 字节序原语
