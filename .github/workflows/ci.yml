@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Scenario verification
+        run: swift run CellarCoreCheck
+
+      - name: Build (release)
+        run: swift build -c release
