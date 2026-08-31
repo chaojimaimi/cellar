@@ -5,9 +5,10 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 35 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35）
+//   swift run CellarCoreCheck          # 跑全部 46 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35 + WP3 用例 36–46）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
+//   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
 //
 // 注意：本工具使用字面偏移量（规格 §5.3）而非 SMCParam 内部常量——
 // 作为对实现常量的独立交叉验证（第二双眼睛）。
@@ -37,9 +38,11 @@ private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: S
     check(actual == expected, scenario, actual == expected ? message : "\(message)（实际 \(actual)，期望 \(expected)）")
 }
 
-/// 泛化断言：抛出的错误须等于 `expected`（SMCError 与 BackendError 均 Equatable）。
+/// 泛化断言：抛出的错误须等于 `expected`（SMCError / BackendError / BatteryMonitorError 均 Equatable）。
 /// 前导点成员语法（`.keyNotFound(...)`）无法在泛型参数上解析类型，故提供
-/// SMCError/BackendError 两个具体重载（WP1 既有调用点保持零改动）；
+/// SMCError/BackendError/BatteryMonitorError 三个具体重载（WP1/WP2 既有调用点保持零改动）；
+/// ⚠️ 用例 46 断言 `.serviceNotFound` 时因 SMCError 亦有同名 case，必须写全类型前缀
+/// `BatteryMonitorError.serviceNotFound`，否则前导点歧义编译失败。
 /// `expected` 为 nil 时仅要求抛错、不校验类型。
 private func expectThrows<T>(
     _ body: @autoclosure () throws -> T,
@@ -71,6 +74,26 @@ private func expectThrows<T>(
         _ = try body()
         check(false, scenario, "\(message)——但未抛错")
     } catch let error as BackendError {
+        if let expected {
+            check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
+        } else {
+            check(true, scenario, message)
+        }
+    } catch {
+        check(false, scenario, "\(message)——实际 \(error)")
+    }
+}
+
+private func expectThrows<T>(
+    _ body: @autoclosure () throws -> T,
+    as expected: BatteryMonitorError?,
+    _ scenario: String,
+    _ message: String
+) {
+    do {
+        _ = try body()
+        check(false, scenario, "\(message)——但未抛错")
+    } catch let error as BatteryMonitorError {
         if let expected {
             check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
         } else {
@@ -148,6 +171,42 @@ private final class KRTransport: SMCTransport, @unchecked Sendable {
     }
 }
 
+// MARK: - WP3 fixture 与 mock（用例 36–46）
+
+/// 用例 46 的注入式 mock 数据源（CheckTransport 无关，直接注入 BatteryMonitor）。
+private struct ThrowingPropertySource: BatteryPropertySource {
+    let error: BatteryMonitorError
+    func properties() throws -> [String: Any] { throw error }
+}
+
+/// WP3 fixture 基准字典：与 Tests/CellarCoreTests/BatterySnapshotTests.swift 的
+/// makeSampleProps() 值一致（规格 §4），两边必须同步修改。工厂函数而非 static let
+/// （评审 C-2：Swift 6 下 static let 存非 Sendable 的 [String: Any] 编译不过）。
+private func batteryProps() -> [String: Any] {
+    [
+        "CurrentCapacity": 86,
+        "Voltage": 12211,
+        "Amperage": -741,
+        "Temperature": 3030,
+        "DesignCapacity": 8694,
+        "CycleCount": 153,
+        "ExternalConnected": true,
+        "IsCharging": true,
+        "MaxCapacity": 100,
+        "AppleRawMaxCapacity": 7612,
+        "AppleRawCurrentCapacity": 6546,
+        "BatteryData": ["CellVoltage": [4072, 4071, 4068], "FccComp1": 7616] as [String: Any],
+        "AdapterDetails": [
+            "Watts": 140,
+            "AdapterVoltage": 28000,
+            "Current": 4990,
+            "Name": "140W USB-C Power Adapter",
+            "Description": "pd charger",
+            "IsWireless": false,
+        ] as [String: Any],
+    ]
+}
+
 // MARK: - 场景（§5.5 用例 1–16）
 
 @main
@@ -157,9 +216,10 @@ struct Main {
         if CommandLine.arguments.contains("--probe") { probe(); return }
         if CommandLine.arguments.contains("--smoke") { smoke(); return }
         if CommandLine.arguments.contains("--write-perm") { writePerm(); return }
+        if CommandLine.arguments.contains("--battery") { battery(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 35 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 46 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -172,7 +232,7 @@ struct Main {
             let current = try client.read("CHTE")
             print("当前 CHTE = \(current.map { String(format: "%02X", $0) }.joined())")
             try client.write("CHTE", bytes: current)
-            let back = try client.read("CHTE")
+            _ = try client.read("CHTE")
             print("✅ 写入成功且回读一致 → 当前身份**有**写权限")
             exit(0)
         } catch let e as SMCError {
@@ -180,6 +240,52 @@ struct Main {
             exit(1)
         } catch {
             print("❌ 其他错误：\(error)")
+            exit(1)
+        }
+    }
+
+    // MARK: - 真机电池快照（--battery）
+    // AppleSmartBattery 注册表数据（ioreg -rc AppleSmartBattery，无需 root，M0 实测）。
+    // 纯只读：本命令不写任何 SMC 键；无电池机型（.serviceNotFound）说明后非零退出（对齐 --probe 写法）。
+
+    static func battery() {
+        print("=== CellarCore 电池快照（--battery，只读，无需 root）===")
+        let monitor = BatteryMonitor.makeDefault()
+        do {
+            let s = try monitor.snapshot()
+            print("电量：\(s.percent)%\(s.isCharging ? "（充电中）" : "")")
+            print("外部电源：\(s.externalConnected ? "已连接" : "未连接")")
+            print("电压：\(s.voltageMV) mV")
+            print("电流：\(s.amperageMA) mA（⚠️ 符号语义未定，方向以 IsCharging 为准）")
+            print("温度：\(s.temperatureCentiC) 厘摄氏度（≈\(String(format: "%.2f", s.temperatureC)) °C）")
+            print("循环次数：\(s.cycleCount)")
+            print("设计容量：\(s.designCapacityMAh) mAh")
+            if let max = s.maxCapacityPercent { print("当前最大容量：\(max)%") }
+            if let raw = s.rawMaxCapacityMAh { print("原始最大容量：\(raw) mAh") }
+            if let raw = s.rawCurrentCapacityMAh { print("原始当前容量：\(raw) mAh") }
+            if let cells = s.cellVoltagesMV { print("电芯电压：\(cells) mV") }
+            if let fcc = s.fccMAh { print("FccComp1：\(fcc) mAh") }
+            if let adapter = s.adapter {
+                var parts: [String] = []
+                if let watts = adapter.watts { parts.append("\(watts) W") }
+                if let voltage = adapter.voltageMV { parts.append("\(voltage) mV") }
+                if let current = adapter.currentMA { parts.append("\(current) mA") }
+                if let name = adapter.name { parts.append(name) }
+                if let desc = adapter.adapterDescription { parts.append(desc) }
+                if let wireless = adapter.isWireless { parts.append("无线充电=\(wireless)") }
+                print("适配器：\(parts.isEmpty ? "（空）" : parts.joined(separator: " · "))")
+            } else {
+                print("适配器：无")
+            }
+            print("时间戳：\(s.timestamp)")
+            print("\n提示：与 `ioreg -rc AppleSmartBattery` 同刻对照——稳定字段应严格一致，波动字段允许容差")
+            exit(0)
+        } catch BatteryMonitorError.serviceNotFound {
+            print("❌ 未找到 AppleSmartBattery 服务——本机可能无电池（桌面/虚拟机）")
+            print("   可用 `ioreg -rc AppleSmartBattery` 确认")
+            exit(1)
+        } catch {
+            print("❌ 读取失败：\(error)")
             exit(1)
         }
     }
@@ -608,6 +714,131 @@ struct Main {
             expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: KRTransport(kr: badArgumentKR))),
                          as: SMCError.transportFailure(kr: badArgumentKR),
                          "用例35", "传输故障原样上抛（绝不降级为 .noBackendAvailable）")
+        }
+
+        // MARK: - 场景（WP3 规格 §4 用例 36–46）
+        // CheckTransport 无关：直接调 BatterySnapshotParser（纯函数，timestamp 注入固定值）；
+        // 用例 46 用本地 ThrowingPropertySource mock source。fixture 见 batteryProps()。
+
+        let timeZero = Date(timeIntervalSince1970: 0)
+
+        // 用例 36：完整字典 + 固定 timestamp 整值断言。
+        do {
+            let s = try BatterySnapshotParser.parse(batteryProps(), timestamp: timeZero)
+            expectEqual(s.percent, 86, "用例36", "percent=86")
+            expectEqual(s.voltageMV, 12211, "用例36", "voltageMV=12211")
+            expectEqual(s.amperageMA, -741, "用例36", "amperageMA=-741")
+            expectEqual(s.temperatureCentiC, 3030, "用例36", "temperatureCentiC=3030")
+            check(abs(s.temperatureC - 30.3) < 0.01, "用例36", "temperatureC ≈ 30.3")
+            expectEqual(s.cycleCount, 153, "用例36", "cycleCount=153")
+            expectEqual(s.designCapacityMAh, 8694, "用例36", "designCapacityMAh=8694")
+            expectEqual(s.maxCapacityPercent, 100, "用例36", "maxCapacityPercent=100")
+            expectEqual(s.rawMaxCapacityMAh, 7612, "用例36", "rawMaxCapacityMAh=7612")
+            expectEqual(s.rawCurrentCapacityMAh, 6546, "用例36", "rawCurrentCapacityMAh=6546")
+            expectEqual(s.cellVoltagesMV, [4072, 4071, 4068], "用例36", "cellVoltagesMV=[4072,4071,4068]")
+            expectEqual(s.fccMAh, 7616, "用例36", "fccMAh=7616")
+            check(s.isCharging == true && s.externalConnected == true, "用例36", "isCharging/externalConnected=true")
+            expectEqual(s.timestamp, timeZero, "用例36", "timestamp 相等")
+            expectEqual(s.adapter?.watts, 140, "用例36", "adapter.watts=140")
+            expectEqual(s.adapter?.voltageMV, 28000, "用例36", "adapter.voltageMV=28000")
+            expectEqual(s.adapter?.currentMA, 4990, "用例36", "adapter.currentMA=4990")
+            expectEqual(s.adapter?.name, "140W USB-C Power Adapter", "用例36", "adapter.name 正确")
+            expectEqual(s.adapter?.adapterDescription, "pd charger", "用例36", "adapter.adapterDescription 正确")
+            check(s.adapter?.isWireless == false, "用例36", "adapter.isWireless=false")
+        }
+
+        // 用例 37：Amperage UInt64 回绕（0xFFFF_FFFF_FFFF_FD1B → -741，按位还原）。
+        do {
+            var props = batteryProps()
+            props["Amperage"] = NSNumber(value: UInt64(0xFFFF_FFFF_FFFF_FD1B))
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            expectEqual(s.amperageMA, -741, "用例37", "UInt64 回绕值按位还原为 -741")
+        }
+
+        // 用例 38：Amperage 正值 +2618 原样保留。
+        do {
+            var props = batteryProps()
+            props["Amperage"] = 2618
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            expectEqual(s.amperageMA, 2618, "用例38", "Amperage=+2618 原样保留")
+        }
+
+        // 用例 39：缺 CurrentCapacity → .missingRequiredField。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "CurrentCapacity")
+            expectThrows(try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                         as: BatteryMonitorError.missingRequiredField("CurrentCapacity"),
+                         "用例39", "缺 CurrentCapacity 报 .missingRequiredField")
+        }
+
+        // 用例 40：缺 IsCharging → .missingRequiredField。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "IsCharging")
+            expectThrows(try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                         as: BatteryMonitorError.missingRequiredField("IsCharging"),
+                         "用例40", "缺 IsCharging 报 .missingRequiredField")
+        }
+
+        // 用例 41：CurrentCapacity="86"（String）→ .invalidFieldType。
+        do {
+            var props = batteryProps()
+            props["CurrentCapacity"] = "86"
+            expectThrows(try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                         as: BatteryMonitorError.invalidFieldType("CurrentCapacity"),
+                         "用例41", "类型不符报 .invalidFieldType")
+        }
+
+        // 用例 42：IsCharging=NSNumber(1) → 容错为 true（数值 0/1，评审 B-5）。
+        do {
+            var props = batteryProps()
+            props["IsCharging"] = NSNumber(value: 1)
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            check(s.isCharging == true, "用例42", "IsCharging=NSNumber(1) 容错为 true")
+        }
+
+        // 用例 43：删 AdapterDetails → adapter == nil（单变量，其余字段不变）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "AdapterDetails")
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            check(s.adapter == nil, "用例43", "adapter == nil")
+            check(s.percent == 86 && s.cycleCount == 153, "用例43", "其余字段不变（抽查 percent/cycleCount）")
+        }
+
+        // 用例 44：删 MaxCapacity/AppleRaw*/BatteryData → 对应 nil，不抛错。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "MaxCapacity")
+            props.removeValue(forKey: "AppleRawMaxCapacity")
+            props.removeValue(forKey: "AppleRawCurrentCapacity")
+            props.removeValue(forKey: "BatteryData")
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            check(s.maxCapacityPercent == nil && s.rawMaxCapacityMAh == nil
+                    && s.rawCurrentCapacityMAh == nil && s.cellVoltagesMV == nil && s.fccMAh == nil,
+                  "用例44", "可选字段全部 nil 且不抛错")
+            check(s.percent == 86, "用例44", "必需字段不受影响")
+        }
+
+        // 用例 45：适配器空字典 {} → adapter 存在且全字段 nil。
+        do {
+            var props = batteryProps()
+            props["AdapterDetails"] = [:] as [String: Any]
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            check(s.adapter != nil, "用例45", "空字典仍解析出 adapter")
+            check(s.adapter?.watts == nil && s.adapter?.voltageMV == nil && s.adapter?.currentMA == nil
+                    && s.adapter?.name == nil && s.adapter?.adapterDescription == nil && s.adapter?.isWireless == nil,
+                  "用例45", "adapter 全字段 nil")
+        }
+
+        // 用例 46：Monitor 错误传播——source 抛 .serviceNotFound → snapshot() 原样上抛。
+        // ⚠️ 必须写全类型前缀：SMCError 亦有同名 .serviceNotFound，前导点会歧义（编译失败）。
+        do {
+            let monitor = BatteryMonitor(source: ThrowingPropertySource(error: BatteryMonitorError.serviceNotFound))
+            expectThrows(try monitor.snapshot(),
+                         as: BatteryMonitorError.serviceNotFound,
+                         "用例46", "source 的 .serviceNotFound 原样传播")
         }
     }
 
