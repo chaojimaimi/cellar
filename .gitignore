@@ -1,0 +1,16 @@
+# Xcode / Swift
+.DS_Store
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+.swiftpm/
+.build/
+*.o
+*.dSYM/
+
+# 本地私有内容（不入公开仓库）
+PRIVATE-NOTES.md
+docs/
+Tests/
+PLAN.md
