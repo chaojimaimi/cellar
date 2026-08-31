@@ -5,7 +5,8 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 16 个 mock 场景
+//   swift run CellarCoreCheck          # 跑全部 35 个 mock 场景（WP1 用例 1–16 + WP2 用例 17–35）
+//   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //
 // 注意：本工具使用字面偏移量（规格 §5.3）而非 SMCParam 内部常量——
@@ -36,16 +37,47 @@ private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: S
     check(actual == expected, scenario, actual == expected ? message : "\(message)（实际 \(actual)，期望 \(expected)）")
 }
 
-private func expectThrows<T>(_ body: @autoclosure () throws -> T, as expected: SMCError?, _ scenario: String, _ message: String) {
+/// 泛化断言：抛出的错误须等于 `expected`（SMCError 与 BackendError 均 Equatable）。
+/// 前导点成员语法（`.keyNotFound(...)`）无法在泛型参数上解析类型，故提供
+/// SMCError/BackendError 两个具体重载（WP1 既有调用点保持零改动）；
+/// `expected` 为 nil 时仅要求抛错、不校验类型。
+private func expectThrows<T>(
+    _ body: @autoclosure () throws -> T,
+    as expected: SMCError?,
+    _ scenario: String,
+    _ message: String
+) {
     do {
         _ = try body()
         check(false, scenario, "\(message)——但未抛错")
-    } catch {
+    } catch let error as SMCError {
         if let expected {
-            check((error as? SMCError) == expected, scenario, (error as? SMCError) == expected ? message : "\(message)——实际 \(error)")
+            check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
         } else {
             check(true, scenario, message)
         }
+    } catch {
+        check(false, scenario, "\(message)——实际 \(error)")
+    }
+}
+
+private func expectThrows<T>(
+    _ body: @autoclosure () throws -> T,
+    as expected: BackendError?,
+    _ scenario: String,
+    _ message: String
+) {
+    do {
+        _ = try body()
+        check(false, scenario, "\(message)——但未抛错")
+    } catch let error as BackendError {
+        if let expected {
+            check(error == expected, scenario, error == expected ? message : "\(message)——实际 \(error)")
+        } else {
+            check(true, scenario, message)
+        }
+    } catch {
+        check(false, scenario, "\(message)——实际 \(error)")
     }
 }
 
@@ -75,10 +107,15 @@ private final class CheckTransport: SMCTransport, @unchecked Sendable {
         lock.withLock {
             inputs.append(input)
             let data8 = input.count > Spec.data8Offset ? input[Spec.data8Offset] : 0
-            var queue = queues[data8] ?? []
-            return queue.isEmpty
-                ? (output: [UInt8](repeating: 0, count: 80), kr: 0)
-                : queue.removeFirst()
+            // FIFO 出队：出队结果必须回写字典，否则队列永不消耗（每次调用都拿到首条响应）。
+            // WP1 各场景每 data8 仅入队 1 条响应，该潜伏缺陷不发散；WP2 跨键序列
+            // （用例 28–30/33/34）依赖同一 data8 的多条不同响应，要求真正的 FIFO。
+            if var queue = queues[data8], !queue.isEmpty {
+                let response = queue.removeFirst()
+                queues[data8] = queue
+                return response
+            }
+            return (output: [UInt8](repeating: 0, count: 80), kr: 0)
         }
     }
 }
@@ -116,10 +153,11 @@ private final class KRTransport: SMCTransport, @unchecked Sendable {
 @main
 struct Main {
     static func main() throws {
+        if CommandLine.arguments.contains("--probe") { probe(); return }
         if CommandLine.arguments.contains("--smoke") { smoke(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 35 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -293,6 +331,239 @@ struct Main {
                 && mock.inputs.allSatisfy { $0[Spec.resultOffset] == 0 }
             check(ok, "用例16", "全部出站 result 字段置零")
         }
+
+        // MARK: - 场景（WP2 规格 §3 用例 17–35）
+        // mock 按 data8 分流、FIFO，且对 key 无感知——跨键场景（28/29/30）用调用序列构造，
+        // 但输入缓冲仍携带 key 字节（offset 0..3），可据其区分 CH0B/CH0C 写调用。
+
+        // 用例 17：Tahoe 使能（读 00 00 00 00）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 4, type: "ui32"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00, 0x00, 0x00, 0x00]), for: Spec.read)
+            let enabled = try TahoeBackend(client: SMCClient(transport: mock)).chargingEnabled()
+            check(enabled == true, "用例17", "CHTE 00000000 → chargingEnabled() == true")
+        }
+
+        // 用例 18：Tahoe 停充（读 01 00 00 00）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 4, type: "ui32"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x01, 0x00, 0x00, 0x00]), for: Spec.read)
+            let enabled = try TahoeBackend(client: SMCClient(transport: mock)).chargingEnabled()
+            check(enabled == false, "用例18", "CHTE 01000000 → chargingEnabled() == false")
+        }
+
+        // 用例 19：Tahoe 未知值 → .unknownChargingState。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 4, type: "ui32"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x02, 0x00, 0x00, 0x00]), for: Spec.read)
+            expectThrows(try TahoeBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: BackendError.unknownChargingState(key: "CHTE", bytes: [2, 0, 0, 0]),
+                         "用例19", "CHTE 02 000000 报 .unknownChargingState")
+        }
+
+        // 用例 20：Tahoe 长度防御（keyInfo size=2 → 读 2 字节）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 2, type: "ui32"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00, 0x00]), for: Spec.read)
+            expectThrows(try TahoeBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: BackendError.unknownChargingState(key: "CHTE", bytes: [0, 0]),
+                         "用例20", "长度 ≠4 报 .unknownChargingState")
+        }
+
+        // 用例 21：Tahoe set(false) → 写 01 00 00 00（data8=6、offset28=4）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(), for: Spec.write)
+            try TahoeBackend(client: SMCClient(transport: mock)).setChargingEnabled(false)
+            let input = mock.inputs[0]
+            let ok = input[Spec.data8Offset] == Spec.write
+                && input[Spec.dataSizeOffset] == 4
+                && Array(input[Spec.bytesOffset..<52]) == [0x01, 0x00, 0x00, 0x00]
+            check(ok, "用例21", "set(false) 封包 data8=6/offset28=4/bytes=01000000")
+        }
+
+        // 用例 22：Tahoe set(true) → 写 00 00 00 00。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(), for: Spec.write)
+            try TahoeBackend(client: SMCClient(transport: mock)).setChargingEnabled(true)
+            let input = mock.inputs[0]
+            let ok = input[Spec.data8Offset] == Spec.write
+                && input[Spec.dataSizeOffset] == 4
+                && Array(input[Spec.bytesOffset..<52]) == [0x00, 0x00, 0x00, 0x00]
+            check(ok, "用例22", "set(true) 封包 bytes=00000000")
+        }
+
+        // 用例 23：Tahoe set 传输失败 → 原样抛 .transportFailure。
+        do {
+            expectThrows(try TahoeBackend(client: SMCClient(transport: KRTransport(kr: badArgumentKR))).setChargingEnabled(false),
+                         as: SMCError.transportFailure(kr: badArgumentKR),
+                         "用例23", "写传输故障原样上抛 .transportFailure")
+        }
+
+        // 用例 24：Legacy 使能（读 00）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
+            let enabled = try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled()
+            check(enabled == true, "用例24", "CH0B 00 → chargingEnabled() == true")
+        }
+
+        // 用例 25：Legacy 停充（读 02）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x02]), for: Spec.read)
+            let enabled = try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled()
+            check(enabled == false, "用例25", "CH0B 02 → chargingEnabled() == false")
+        }
+
+        // 用例 26：Legacy 未知值（读 01）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x01]), for: Spec.read)
+            expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: BackendError.unknownChargingState(key: "CH0B", bytes: [1]),
+                         "用例26", "CH0B 01 报 .unknownChargingState")
+        }
+
+        // 用例 27：Legacy 长度防御（keyInfo size=0 → 读 []，防越界下标崩溃）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 0, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(), for: Spec.read)
+            expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: BackendError.unknownChargingState(key: "CH0B", bytes: []),
+                         "用例27", "空值报 .unknownChargingState（不越界）")
+        }
+
+        // 用例 28：Legacy set(false) → 两次写调用（预读 keyInfo→read 后，CH0B、CH0C 各写 02）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
+            mock.enqueue(reply(), for: Spec.write)
+            mock.enqueue(reply(), for: Spec.write)
+            try LegacyBackend(client: SMCClient(transport: mock)).setChargingEnabled(false)
+            let inputs = mock.inputs
+            let writes = inputs.filter { $0[Spec.data8Offset] == Spec.write }
+            let ok = inputs.count == 4
+                && writes.count == 2
+                && Array(writes[0][0..<4]) == Array("CH0B".utf8)
+                && Array(writes[1][0..<4]) == Array("CH0C".utf8)
+                && Array(writes[0][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
+                && Array(writes[1][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
+                && writes.allSatisfy { $0[Spec.dataSizeOffset] == 1 && $0[Spec.data8Offset] == Spec.write }
+            check(ok, "用例28", "CH0B→CH0C 两次写调用各写 02（data8=6、offset28=1）")
+        }
+
+        // 用例 29：Legacy set(true) → 两键各写 00。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x02]), for: Spec.read)
+            mock.enqueue(reply(), for: Spec.write)
+            mock.enqueue(reply(), for: Spec.write)
+            try LegacyBackend(client: SMCClient(transport: mock)).setChargingEnabled(true)
+            let writes = mock.inputs.filter { $0[Spec.data8Offset] == Spec.write }
+            let ok = writes.count == 2
+                && Array(writes[0][0..<4]) == Array("CH0B".utf8)
+                && Array(writes[1][0..<4]) == Array("CH0C".utf8)
+                && Array(writes[0][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
+                && Array(writes[1][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
+                && writes.allSatisfy { $0[Spec.dataSizeOffset] == 1 }
+            check(ok, "用例29", "CH0B→CH0C 两次写调用各写 00")
+        }
+
+        // 用例 30：Legacy set 部分失败 —— 预读 CH0B=00 → 写 CH0B(02) OK → 写 CH0C kr=BadArgument
+        // → 尽力回滚 CH0B 旧值 00 → 抛 .partialWrite(failedKey:"CH0C", cause:.transportFailure)。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            mock.enqueue(reply(bytes: [0x00]), for: Spec.read)
+            mock.enqueue(reply(), for: Spec.write)                                  // CH0B 写 02 OK
+            mock.enqueue(reply(), kr: badArgumentKR, for: Spec.write)               // CH0C 写 02 kr 失败
+            mock.enqueue(reply(), for: Spec.write)                                  // CH0B 回滚 00
+            var thrown: BackendError? = nil
+            do {
+                try LegacyBackend(client: SMCClient(transport: mock)).setChargingEnabled(false)
+            } catch let e as BackendError {
+                thrown = e
+            } catch {
+                // 透传错误类型不属于 BackendError：不匹配也计入失败（配合下方 check）。
+            }
+            let expected = BackendError.partialWrite(failedKey: "CH0C", cause: SMCError.transportFailure(kr: badArgumentKR))
+            check(thrown == expected, "用例30", "部分失败抛 .partialWrite(CH0C, transportFailure)")
+
+            // 调用序列：keyInfo→read→write(CH0B 02)→write(CH0C 02 失败)→write(CH0B 回滚 00)，
+            // 回滚写为最后一次调用（下标 4），载荷为预读旧值 00。
+            let inputs = mock.inputs
+            let seqOK = inputs.count == 5
+                && inputs[0][Spec.data8Offset] == Spec.keyInfo
+                && inputs[1][Spec.data8Offset] == Spec.read
+                && inputs[1][Spec.dataSizeOffset] == 1
+                && inputs[2][Spec.data8Offset] == Spec.write
+                && Array(inputs[2][0..<4]) == Array("CH0B".utf8)
+                && Array(inputs[2][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
+                && inputs[3][Spec.data8Offset] == Spec.write
+                && Array(inputs[3][0..<4]) == Array("CH0C".utf8)
+                && Array(inputs[3][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x02]
+                && inputs[4][Spec.data8Offset] == Spec.write
+                && Array(inputs[4][0..<4]) == Array("CH0B".utf8)
+                && Array(inputs[4][Spec.bytesOffset..<(Spec.bytesOffset + 1)]) == [0x00]
+            check(seqOK, "用例30", "第 4 次写调用（下标 4）为 CH0B 回滚 00")
+        }
+
+        // 用例 31：Legacy 读 keyNotFound → 原样抛 .keyNotFound。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(result: 132), for: Spec.keyInfo)
+            expectThrows(try LegacyBackend(client: SMCClient(transport: mock)).chargingEnabled(),
+                         as: SMCError.keyNotFound("CH0B"),
+                         "用例31", "CH0B keyInfo 132 原样抛 .keyNotFound")
+        }
+
+        // 用例 32：Probe CHTE 命中 → 返回 tahoe，且仅 1 次传输调用（短路）。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(dataSize: 4, type: "ui32"), for: Spec.keyInfo)
+            let backend = try RuntimeProbe.probe(client: SMCClient(transport: mock))
+            check(backend.name == "tahoe" && backend.keyNames == ["CHTE"], "用例32", "返回 tahoe 后端")
+            check(mock.inputs.count == 1, "用例32", "CHTE 命中后短路，仅 1 次传输调用")
+        }
+
+        // 用例 33：Probe CHTE 132 → CH0B keyInfo 成功 → 返回 legacy。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(result: 132), for: Spec.keyInfo)
+            mock.enqueue(reply(dataSize: 1, type: "ui8"), for: Spec.keyInfo)
+            let backend = try RuntimeProbe.probe(client: SMCClient(transport: mock))
+            check(backend.name == "legacy" && backend.keyNames == ["CH0B", "CH0C"], "用例33", "返回 legacy 后端")
+            check(mock.inputs.count == 2, "用例33", "CHTE 132 后仅再探测 CH0B 一次")
+        }
+
+        // 用例 34：Probe 两者皆 132 → .noBackendAvailable。
+        do {
+            let mock = CheckTransport()
+            mock.enqueue(reply(result: 132), for: Spec.keyInfo)
+            mock.enqueue(reply(result: 132), for: Spec.keyInfo)
+            expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: mock)),
+                         as: BackendError.noBackendAvailable,
+                         "用例34", "CHTE/CH0B 皆 132 → .noBackendAvailable")
+        }
+
+        // 用例 35：Probe CHTE keyInfo kr=BadArgument → 原样抛 .transportFailure（非 noBackendAvailable）。
+        do {
+            expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: KRTransport(kr: badArgumentKR))),
+                         as: SMCError.transportFailure(kr: badArgumentKR),
+                         "用例35", "传输故障原样上抛（绝不降级为 .noBackendAvailable）")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）
@@ -322,6 +593,31 @@ struct Main {
             exit(pass ? 0 : 1)
         } catch {
             print("❌ 冒烟失败：\(error)")
+            exit(1)
+        }
+    }
+
+    // MARK: - 真机探测（--probe）
+    // RuntimeProbe 键位可用性随身份波动——可靠探测必须 root（非 root 可见性波动，实测）；
+    // 非 root 时打印可信度提示，但探测照常执行（信息用途）。
+
+    static func probe() {
+        print("=== CellarCore 运行时探测（--probe）===")
+        if !RuntimeProbe.isRunningAsRoot {
+            print("⚠️ 非 root，探测结果不可信（非 root 实测波动）")
+        }
+        do {
+            let client = try SMCClient.makeDefault()
+            do {
+                let backend = try RuntimeProbe.probe(client: client)
+                print("后端 = \(backend.name)，控制键 = \(backend.keyNames)")
+            } catch BackendError.noBackendAvailable {
+                print("后端不可用：CHTE 与 CH0B 均无（只读模式，监测仍可用；控制功能不可用）")
+            }
+            // 探测成功（含"无后端"这一确定性结论）即 0；仅连接/传输故障为非零。
+            exit(0)
+        } catch {
+            print("❌ 探测失败：\(error)")
             exit(1)
         }
     }
