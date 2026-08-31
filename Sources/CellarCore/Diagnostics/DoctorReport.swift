@@ -22,7 +22,9 @@ public struct DoctorCheck: Equatable, Sendable {
     }
 }
 
-/// doctor 报告：固定顺序七项检查（身份 → SMC 服务 → 后端 → 控制键 → 电池 → 共存 → 写权限）+ 汇总。
+/// doctor 报告：固定顺序检查（身份 → SMC 服务 → 后端 → 控制键 → 电池 → 共存 → 写权限
+/// → 第 8 项 daemon）+ 汇总。第 8 项在调用方已探测（daemonProbeAttempted）时渲染：
+/// 运行中 → PASS；已探测但未运行 → INFO；未探测（既有输入形态）→ 不渲染。
 public struct DoctorReport: Equatable, Sendable {
     public let checks: [DoctorCheck]
 
@@ -85,6 +87,11 @@ public struct DoctorInputs: Sendable {
     public let snapshotError: BatteryMonitorError?
     /// 检查 6。
     public let conflict: ConflictScanResult
+    /// 检查 8：daemon 运行状态（XPC getStatus 结果；未安装/未运行 → nil）。
+    public let daemonStatus: DaemonStatus?
+    /// 检查 8 是否已探测（区分"未探测"与"已探测但未运行"：后者渲染 INFO 行、
+    /// 前者不渲染——既有 DoctorInputs 构造点（用例 65–68）零改动保持 7 项）。
+    public let daemonProbeAttempted: Bool
 
     public init(
         isRoot: Bool,
@@ -94,7 +101,9 @@ public struct DoctorInputs: Sendable {
         chargingError: SMCError?,
         snapshot: BatterySnapshot?,
         snapshotError: BatteryMonitorError?,
-        conflict: ConflictScanResult
+        conflict: ConflictScanResult,
+        daemonStatus: DaemonStatus? = nil,
+        daemonProbeAttempted: Bool = false
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -104,13 +113,16 @@ public struct DoctorInputs: Sendable {
         self.snapshot = snapshot
         self.snapshotError = snapshotError
         self.conflict = conflict
+        self.daemonStatus = daemonStatus
+        self.daemonProbeAttempted = daemonProbeAttempted
     }
 }
 
-/// 检查/报告生成器：纯函数，输入 → 七项检查报告（顺序与判定规则见规格 §3）。
+/// 检查/报告生成器：纯函数，输入 → 检查报告（顺序与判定规则见规格 §3；第 8 项 daemon
+/// 在 daemonProbeAttempted 时追加在末尾——既有 0..6 下标断言不受影响）。
 public enum DoctorReportGenerator {
     public static func generate(_ inputs: DoctorInputs) -> DoctorReport {
-        DoctorReport(checks: [
+        var checks = [
             identity(inputs),
             smcService(inputs),
             backendProbe(inputs),
@@ -118,7 +130,11 @@ public enum DoctorReportGenerator {
             batteryReading(inputs),
             coexistence(inputs),
             writePermission(inputs),
-        ])
+        ]
+        if let daemonCheck = daemon(inputs) {
+            checks.append(daemonCheck)
+        }
+        return DoctorReport(checks: checks)
     }
 
     // MARK: - 检查 1：运行身份
@@ -222,6 +238,30 @@ public enum DoctorReportGenerator {
         return DoctorCheck(
             name: "写权限", status: .info,
             detail: "不具备（写入需 root；安装 daemon 后经 XPC 执行）"
+        )
+    }
+
+    // MARK: - 检查 8：daemon（WP6 增补）
+
+    /// 运行中（mode ∈ {active, disabled}）→ PASS；已探测但未运行 → INFO；
+    /// 未探测 → nil（不渲染）。mode 异常（校验域外）→ FAIL（显式暴露，不静默）。
+    private static func daemon(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.daemonProbeAttempted else { return nil }
+        if let status = inputs.daemonStatus {
+            guard status.mode == "active" || status.mode == "disabled" else {
+                return DoctorCheck(
+                    name: "daemon", status: .fail,
+                    detail: "daemon 状态异常（mode=\(status.mode)）"
+                )
+            }
+            return DoctorCheck(
+                name: "daemon", status: .pass,
+                detail: "运行中（\(status.mode)，上限 \(status.upperLimit)%，滞回 \(status.hysteresis)）"
+            )
+        }
+        return DoctorCheck(
+            name: "daemon", status: .info,
+            detail: "未安装或未运行（cellar install 可启用限充）"
         )
     }
 }

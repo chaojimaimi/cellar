@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 68 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68）
+//   swift run CellarCoreCheck          # 跑全部 76 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -16,6 +16,7 @@
 
 import CellarCore
 import Foundation
+import XPC
 
 // MARK: - 计数器（Swift 6 严格并发下的可变状态盒）
 
@@ -269,7 +270,7 @@ struct Main {
         if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 68 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 76 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -1267,6 +1268,166 @@ struct Main {
                   "用例68", "检查 4/5 FAIL（控制键/快照读取失败）")
             check(report.worstStatus == .fail && report.exitCode == 2,
                   "用例68", "worstStatus==fail && exitCode==2")
+        }
+
+        // MARK: - 场景（WP6 规格 §6 用例 69–76）
+        // daemon 支持层纯函数/纯内存验证：不触碰真实 XPC 服务、SMC、系统目录
+        // （PolicyStore 用临时目录；XPC 消息仅构造与校验，不发包）。
+
+        // 用例 69：Doctor 检查 8「daemon」——运行中（active）→ PASS；已探测但未运行
+        // （daemonStatus=nil + daemonProbeAttempted）→ INFO（"cellar install 可启用限充"）；
+        // 未探测（缺省参数，既有输入形态）→ 不渲染（计数/下标与 65–68 兼容）。
+        do {
+            let base = healthySnapshot
+            let running = DoctorInputs(
+                isRoot: true, smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: false, chargingError: nil,
+                snapshot: base, snapshotError: nil,
+                conflict: ConflictScanResult(exact: [], generic: []),
+                daemonStatus: DaemonStatus(
+                    version: "0.1.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                    lastAction: "enforce:disableCharging", lastPercent: 80,
+                    lastExternalConnected: true, lastChargingEnabled: false,
+                    timestamp: Date(timeIntervalSince1970: 1234)
+                ),
+                daemonProbeAttempted: true
+            )
+            let report = DoctorReportGenerator.generate(running)
+            check(report.checks.count == 8 && report.checks[7].name == "daemon" && report.checks[7].status == .pass,
+                  "用例69", "运行中 → 检查 8 PASS（追加在索引 7）")
+            check(report.checks[7].detail.contains("active") && report.exitCode == 0,
+                  "用例69", "PASS detail 含模式且不抬升退出码")
+
+            let notInstalled = DoctorInputs(
+                isRoot: true, smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: false, chargingError: nil,
+                snapshot: base, snapshotError: nil,
+                conflict: ConflictScanResult(exact: [], generic: []),
+                daemonStatus: nil,
+                daemonProbeAttempted: true
+            )
+            let degraded = DoctorReportGenerator.generate(notInstalled)
+            check(degraded.checks.count == 8 && degraded.checks[7].status == .info
+                    && degraded.checks[7].detail.contains("cellar install 可启用限充"),
+                  "用例69", "已探测但未运行 → 检查 8 INFO")
+
+            let legacy = DoctorReportGenerator.generate(DoctorInputs(
+                isRoot: true, smcConnected: true,
+                probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+                chargingEnabled: false, chargingError: nil,
+                snapshot: base, snapshotError: nil,
+                conflict: ConflictScanResult(exact: [], generic: [])
+            ))
+            check(legacy.checks.count == 7, "用例69", "未探测 → 不渲染检查 8（既有输入形态兼容）")
+        }
+
+        // 用例 70：DaemonStatus JSON round-trip（含 version 与全部可选字段；全 nil 形态同测）。
+        do {
+            let full = DaemonStatus(
+                version: "0.1.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                lastAction: "enforce:disableCharging", lastPercent: 80,
+                lastExternalConnected: true, lastChargingEnabled: false,
+                timestamp: Date(timeIntervalSince1970: 1234)
+            )
+            let json = DaemonXPC.encodeStatus(full)
+            let decoded = json.flatMap { try? DaemonXPC.decodeStatus($0) }
+            check(decoded == full, "用例70", "编码→解码 == 原值（含 version 与可选字段）")
+
+            let bare = DaemonStatus(version: "0.1.0-alpha-dev", mode: "disabled", upperLimit: 60, hysteresis: 20)
+            let bareRound = DaemonXPC.encodeStatus(bare).flatMap { try? DaemonXPC.decodeStatus($0) }
+            check(bareRound == bare, "用例70", "可选字段全 nil 形态 round-trip")
+        }
+
+        // 用例 71–74：PolicyStore（临时目录）。
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cellar-policystore-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = PolicyStore(url: directory.appendingPathComponent("policy.json"))
+
+            // 71：save → load == 原值。
+            let policy = DaemonPolicy(mode: "active", upperLimit: 85, hysteresis: 3)
+            var saveOK = true
+            do { try store.save(policy) } catch { saveOK = false }
+            check(saveOK && store.load() == policy, "用例71", "save → load == 原值（临时目录）")
+
+            // 72：文件缺失 → nil（不抛错）。
+            check(PolicyStore(url: directory.appendingPathComponent("missing.json")).load() == nil,
+                  "用例72", "文件缺失 → nil")
+
+            // 73：损坏（非 JSON）→ nil。
+            try "not json".write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load() == nil, "用例73", "损坏文件 → nil（不抛错）")
+
+            // 74：语义强校验（A-2 回归：60 地板持久化绕过封堵）。
+            let backdoor = #"{"mode":"active","upperLimit":30,"hysteresis":2}"#
+            try backdoor.write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load() == nil, "用例74", "upperLimit=30 持久化回流 → nil（60 地板封堵）")
+            let badMode = #"{"mode":"foo","upperLimit":80,"hysteresis":2}"#
+            try badMode.write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load() == nil, "用例74", "mode=foo → nil")
+            try store.save(DaemonPolicy(mode: "disabled", upperLimit: 90, hysteresis: 5))
+            check(store.load() == DaemonPolicy(mode: "disabled", upperLimit: 90, hysteresis: 5),
+                  "用例74", "合法策略正常读回（对照组）")
+        }
+
+        // 用例 75：makeMessage/okReply/errorReply 结构——键存在、类型正确（xpc_get_type）、
+        // ok/error 载荷一致（⚠️ xpc 对象由 ARC 管理，勿手动 release）。
+        do {
+            let message = DaemonXPC.makeMessage(cmd: "setLimits", upper: 80, hysteresis: 2)
+            let cmdValue = xpc_dictionary_get_value(message, "cmd")
+            let upperValue = xpc_dictionary_get_value(message, "upper")
+            let hysValue = xpc_dictionary_get_value(message, "hysteresis")
+            let messageOK = xpc_get_type(message) == XPC_TYPE_DICTIONARY
+                && cmdValue.map(xpc_get_type) == XPC_TYPE_STRING
+                && String(cString: xpc_dictionary_get_string(message, "cmd")!) == "setLimits"
+                && upperValue.map(xpc_get_type) == XPC_TYPE_UINT64
+                && xpc_dictionary_get_uint64(message, "upper") == 80
+                && hysValue.map(xpc_get_type) == XPC_TYPE_UINT64
+                && xpc_dictionary_get_uint64(message, "hysteresis") == 2
+            check(messageOK, "用例75", "makeMessage 键存在且类型正确（cmd=STRING / upper/hys=UINT64）")
+
+            let statusJSON = #"{"mode":"active"}"#
+            let ok = DaemonXPC.okReply(statusJSON)
+            let okOK = xpc_get_type(ok) == XPC_TYPE_DICTIONARY
+                && xpc_dictionary_get_bool(ok, "ok") == true
+                && xpc_dictionary_get_value(ok, "status").map(xpc_get_type) == XPC_TYPE_STRING
+                && String(cString: xpc_dictionary_get_string(ok, "status")!) == statusJSON
+            check(okOK, "用例75", "okReply 结构（ok=true + status 载荷一致）")
+
+            let err = DaemonXPC.errorReply("需要 root 权限")
+            let errOK = xpc_get_type(err) == XPC_TYPE_DICTIONARY
+                && xpc_dictionary_get_bool(err, "ok") == false
+                && xpc_dictionary_get_value(err, "error").map(xpc_get_type) == XPC_TYPE_STRING
+                && String(cString: xpc_dictionary_get_string(err, "error")!) == "需要 root 权限"
+            check(errOK, "用例75", "errorReply 结构（ok=false + error 载荷一致）")
+        }
+
+        // 用例 76：validateRequest——缺 cmd / 类型混淆（upper 传 string）/ cmd 超 32 字符
+        // / 非字典 → nil；合法 → 结构化请求。
+        do {
+            let good = DaemonXPC.makeMessage(cmd: "setLimits", upper: 80, hysteresis: 2)
+            let parsed = DaemonXPC.validateRequest(good)
+            check(parsed?.cmd == "setLimits" && parsed?.upper == 80 && parsed?.hysteresis == 2,
+                  "用例76", "合法请求 → 结构化结果")
+
+            let noCmd = xpc_dictionary_create(nil, nil, 0)
+            check(DaemonXPC.validateRequest(noCmd) == nil, "用例76", "缺 cmd → nil")
+
+            let badUpper = xpc_dictionary_create(nil, nil, 0)
+            xpc_dictionary_set_string(badUpper, "cmd", "setLimits")
+            xpc_dictionary_set_string(badUpper, "upper", "80")
+            check(DaemonXPC.validateRequest(badUpper) == nil, "用例76", "upper 传 STRING → nil")
+
+            let longCmd = xpc_dictionary_create(nil, nil, 0)
+            xpc_dictionary_set_string(longCmd, "cmd", String(repeating: "x", count: 33))
+            check(DaemonXPC.validateRequest(longCmd) == nil, "用例76", "cmd 33 字符 → nil")
+
+            let string = xpc_string_create("not-a-dict")
+            check(DaemonXPC.validateRequest(string) == nil, "用例76", "非字典 → nil")
         }
     }
 

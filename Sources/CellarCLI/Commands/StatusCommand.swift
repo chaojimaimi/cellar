@@ -2,15 +2,15 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar status —— 状态一览（只读，不写任何 SMC 键）。
+/// cellar status —— 状态一览：daemon 段（XPC getStatus，任意身份可调）+ 本地只读读数段。
 ///
-/// 数据来源：RuntimeProbe.probe（后端与控制键）+ BatteryMonitor.snapshot
-/// （电量/充放状态/电压等，AppleSmartBattery 只读，无需 root）。
-/// 读取失败：打印对应错误并以退出码 1 退出，绝不静默。
+/// daemon 段：XPC 成功 → 模式/策略/最近动作；XPC 失败（未安装/未运行）→ 打印固定指引，
+/// 不阻断本地只读信息（降级视图）。退出码：本地读数全部成功 0；任一本地产失败 1
+/// （评审 P1-8：不静默——daemon 缺失不影响本地诊断可见性，本地故障必须显式非零）。
 struct StatusCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "status",
-        abstract: "状态一览（只读）：后端、电量、充放状态、控制键状态、电压等"
+        abstract: "状态一览：daemon 段 + 后端、电量、充放状态、控制键状态、电压等"
     )
 
     func run() throws {
@@ -18,8 +18,39 @@ struct StatusCommand: ParsableCommand {
             ? "root（具备写入能力）"
             : "非 root（读取可用；写入需 root，限充控制经 daemon）"
         print("运行身份：\(identity)")
-        try printBackendSection()
-        try printBatterySection()
+        printDaemonSection()
+
+        // 本地只读段：任一失败 → 退出码 1（daemon 缺失时本地成功仍 0——降级视图）。
+        var localFailed = false
+        do {
+            try printBackendSection()
+        } catch {
+            localFailed = true
+        }
+        do {
+            try printBatterySection()
+        } catch {
+            localFailed = true
+        }
+        if localFailed {
+            throw ExitCode(1)
+        }
+    }
+
+    // MARK: - daemon 段（XPC，尽力而为）
+
+    /// XPC 失败不抛错：打印固定指引（spec §5 失败矩阵与 set/enable/disable 同文案）。
+    private func printDaemonSection() {
+        do {
+            let status = try DaemonXPCClient().getStatus()
+            DaemonCommandHelpers.printStatus(status)
+        } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
+            print("daemon：\(DaemonCommandHelpers.daemonUnavailableMessage)")
+        } catch DaemonClientError.daemonError(let message) {
+            print("daemon 状态查询失败：\(message)")
+        } catch {
+            print("daemon 状态查询失败：\(error)")
+        }
     }
 
     // MARK: - 后端与控制键（SMC 路径）

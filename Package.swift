@@ -28,6 +28,12 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
+        // WP6：root LaunchDaemon（安装器校验 .build/release/cellar-daemon 产物路径，
+        // ⚠️ 目标名必须为小写连字符 cellar-daemon——评审 E-2）。
+        .executableTarget(
+            name: "cellar-daemon",
+            dependencies: ["CellarCore"]
+        ),
         .testTarget(
             name: "CellarCoreTests",
             dependencies: ["CellarCore", "CellarCLI"]

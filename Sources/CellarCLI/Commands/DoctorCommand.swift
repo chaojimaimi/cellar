@@ -1,16 +1,17 @@
 import ArgumentParser
 import CellarCore
+import Foundation
 
-/// cellar doctor —— 七项只读诊断（不写任何 SMC 键）。
+/// cellar doctor —— 八项只读诊断（不写任何 SMC 键）。
 ///
-/// 无 sudo 亦可给出可信结论（SMC-NOTES §1.1：LE 字节序定版后读路径普通用户稳定）；
+/// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
 /// 报告生成（DoctorReportGenerator）为 CellarCore 纯函数，本命令只做
-/// 输入组装与渲染（“报告即数据”）：每行 `[PASS]/[INFO]/[WARN]/[FAIL] 检查名：detail`。
+/// 输入组装与渲染（"报告即数据"）：每行 `[PASS]/[INFO]/[WARN]/[FAIL] 检查名：detail`。
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：七项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：八项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
     )
 
     func run() throws {
@@ -69,6 +70,15 @@ struct DoctorCommand: ParsableCommand {
         // 检查 6：共存检测（四目录扫描，只读）。
         let conflict = ConflictScan.scan()
 
+        // 检查 8：daemon 状态（XPC getStatus，任意身份可调；失败 = 未安装/未运行）。
+        // daemonProbeAttempted 恒 true：已探测但未运行才渲染 INFO 行（"cellar install 可启用限充"）。
+        var daemonStatus: DaemonStatus?
+        do {
+            daemonStatus = try DaemonXPCClient().getStatus()
+        } catch {
+            daemonStatus = nil
+        }
+
         return DoctorInputs(
             isRoot: RuntimeProbe.isRunningAsRoot,
             smcConnected: smcConnected,
@@ -77,7 +87,9 @@ struct DoctorCommand: ParsableCommand {
             chargingError: chargingError,
             snapshot: snapshot,
             snapshotError: snapshotError,
-            conflict: conflict
+            conflict: conflict,
+            daemonStatus: daemonStatus,
+            daemonProbeAttempted: true
         )
     }
 

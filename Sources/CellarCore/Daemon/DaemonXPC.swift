@@ -1,0 +1,289 @@
+import Foundation
+
+#if canImport(XPC)
+import XPC
+#endif
+
+/// daemon 状态快照（XPC 回包 / CLI 渲染 / doctor 检查共用；Codable JSON 通讯载荷）。
+///
+/// lastAction 为最近一次策略/事件动作的人类可读描述（如 "enforce:disableCharging"、
+/// "sleep:noop"、"disable"），可选字段随采样状态填充，未采样过为 nil。
+public struct DaemonStatus: Codable, Equatable, Sendable {
+    /// daemon 版本（install 后核对：防 CLI 对 stale daemon，评审 F-3）。
+    public var version: String
+    /// "active" | "disabled"。
+    public var mode: String
+    public var upperLimit: Int
+    public var hysteresis: Int
+    public var lastAction: String?
+    public var lastPercent: Int?
+    public var lastExternalConnected: Bool?
+    public var lastChargingEnabled: Bool?
+    /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
+    public var timestamp: Date
+
+    public init(
+        version: String,
+        mode: String,
+        upperLimit: Int,
+        hysteresis: Int,
+        lastAction: String? = nil,
+        lastPercent: Int? = nil,
+        lastExternalConnected: Bool? = nil,
+        lastChargingEnabled: Bool? = nil,
+        timestamp: Date = Date()
+    ) {
+        self.version = version
+        self.mode = mode
+        self.upperLimit = upperLimit
+        self.hysteresis = hysteresis
+        self.lastAction = lastAction
+        self.lastPercent = lastPercent
+        self.lastExternalConnected = lastExternalConnected
+        self.lastChargingEnabled = lastChargingEnabled
+        self.timestamp = timestamp
+    }
+}
+
+/// CLI 侧 XPC 调用失败矩阵（评审 E-3）：timeout/connectionFailed → "daemon 未安装或未运行"；
+/// daemonError → 原文透传。
+public enum DaemonClientError: Error, Equatable, Sendable {
+    /// 5 秒无回包。
+    case timeout
+    /// 连接建立失败 / 对端连接无效（daemon 未运行即为此态）。
+    case connectionFailed
+    /// daemon 回包 ok=false（含 euid 鉴权拒绝与参数错误），原文随包带回。
+    case daemonError(String)
+}
+
+/// raw XPC 协议（规格 §2）：请求键 cmd/upper/hysteresis；回包键 ok/status|error。
+/// 不用 NSXPCConnection——euid 校验可直接用 `xpc_connection_get_euid`，
+/// 同步回传对 CLI 天然友好（评审 E-4：reply_sync 无超时参数，客户端自行信号量限时）。
+public enum DaemonXPC {
+    public static let machServiceName = "com.cellar.daemon"
+    // install 后与 getStatus 的 version 核对（评审 F-3）；与 Cellar --version 同串。
+    public static let daemonVersion = "0.1.0-alpha-dev"
+
+    // MARK: - 线格式键与常量
+
+    public static let cmdKey = "cmd"
+    public static let upperKey = "upper"
+    public static let hysteresisKey = "hysteresis"
+    public static let okKey = "ok"
+    public static let statusKey = "status"
+    public static let errorKey = "error"
+
+    /// cmd 最大长度（字节；命令集为 ASCII，字节数即字符数）。
+    public static let maxCommandLength = 32
+    /// 客户端回包等待上限（秒）。
+    public static let replyTimeoutSeconds: TimeInterval = 5
+
+    #if canImport(XPC)
+    // MARK: - 请求/回包构造与校验（服务端与客户端共用）
+
+    /// 构造请求字典（⚠️ Swift 的 ARC 自动管理 xpc 对象引用计数——调用方不得手动
+    /// xpc_retain/xpc_release，否则双重释放崩溃）。
+    public static func makeMessage(cmd: String, upper: UInt64, hysteresis: UInt64) -> xpc_object_t {
+        let message = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(message, cmdKey, cmd)
+        xpc_dictionary_set_uint64(message, upperKey, upper)
+        xpc_dictionary_set_uint64(message, hysteresisKey, hysteresis)
+        return message
+    }
+
+    /// 请求结构校验（评审 A-4/P0）：xpc_get_type 白名单——cmd 必须为 STRING 且 ≤32 字节、
+    /// upper/hysteresis 若出现必须为 UINT64；缺 cmd / 类型混淆 / 超长 → nil
+    /// （调用方回错误包，不崩溃）。upper/hysteresis 缺席按 0 处理。
+    public static func validateRequest(_ msg: xpc_object_t) -> (cmd: String, upper: UInt64, hysteresis: UInt64)? {
+        // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
+        guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
+
+        guard let cmdValue = xpc_dictionary_get_value(msg, cmdKey) else { return nil }
+        guard xpc_get_type(cmdValue) == XPC_TYPE_STRING else { return nil }
+        let cmdLength = xpc_string_get_length(cmdValue)
+        guard cmdLength > 0, cmdLength <= maxCommandLength else { return nil }
+        guard let cmdPointer = xpc_dictionary_get_string(msg, cmdKey) else { return nil }
+
+        var upper: UInt64 = 0
+        var hysteresis: UInt64 = 0
+        if let value = xpc_dictionary_get_value(msg, upperKey) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            upper = xpc_dictionary_get_uint64(msg, upperKey)
+        }
+        if let value = xpc_dictionary_get_value(msg, hysteresisKey) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            hysteresis = xpc_dictionary_get_uint64(msg, hysteresisKey)
+        }
+        return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis)
+    }
+
+    /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
+    public static func okReply(_ statusJSON: String) -> xpc_object_t {
+        let reply = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_bool(reply, okKey, true)
+        xpc_dictionary_set_string(reply, statusKey, statusJSON)
+        return reply
+    }
+
+    /// 错误回包：{"ok": false, "error": <message>}（ARC 管理生命周期，勿手动 release）。
+    public static func errorReply(_ message: String) -> xpc_object_t {
+        let reply = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_bool(reply, okKey, false)
+        xpc_dictionary_set_string(reply, errorKey, message)
+        return reply
+    }
+
+    /// 状态 → JSON 串（encode 失败（不可达）→ nil）。
+    public static func encodeStatus(_ status: DaemonStatus) -> String? {
+        guard let data = try? JSONEncoder().encode(status) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// JSON 串 → 状态（解码失败原样上抛；仅 daemon/CLI 配对使用，失败按 daemonError 呈现）。
+    public static func decodeStatus(_ json: String) throws -> DaemonStatus {
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(DaemonStatus.self, from: data)
+    }
+    #endif
+}
+
+#if canImport(XPC)
+/// CLI 侧客户端：raw XPC + 异步回包 + 信号量 5 秒等待（评审 E-4——
+/// `send_message_with_reply_sync` 无超时参数，超时必须自行实现）。
+public struct DaemonXPCClient: Sendable {
+    /// 保持 throws 契约（规格 §2）。⚠️ Swift 导入下 `xpc_connection_create_mach_service`
+    /// 返回非可选句柄——连接"建立失败"不可观测，实际失败形态（daemon 未运行）在
+    /// exchange 中经连接无效事件暴露为 .connectionFailed。
+    public init() throws {}
+
+    public func getStatus() throws -> DaemonStatus {
+        try exchange(cmd: "getStatus")
+    }
+
+    /// ⚠️ 60 地板双重复核的一侧：CLI 侧已用 LimitPolicy 构造校验；daemon 侧 setLimits 再核验一次。
+    /// 负数经 clamping 收敛为 0（不会是合法策略，daemon 侧报地板错误；防 UInt64 转换崩溃）。
+    public func setLimits(upperLimit: Int, hysteresis: Int) throws -> DaemonStatus {
+        try exchange(
+            cmd: "setLimits",
+            upper: UInt64(clamping: upperLimit),
+            hysteresis: UInt64(clamping: hysteresis)
+        )
+    }
+
+    public func disable() throws -> DaemonStatus {
+        try exchange(cmd: "disable")
+    }
+
+    public func enable() throws -> DaemonStatus {
+        try exchange(cmd: "enable")
+    }
+
+    // MARK: - 内部
+
+    /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
+    /// - 连接无效事件（daemon 未运行/未安装）→ .connectionFailed
+    /// - 超时无回包 → .timeout
+    /// - ok=false → .daemonError(原文)
+    private func exchange(cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0) throws -> DaemonStatus {
+        // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
+        // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
+        let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
+        let message = DaemonXPC.makeMessage(cmd: cmd, upper: upper, hysteresis: hysteresis)
+        let waiter = ReplyWaiter()
+
+        xpc_connection_set_event_handler(connection) { object in
+            waiter.receive(object)
+        }
+        xpc_connection_set_target_queue(connection, DispatchQueue.global(qos: .userInitiated))
+        xpc_connection_resume(connection)
+        xpc_connection_send_message(connection, message)
+
+        // 异步回包 + 信号量 5 秒超时（reply_sync 无超时参数，评审 E-4）。
+        let outcome = waiter.wait(timeout: .now() + DaemonXPC.replyTimeoutSeconds)
+
+        // 收包/超时/错误事件齐备后关闭连接（连接与消息对象随作用域由 ARC 回收）。
+        xpc_connection_cancel(connection)
+
+        switch outcome {
+        case .timedOut:
+            throw DaemonClientError.timeout
+        case .invalidPeer:
+            throw DaemonClientError.connectionFailed
+        case .reply(let object):
+            return try Self.parse(reply: object)
+        }
+    }
+
+    /// 解析回包字典（对象随参数作用域由 ARC 回收，勿手动 release）。
+    private static func parse(reply object: xpc_object_t) throws -> DaemonStatus {
+        guard xpc_get_type(object) == XPC_TYPE_DICTIONARY else {
+            throw DaemonClientError.connectionFailed
+        }
+        let ok = xpc_dictionary_get_bool(object, DaemonXPC.okKey)
+        if ok {
+            guard let json = xpc_dictionary_get_string(object, DaemonXPC.statusKey) else {
+                throw DaemonClientError.daemonError("daemon 回包缺少状态载荷")
+            }
+            return try DaemonXPC.decodeStatus(String(cString: json))
+        }
+        if let error = xpc_dictionary_get_string(object, DaemonXPC.errorKey) {
+            throw DaemonClientError.daemonError(String(cString: error))
+        }
+        throw DaemonClientError.daemonError("daemon 返回未知错误")
+    }
+}
+
+/// 回包等待盒：事件处理器（全局队列）写入、等待方（调用线程）读取。
+///
+/// ⚠️ 生命周期：handler 参数对象为借用（+0），跨回调持有依赖 Swift ARC——
+/// 存入 `state` 时编译器自动 retain，读取/离开作用域时自动 release；
+/// 本类型不做任何手动 xpc_retain/xpc_release。
+private final class ReplyWaiter: @unchecked Sendable {
+    private enum State {
+        case pending
+        case received(xpc_object_t)
+        case invalidPeer
+    }
+
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var state: State = .pending
+
+    /// 事件回调（可被多次调用；首个有效结果生效，后续事件被 ARC 回收）。
+    func receive(_ object: xpc_object_t) {
+        lock.lock()
+        if case .pending = state {
+            if xpc_get_type(object) == XPC_TYPE_ERROR {
+                // 连接无效（daemon 未运行等）：错误常量对象不存储（immortal）。
+                state = .invalidPeer
+            } else {
+                state = .received(object)   // 存储时 ARC 自动 retain（跨回调安全）
+            }
+        }
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    /// 等待回包（超时返回 timedOut）。返回 .reply 时对象由 .received 持有，
+    /// 调用方使用期间保持存活（ARC），离开作用域自动回收。
+    func wait(timeout: DispatchTime) -> Outcome {
+        _ = semaphore.wait(timeout: timeout)
+        lock.lock()
+        defer { lock.unlock() }
+        switch state {
+        case .pending:
+            return .timedOut
+        case .received(let object):
+            return .reply(object)
+        case .invalidPeer:
+            return .invalidPeer
+        }
+    }
+
+    enum Outcome {
+        case timedOut
+        case invalidPeer
+        case reply(xpc_object_t)
+    }
+}
+#endif
