@@ -6,6 +6,13 @@ let package = Package(
     platforms: [
         .macOS(.v13)
     ],
+    products: [
+        .executable(name: "cellar", targets: ["CellarCLI"])
+    ],
+    dependencies: [
+        // CLI 参数解析（Apple 官方开源，Apache-2.0；仅 CellarCLI 目标使用）
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")
+    ],
     targets: [
         .target(name: "CellarCore"),
         // CLT-only 环境的本地验证工具（无 XCTest 依赖）：跑 §5.5 全部场景 + 真机冒烟。
@@ -13,6 +20,13 @@ let package = Package(
         .executableTarget(
             name: "CellarCoreCheck",
             dependencies: ["CellarCore"]
+        ),
+        .executableTarget(
+            name: "CellarCLI",
+            dependencies: [
+                "CellarCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
         ),
         .testTarget(
             name: "CellarCoreTests",

@@ -6,6 +6,7 @@ DerivedData/
 *.xcworkspace/xcuserdata/
 .swiftpm/
 .build/
+.build-user/
 *.o
 *.dSYM/
 
