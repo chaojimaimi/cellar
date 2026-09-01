@@ -19,3 +19,35 @@ jobs:
 
       - name: Build (release)
         run: swift build -c release
+
+  # App bundle 门禁（Phase 2 WP6 §2.2）：App/ 15 个 Swift 文件零自动化验证的
+  # 现状收口。必绿门禁——不设 continue-on-error，ad-hoc 签名与发布产物同形态
+  # （不设 CODE_SIGNING_ALLOWED=NO）。与 SPM job 并列无依赖。
+  app-build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        # 显式 pin 防镜像默认工具链漂移。macos-26 镜像默认即 Xcode 26.6
+        # （2026-07-21 起），若某镜像路径不同致 xcode-select 失败，回退策略 =
+        # 不 xcode-select，直接依赖 PATH 上的 xcrun xcodebuild 解析（版本以下方
+        # xcodebuild -version 日志为证）。
+        run: |
+          if [ -d /Applications/Xcode_26.6.app ]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          else
+            echo "::warning::/Applications/Xcode_26.6.app 不存在，回退 xcrun 路径解析工具链"
+          fi
+          xcodebuild -version
+
+      - name: Build Cellar.app (Release)
+        run: |
+          xcodebuild -project App/CellarApp.xcodeproj -scheme CellarApp \
+            -configuration Release -derivedDataPath App/.ci-build build
+
+      - name: Upload Cellar.app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cellar.app
+          path: App/.ci-build/Build/Products/Release/Cellar.app

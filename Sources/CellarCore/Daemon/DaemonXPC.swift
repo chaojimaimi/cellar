@@ -61,10 +61,10 @@ public enum DaemonClientError: Error, Equatable, Sendable {
 /// 同步回传对 CLI 天然友好（评审 E-4：reply_sync 无超时参数，客户端自行信号量限时）。
 public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
-    // install 后与 getStatus 的 version 核对（评审 F-3）；与 App 版本串同
-    // （0.2.1-alpha-dev）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更），
+    // install 后与 getStatus 的 version 核对（评审 F-3）；与 App/CLI 版本串一致
+    // （0.2.0-alpha）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更），
     // 防 stale daemon 诊断混淆。
-    public static let daemonVersion = "0.2.1-alpha-dev"
+    public static let daemonVersion = "0.2.0-alpha"
 
     // MARK: - 线格式键与常量
 

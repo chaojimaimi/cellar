@@ -1291,7 +1291,7 @@ struct Main {
                 snapshot: base, snapshotError: nil,
                 conflict: ConflictScanResult(exact: [], generic: []),
                 daemonStatus: DaemonStatus(
-                    version: "0.2.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                    version: "0.2.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
                     lastAction: "enforce:disableCharging", lastPercent: 80,
                     lastExternalConnected: true, lastChargingEnabled: false,
                     timestamp: Date(timeIntervalSince1970: 1234)
@@ -1331,7 +1331,7 @@ struct Main {
         // 用例 70：DaemonStatus JSON round-trip（含 version 与全部可选字段；全 nil 形态同测）。
         do {
             let full = DaemonStatus(
-                version: "0.2.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                version: "0.2.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
                 lastAction: "enforce:disableCharging", lastPercent: 80,
                 lastExternalConnected: true, lastChargingEnabled: false,
                 timestamp: Date(timeIntervalSince1970: 1234)
@@ -1340,7 +1340,7 @@ struct Main {
             let decoded = json.flatMap { try? DaemonXPC.decodeStatus($0) }
             check(decoded == full, "用例70", "编码→解码 == 原值（含 version 与可选字段）")
 
-            let bare = DaemonStatus(version: "0.2.0-alpha-dev", mode: "disabled", upperLimit: 60, hysteresis: 20)
+            let bare = DaemonStatus(version: "0.2.0-alpha", mode: "disabled", upperLimit: 60, hysteresis: 20)
             let bareRound = DaemonXPC.encodeStatus(bare).flatMap { try? DaemonXPC.decodeStatus($0) }
             check(bareRound == bare, "用例70", "可选字段全 nil 形态 round-trip")
         }
@@ -1915,7 +1915,7 @@ struct Main {
         do {
             func status(_ lastAction: String?, upper: Int = 90) -> DaemonStatus {
                 DaemonStatus(
-                    version: "0.2.1-alpha-dev", mode: "active", upperLimit: upper,
+                    version: "0.2.0-alpha", mode: "active", upperLimit: upper,
                     hysteresis: 2, lastAction: lastAction, lastPercent: 90,
                     lastExternalConnected: true, lastChargingEnabled: false
                 )

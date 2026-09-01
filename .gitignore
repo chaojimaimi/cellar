@@ -10,6 +10,11 @@ DerivedData/
 *.o
 *.dSYM/
 
+# 发布产物与 CI/打包派生数据（Phase 2 WP6 §2.5/§2.6）
+dist/
+App/.ci-build/
+App/.release-build/
+
 # 本地私有内容（不入公开仓库）
 PRIVATE-NOTES.md
 docs/
