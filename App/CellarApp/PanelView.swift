@@ -48,7 +48,10 @@ struct PanelView: View {
     var body: some View {
         Group {
             // 引导模式门（WP5 §2.1）：loaded 守卫 + 触发式（OnboardingController 判定）。
-            if installer.loaded && onboarding.shouldShowOnboarding(registration: installer.registration) {
+            // ⚠️ gateOverride（用户点安装被冲突门拦下）不受 loaded 守卫——用户动作的
+            // 即时反馈（教学页切换）不能被初始化挂起吞掉（验收事故回归）。
+            if onboarding.gateOverride
+                || (installer.loaded && onboarding.shouldShowOnboarding(registration: installer.registration)) {
                 OnboardingView()
             } else {
                 regularPanel

@@ -66,19 +66,21 @@ public func menuBarSymbolName(for state: MenuBarIconState) -> String {
     case .charging: return "bolt.fill"
     case .holding: return "gauge.with.needle"
     case .discharging: return "arrow.down.circle"
-    case .disabled: return "powerplug.slash"
+    // ⚠️ disabled 首选 power.dotted（2026-09-01 实测 powerplug.slash 在 macOS 26
+    // 不存在——Image(systemName:) 渲染为空 = 菜单栏图标整只消失）。
+    case .disabled: return "power.dotted"
     case .alert: return "exclamationmark.triangle.fill"
     }
 }
 
-/// 同表回退链（首选符号不可用时按此降级；候选在 macOS 26 全部存在，回退链保留
-/// 供未来系统变动兜底）。
+/// 同表回退链（首选符号不可用时按此降级；调用方应做运行时存在性检查——
+/// powerplug.slash 缺失事故证明候选表本身也需要兜底）。
 public func menuBarSymbolFallbackName(for state: MenuBarIconState) -> String {
     switch state {
     case .charging: return "bolt.circle.fill"
     case .holding: return "circle.dashed"
     case .discharging: return "minus.circle"
-    case .disabled: return "power.dotted"
+    case .disabled: return "powerplug"
     case .alert: return "exclamationmark.triangle"
     }
 }

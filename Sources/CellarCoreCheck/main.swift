@@ -1793,7 +1793,9 @@ struct Main {
                 (.charging, "bolt.fill"),
                 (.holding, "gauge.with.needle"),
                 (.discharging, "arrow.down.circle"),
-                (.disabled, "powerplug.slash"),
+                // disabled 首选 power.dotted：powerplug.slash 在 macOS 26 不存在
+                // （Image 渲染为空 = 图标消失，真机验收事故回归）。
+                (.disabled, "power.dotted"),
                 (.alert, "exclamationmark.triangle.fill"),
             ]
             var ok = true
@@ -1806,7 +1808,7 @@ struct Main {
                 (.charging, "bolt.circle.fill"),
                 (.holding, "circle.dashed"),
                 (.discharging, "minus.circle"),
-                (.disabled, "power.dotted"),
+                (.disabled, "powerplug"),
                 (.alert, "exclamationmark.triangle"),
             ]
             ok = true

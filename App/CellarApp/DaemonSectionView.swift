@@ -84,6 +84,9 @@ struct DaemonSectionView: View {
     }
 
     private var statusText: String {
+        // 诚实初始化态（验收事故回归）：refresh 挂起时 loaded 永假，
+        // 不再以「未注册」初始值误导（用户实际不知道 daemon 是否在管）。
+        guard installer.loaded else { return "初始化中…" }
         switch installer.registration {
         case .notRegistered: return "未注册"
         case .pending: return "等待系统授权…"
@@ -101,6 +104,7 @@ struct DaemonSectionView: View {
 
     /// 四象限文案（§2.2 表格逐行对应）。
     private var guidanceText: String {
+        guard installer.loaded else { return "" }
         switch installer.guidance {
         case .normalInstall:
             return "守护进程未安装。点击「安装守护进程」注册，首次需在系统设置中批准。"

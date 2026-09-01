@@ -1,6 +1,7 @@
 import AppKit
 import CellarCore
 import Foundation
+import os
 import ServiceManagement
 
 // MARK: - 注册态 adapter（3 行切缝，§2.6 定版）
@@ -50,6 +51,9 @@ final class DaemonInstaller: ObservableObject {
     /// 首次 refresh 回包已置位（WP5 P1-3 竞态守卫）：引导门在 loaded == false 时
     /// 不判定（常规面板呈现），防已注册用户启动瞬间引导闪现。
     @Published private(set) var loaded = false
+    /// refresh 自愈重试计数（看门狗；成功回包清零，上限 3 次防永久轮询）。
+    private var refreshRetries = 0
+    private nonisolated static let log = Logger(subsystem: "com.cellar", category: "installer")
 
     private var pollTask: Task<Void, Never>?
     private var settingsOpened = false
@@ -64,7 +68,12 @@ final class DaemonInstaller: ObservableObject {
     /// 刷新注册态。⚠️ 主线程只做本地文件检查；SMAppService status（同步 XPC）与
     /// launchctl print（子进程 waitUntilExit）都在后台执行——在面板展示事务里阻塞
     /// 主线程会让 MenuBarExtra 窗口创建后永远不上屏（2026-09-01 真机二分实证）。
+    ///
+    /// 看门狗（验收事故回归）：后台任务若挂起（status IPC/launchctl 无回包），
+    /// loaded 永假 → 面板冻结初始态、引导门失效、用户点安装「毫无反应」——
+    /// 4 秒未回包自愈重试（有界 3 次），超限后面板诚实呈现「初始化中」。
     func refresh() {
+        Self.log.info("refresh 开始（自愈重试计数 \(self.refreshRetries)）")
         let legacy = FileManager.default.fileExists(atPath: Self.legacyPlistPath)
         hasLegacyPlist = legacy
         Task.detached { [weak self] in
@@ -73,8 +82,10 @@ final class DaemonInstaller: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.loaded = true   // P1-3：首次回包置位（引导门守卫）
+                self.refreshRetries = 0
                 self.registration = registration
                 self.route = route
+                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public)")
                 self.guidance = migrationGuidance(
                     legacyPlistExists: legacy,
                     registration: registration
@@ -89,6 +100,15 @@ final class DaemonInstaller: ObservableObject {
                 }
                 self.refreshAnomaly(registration: registration)
             }
+        }
+        // 看门狗：仅首次（loaded == false）时武装；回包后此守卫短路。
+        guard !loaded else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, !self.loaded, self.refreshRetries < 3 else { return }
+            self.refreshRetries += 1
+            Self.log.error("refresh 4s 未回包（疑似 status IPC/launchctl 挂起），自愈重试 \(self.refreshRetries)/3")
+            self.refresh()
         }
     }
 
@@ -115,6 +135,7 @@ final class DaemonInstaller: ObservableObject {
         guard !busy else { return }
         busy = true
         lastError = nil
+        Self.log.info("install 请求（用户触发）")
         Task.detached { [weak self] in
             let outcome = Self.registerBlocking()
             await MainActor.run { self?.handleRegister(outcome) }
@@ -195,8 +216,10 @@ final class DaemonInstaller: ObservableObject {
         let daemon = SMAppService.daemon(plistName: plistName)
         do {
             try daemon.register()
+            Self.log.info("register: OK")
         } catch {
             let status = RegistrationStatus(daemon.status)
+            Self.log.error("register 抛错：\(error, privacy: .public)；status=\(String(describing: status), privacy: .public)")
             guard status == .pending || status == .enabled else { return .failure(error) }
         }
         return .success(RegistrationStatus(daemon.status))
