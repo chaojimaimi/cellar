@@ -751,7 +751,10 @@ private final class Runner: @unchecked Sendable {
             if s.temperatureC < 35 { logger.log("[检查] 温度<35℃=通过 (\(tempS(s.temperatureC))℃)") } else { fail("温度<35℃"); logger.log("[检查]     温度 \(tempS(s.temperatureC))℃") }
         } else { fail("电池遥测"); logger.log("[检查]     遥测服务不可用") }
         if smc.read("CHTE") != nil { logger.log("[检查] CHTE 可读=通过") } else { fail("CHTE 可读") }
-        if processRunning("cellar-daemon") || processRunning("Cellar") {
+        // 仅检查 root 写入者（cellar-daemon 精确名）。⚠️ 不检查菜单栏 App（"Cellar"）：
+        // App 是用户态面板，不写 SMC，spike 期间本就该运行（用户还要用它卸载/重装）——
+        // 把它算作冲突是真机验收事故（2026-09-02：App 常驻导致预检永远失败）。
+        if processRunning("cellar-daemon") {
             fail("daemon 停用")
             logger.log("[检查]     daemon 运行中——请经 App 面板停用/卸载（禁止 launchctl，保持用户态合规）")
         } else { logger.log("[检查] daemon 未运行=通过") }
