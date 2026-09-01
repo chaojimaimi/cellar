@@ -138,3 +138,19 @@ public actor AppConfigStore {
     /// 日志（actor 静态成员非隔离；Logger Sendable，跨隔离界安全）。
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "app-config")
 }
+
+// MARK: - 展示格式化
+
+/// 时间戳本地时区渲染。⚠️ 直接对 Date 做字符串插值（description）恒为 UTC——
+/// 渲染层必须显式转换（真机验收缺陷：CLI status 显示 +0000 时间，与系统时钟差 8 小时）。
+/// timeZone 可注入供测试确定性；locale 钉死 POSIX，防地区设置（历法/12 小时制）漂移格式。
+public func formatTimestamp(
+    _ date: Date,
+    timeZone: TimeZone = .current
+) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    formatter.timeZone = timeZone
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    return formatter.string(from: date)
+}

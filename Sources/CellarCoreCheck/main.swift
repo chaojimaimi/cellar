@@ -1754,6 +1754,33 @@ struct Main {
             check((try? LimitPolicy(upperLimit: 60, hysteresis: 20)) != nil,
                   "用例88", "60/20 通过预检（对照组）")
         }
+
+        // 用例 89：时间戳本地时区渲染（真机验收缺陷回归：Date.description 恒为 UTC，
+        // CLI 曾直出 +0000 与系统时钟差 8 小时）。固定时区断言确定性。
+        do {
+            // 样本取自验收反馈：2026-09-01 06:31:36 UTC == 14:31:36 上海。
+            var components = DateComponents()
+            components.year = 2026
+            components.month = 9
+            components.day = 1
+            components.hour = 6
+            components.minute = 31
+            components.second = 36
+            var utcCalendar = Calendar(identifier: .gregorian)
+            utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+            guard let sample = utcCalendar.date(from: components) else {
+                check(false, "用例89", "样本日期构造失败（固定 UTC 分量）")
+                return
+            }
+            expectEqual(
+                formatTimestamp(sample, timeZone: TimeZone(identifier: "Asia/Shanghai")!),
+                "2026-09-01 14:31:36",
+                "用例89", "UTC 样本按上海时区渲染为当地时钟")
+            expectEqual(
+                formatTimestamp(sample, timeZone: TimeZone(identifier: "UTC")!),
+                "2026-09-01 06:31:36",
+                "用例89", "UTC 时区渲染保持原值（对照旧缺陷输出形态）")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）

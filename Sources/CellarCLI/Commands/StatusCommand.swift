@@ -135,6 +135,6 @@ struct StatusCommand: ParsableCommand {
             if let name = adapter.name { parts.append(name) }
             print("适配器：\(parts.isEmpty ? "（空）" : parts.joined(separator: " · "))")
         }
-        print("时间戳：\(snapshot.timestamp)")
+        print("时间戳：\(formatTimestamp(snapshot.timestamp))")
     }
 }
