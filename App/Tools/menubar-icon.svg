@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cellar menu bar icon design source (monochrome template variant).
+  Same ring + core structure as the app icon, simplified for template
+  rendering: no background fill (a filled squircle would render as a solid
+  block), no faint ring, no glow filter; main arc boldened to 26/240 so the
+  arc stays legible at 16px (~1.7px stroke). Rendered as a template image,
+  so only the alpha channel is used by the menu bar.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 240 240">
+  <path d="M120 58 A62 62 0 1 1 61.03 100.84" fill="none" stroke="#000" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="120" cy="120" r="11" fill="#000"/>
+</svg>

@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "cellar", targets: ["CellarCLI"])
+        .executable(name: "cellar", targets: ["CellarCLI"]),
+        .library(name: "CellarCore", targets: ["CellarCore"])
     ],
     dependencies: [
         // CLI 参数解析（Apple 官方开源，Apache-2.0；仅 CellarCLI 目标使用）

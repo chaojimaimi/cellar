@@ -15,3 +15,6 @@ PRIVATE-NOTES.md
 docs/
 Tests/
 PLAN.md
+
+# ZCode local markers (commit-gate)
+.zcode/
