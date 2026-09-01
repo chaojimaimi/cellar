@@ -1,15 +1,20 @@
 import CellarCore
 import SwiftUI
 
-/// 菜单栏面板（Phase 2 WP3）：守护进程安装态（WP2 既有）+ 策略控制区（WP3）。
+/// 菜单栏面板（Phase 2 WP4 正式面板，规格 §2.7 七层分区）：
+/// 告警横幅置顶 → 仪表（GaugeView）→ 状态行（StatusLineView）→ 控制区
+/// （仅 registration == .enabled）→ daemon 安装区（精简）→ 登录项 + 退出。
+/// 宽 340 统一。
 ///
-/// 控制区仅 registration == .enabled 时可用（规格 §2.1 呈现优先级）；滑杆为本地
-/// @State，同步时机 = 面板打开 + 应用成功（轮询回包不回写，规格 §2.3）。
-/// 轮询换档由 onAppear/onDisappear 驱动（cancel + 立即刷新 + 新间隔重启，§2.2）。
-struct PanelPlaceholder: View {
-    @StateObject private var installer = DaemonInstaller()
-    @StateObject private var statusController = StatusController()
-    @StateObject private var loginItems = LoginItemController()
+/// 组合根提升（规格 §2.8）：三个控制器为 CellarApp 层 @StateObject 经
+/// environmentObject 注入——面板视图重建不断供数据源；本视图 onAppear/
+/// onDisappear 只做换档（status 1s↔60s + 遥测档启停），安装刷新在 App 启动。
+/// 控制逻辑沿用 WP3 不换（sliderSynced/预检/三态/busy/stale 比对全部保留）。
+struct PanelView: View {
+    @EnvironmentObject private var installer: DaemonInstaller
+    @EnvironmentObject private var statusController: StatusController
+    @EnvironmentObject private var loginItems: LoginItemController
+    @Environment(\.cellarTheme) private var theme
 
     // 滑杆本地态（不同步于轮询回包，防「拖到 70 未应用被拽回 80」）。
     @State private var upperLimit: Double = 80
@@ -21,11 +26,20 @@ struct PanelPlaceholder: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            ChargingDialPlaceholder()
+            AlertBanner(
+                feedback: statusController.controlFeedback,
+                connection: statusController.connection,
+                lastAttemptSummary: statusController.lastAttempt?.summary,
+                onRetry: statusController.lastAttempt == nil
+                    ? { statusController.refreshNow() }
+                    : { statusController.retryLastAttempt() }
+            )
+
+            GaugeView(state: gaugeState)
                 .frame(width: 150, height: 150)
                 .padding(.top, 4)
 
-            daemonSection
+            StatusLineView(snapshot: statusController.batterySnapshot)
 
             if installer.registration == .enabled {
                 Divider()
@@ -33,7 +47,9 @@ struct PanelPlaceholder: View {
             }
 
             Divider()
+            daemonSection
 
+            Divider()
             loginItemSection
 
             Divider()
@@ -44,29 +60,10 @@ struct PanelPlaceholder: View {
         }
         .padding(18)
         .frame(width: 340)
-        .onAppear {
-            installer.refresh()
-            statusController.setPolling(panelVisible: true, daemonRegistered: installer.registration == .enabled)
-            // 面板打开同步滑杆（规格 §2.3 同步时机之一）；应用成功经回调二次同步。
-            statusController.onLimitsApplied = { upper, hys in
-                upperLimit = Double(upper)
-                hysteresis = hys
-                sliderSynced = true
-            }
-            sliderSynced = false
-            if let (upper, hys) = statusController.syncSliderFromStatus() {
-                upperLimit = Double(upper)
-                hysteresis = hys
-                sliderSynced = true
-            }
-            loginItems.load()
-        }
-        .onDisappear {
-            installer.stopPolling()
-            statusController.setPolling(panelVisible: false, daemonRegistered: installer.registration == .enabled)
-        }
-        // 单向接线（规格 §2.1）：registration → StatusController；离开 .enabled →
-        // 停轮询 + 清空运行态（防残留 .unreachable 图标永久 .alert）。
+        .onAppear(perform: panelAppeared)
+        .onDisappear(perform: panelDisappeared)
+        // 单向接线（规格 §2.1）：registration → StatusController（与 App 层接线并存，
+        // 面板打开期间的注册变化就近处理；registrationChanged 幂等，双触发无害）。
         .onChange(of: installer.registration) {
             statusController.registrationChanged(installer.registration)
         }
@@ -80,7 +77,78 @@ struct PanelPlaceholder: View {
         }
     }
 
-    /// 守护进程状态区（§2.6）：状态行（含路由）+ 四象限文案 + 位置提示 + 操作按钮。
+    // MARK: - 面板生命周期（§2.8：只做换档 + 遥测档启停；安装刷新在 App 启动）
+
+    private func panelAppeared() {
+        // 注册态新鲜度（评审 P2-1）：CLI 卸载（面板迁移指引就是让用户跑
+        // sudo cellar uninstall）后重开面板必须重查，否则呈现误导性失联态。
+        installer.refresh()
+        statusController.setPolling(panelVisible: true, daemonRegistered: installer.registration == .enabled)
+        statusController.setTelemetry(panelVisible: true)
+        // 面板打开同步滑杆（规格 §2.3 同步时机之一）；应用成功经回调二次同步。
+        statusController.onLimitsApplied = { upper, hys in
+            upperLimit = Double(upper)
+            hysteresis = hys
+            sliderSynced = true
+        }
+        sliderSynced = false
+        if let (upper, hys) = statusController.syncSliderFromStatus() {
+            upperLimit = Double(upper)
+            hysteresis = hys
+            sliderSynced = true
+        }
+        loginItems.load()
+    }
+
+    private func panelDisappeared() {
+        installer.stopPolling()
+        statusController.setPolling(panelVisible: false, daemonRegistered: installer.registration == .enabled)
+        statusController.setTelemetry(panelVisible: false)
+    }
+
+    // MARK: - 仪表上下文（规格 §2.3 面板层拼装）
+
+    /// band 语义：限充区间（恢复阈值...上限）；daemon 未注册（策略真相拿不到）
+    /// 或 mode == disabled（画 band 误导「仍在限充」）→ nil 隐藏区间弧。
+    private var gaugeBand: ClosedRange<Int>? {
+        guard let status = statusController.daemonStatus, status.mode != "disabled" else { return nil }
+        return (status.upperLimit - status.hysteresis)...status.upperLimit
+    }
+
+    private var gaugeAxLabel: String {
+        var parts: [String] = []
+        if let percent = statusController.batterySnapshot?.percent {
+            parts.append("当前电量 \(percent)%")
+        } else {
+            parts.append("电量遥测不可用")
+        }
+        if let band = gaugeBand {
+            parts.append("充电上限 \(band.upperBound)%")
+        }
+        if let snapshot = statusController.batterySnapshot {
+            if snapshot.isCharging {
+                parts.append("充电中")
+            } else if snapshot.externalConnected {
+                parts.append("已停充")
+            } else {
+                parts.append("电池供电")
+            }
+        }
+        return parts.joined(separator: "，")
+    }
+
+    private var gaugeState: GaugeState {
+        GaugeState(
+            percent: statusController.batterySnapshot?.percent,
+            band: gaugeBand,
+            isCharging: statusController.batterySnapshot?.isCharging ?? false,
+            axLabel: gaugeAxLabel
+        )
+    }
+
+    // MARK: - 守护进程安装区（§2.7 精简：状态行 + 主按钮 + 四象限文案 +
+    // anomaly 行保留 + lastError + 位置提示）
+
     private var daemonSection: some View {
         VStack(spacing: 8) {
             Text("守护进程：\(statusText) · 路线：\(routeText)")
@@ -90,26 +158,26 @@ struct PanelPlaceholder: View {
             if !guidanceText.isEmpty {
                 Text(guidanceText)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if installer.anomaly {
                 Text("异常：守护进程可达，但本 app 内未找到嵌入配置（可能由另一副本注册）")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(theme.warning)
             }
 
             if let error = installer.lastError {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(theme.alert)
             }
 
             // 位置提示（spike 局限 1.9）：注册跟随 .app 位置，移动/删除后需重新注册。
             Text("提示：已注册的守护进程跟随 Cellar.app 位置；移动或删除应用后请重新安装。")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(theme.tertiaryText)
 
             Button(buttonTitle) {
                 if installer.registration == .enabled {
@@ -127,10 +195,25 @@ struct PanelPlaceholder: View {
         }
     }
 
-    /// 策略控制区（规格 §2.3 定版）：上限滑杆 60...100 + 滞回 Stepper 1...20 +
-    /// 「应用」（本地预检 → setLimits）+ 总开关 + 三态反馈行 + daemon 版本。
+    /// 策略控制区（规格 §2.3 定版 + §2.6 预设微调）：预设 80/70/60（两步制，
+    /// 仅设滑杆防误触；60 兼作地板可见性教育）+ 上限滑杆 60...100 + 滞回
+    /// Stepper 1...20 + 「应用」（本地预检 → setLimits）+ 总开关 + 成功反馈行。
     private var controlSection: some View {
         VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach([80, 70, 60], id: \.self) { preset in
+                    Button("\(preset)%") {
+                        upperLimit = Double(preset)   // 两步制：仅设定滑杆值
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Text("预设仅设滑杆，确认后点「应用」")
+                    .font(.caption2)
+                    .foregroundStyle(theme.tertiaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             HStack {
                 Text("充电上限")
                 Spacer()
@@ -153,7 +236,7 @@ struct PanelPlaceholder: View {
                     // 反直觉——disabled 态禁用并提供提示（P1 定版）。
                     Text("启用限充后可调整")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.secondaryText)
                 }
                 Spacer()
                 Button(isModeDisabled ? "启用限充" : "停用限充") {
@@ -163,11 +246,15 @@ struct PanelPlaceholder: View {
                 .disabled(statusController.daemonStatus == nil || statusController.busy)
             }
 
-            feedbackLine
+            if case .success(let text) = statusController.controlFeedback {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(theme.success)
+            }
 
             Text("守护进程版本：\(statusController.daemonStatus?.version ?? "未知") · 期望 \(DaemonXPC.daemonVersion)")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(theme.tertiaryText)
         }
     }
 
@@ -182,41 +269,10 @@ struct PanelPlaceholder: View {
             if let feedback = loginItems.feedback {
                 Text(feedback)
                     .font(.caption)
-                    .foregroundStyle(feedback.hasPrefix("已") ? Color.secondary : Color.red)
+                    .foregroundStyle(feedback.hasPrefix("已") ? theme.success : theme.alert)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 三态反馈行（规格 §2.3 非静默）+ stale 分支（§3.4：版本过旧 + 重装入口提示）。
-    @ViewBuilder
-    private var feedbackLine: some View {
-        switch statusController.controlFeedback {
-        case .none:
-            EmptyView()
-        case .success(let text):
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .daemonRejected(let text):
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
-        case .transferFailed:
-            Text("守护进程未运行或无响应")
-                .font(.caption)
-                .foregroundStyle(.red)
-        case .staleDaemon:
-            VStack(spacing: 2) {
-                Text("守护进程版本过旧，请卸载后重新安装")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                Text("先点上方「卸载守护进程」，再点「安装守护进程」")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 
     /// 「应用」按钮动作：本地预检（LimitPolicy 双层防线第一层）→ setLimits。
@@ -271,36 +327,6 @@ struct PanelPlaceholder: View {
             return "检测到手工安装的守护进程。请先运行 sudo cellar uninstall，再点击「安装守护进程」。"
         case .cleanMixedState:
             return "检测到手工安装残留与托管注册并存。请先在本面板卸载，再运行 sudo cellar uninstall 清理残留，最后重新安装。"
-        }
-    }
-}
-
-/// 静态环形仪表占位：与窖灯图标同构（80% 弧段 + 芯点），琥珀渐变。
-private struct ChargingDialPlaceholder: View {
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.black.opacity(0.08), lineWidth: 14)
-
-            Circle()
-                .trim(from: 0, to: 0.8)
-                .stroke(
-                    AngularGradient(
-                        gradient: Gradient(colors: [
-                            Color(red: 0.71, green: 0.47, blue: 0.23),
-                            Color(red: 0.94, green: 0.75, blue: 0.44),
-                        ]),
-                        center: .center,
-                        startAngle: .degrees(90),
-                        endAngle: .degrees(-270)
-                    ),
-                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-
-            Circle()
-                .fill(Color(red: 0.96, green: 0.85, blue: 0.63))
-                .frame(width: 12, height: 12)
         }
     }
 }

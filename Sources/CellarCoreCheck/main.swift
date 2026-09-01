@@ -1781,6 +1781,53 @@ struct Main {
                 "2026-09-01 06:31:36",
                 "用例89", "UTC 时区渲染保持原值（对照旧缺陷输出形态）")
         }
+
+        // MARK: - 场景（Phase 2 WP4 面板，用例 90+）
+        // 菜单栏符号映射（规格 §2.2 候选表）与遥测采样节奏（§2.1 独立门控）。
+
+        // 用例 90：五态符号映射——首选表逐行钉死 + 回退链逐行钉死 +
+        // 首选与回退互异（防复制粘贴错行）+ 非空。
+        do {
+            let primary: [(MenuBarIconState, String)] = [
+                (.charging, "bolt.fill"),
+                (.holding, "gauge.with.needle"),
+                (.discharging, "battery.100"),
+                (.disabled, "powerplug.slash"),
+                (.alert, "exclamationmark.triangle.fill"),
+            ]
+            var ok = true
+            for (state, expected) in primary {
+                if menuBarSymbolName(for: state) != expected { ok = false }
+            }
+            check(ok, "用例90", "首选表逐行一致（charging/holding/discharging/disabled/alert）")
+
+            let fallback: [(MenuBarIconState, String)] = [
+                (.charging, "bolt.circle.fill"),
+                (.holding, "circle.dashed"),
+                (.discharging, "battery.25"),
+                (.disabled, "power.dotted"),
+                (.alert, "exclamationmark.triangle"),
+            ]
+            ok = true
+            for (state, expected) in fallback {
+                if menuBarSymbolFallbackName(for: state) != expected { ok = false }
+            }
+            check(ok, "用例90", "回退链逐行一致（五态）")
+
+            ok = primary.allSatisfy { !$0.1.isEmpty && $0.1 != menuBarSymbolFallbackName(for: $0.0) }
+            check(ok, "用例90", "首选非空且与回退互异（防行列错位复制）")
+        }
+
+        // 用例 91：遥测采样节奏矩阵（规格 §2.1 P0-2）——面板可见 1s / 关闭 nil；
+        // 与 refreshInterval 并行独立（refreshInterval 保持 60s 图标档不回归）。
+        do {
+            check(telemetrySampleInterval(panelVisible: true) == 1,
+                  "用例91", "面板可见 → 1s")
+            check(telemetrySampleInterval(panelVisible: false) == nil,
+                  "用例91", "面板关闭 → nil（停止采样）")
+            check(refreshInterval(panelVisible: false, daemonRegistered: true) == 60,
+                  "用例91", "对照：status 图标档关闭后仍 60s（遥测档不复用同一循环，互不干扰）")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）

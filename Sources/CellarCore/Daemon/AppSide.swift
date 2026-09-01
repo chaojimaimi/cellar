@@ -51,6 +51,42 @@ public func menuBarIconState(status: DaemonStatus?, connection: ConnectionState)
     return .holding
 }
 
+// MARK: - 菜单栏多状态符号（WP4 规格 §2.2 候选表）
+
+/// 菜单栏图标 SF Symbol 首选名（规格 §2.2 候选表首选项；评审实测 macOS 26 目标下
+/// 候选全部存在）。形状承载语义优先、颜色仅作增强（.alert 由形状三角形表达）。
+public func menuBarSymbolName(for state: MenuBarIconState) -> String {
+    switch state {
+    case .charging: return "bolt.fill"
+    case .holding: return "gauge.with.needle"
+    case .discharging: return "battery.100"
+    case .disabled: return "powerplug.slash"
+    case .alert: return "exclamationmark.triangle.fill"
+    }
+}
+
+/// 同表回退链（首选符号不可用时按此降级；候选在 macOS 26 全部存在，回退链保留
+/// 供未来系统变动兜底）。
+public func menuBarSymbolFallbackName(for state: MenuBarIconState) -> String {
+    switch state {
+    case .charging: return "bolt.circle.fill"
+    case .holding: return "circle.dashed"
+    case .discharging: return "battery.25"
+    case .disabled: return "power.dotted"
+    case .alert: return "exclamationmark.triangle"
+    }
+}
+
+// MARK: - 遥测采样节奏（WP4 规格 §2.1 P0-2 独立门控）
+
+/// 面板遥测采样间隔（秒）。面板可见 **1s**、面板关闭 **nil（停止采样）**。
+/// 与 status 轮询（refreshInterval）并行独立、不复用同一循环——菜单栏图标数据源
+/// 是 daemonStatus，关闭面板后 batterySnapshot 无消费者，60s 遥测档纯属耗电
+/// （「App 不得成为耗电源」）。未注册 daemon 时遥测照常（门控只有 panelVisible）。
+public func telemetrySampleInterval(panelVisible: Bool) -> TimeInterval? {
+    panelVisible ? 1 : nil
+}
+
 // MARK: - 用户域偏好持久化（规格 §2.4）
 
 /// 用户偏好（app-config.json 的 Codable 形态）。
