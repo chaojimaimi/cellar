@@ -3,10 +3,12 @@ import os
 @preconcurrency import XPC
 import CellarCore
 
-/// raw XPC 监听（串行队列）+ euid 门 + 鉴权失败限流 + 命令分发（规格 §0.2/§2）。
+/// raw XPC 监听（串行队列）+ euid/组门 + 鉴权失败限流 + 命令分发（规格 §0.2/§0）。
 ///
 /// 安全契约：
-/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable` **仅 euid==0**，
+/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable` 仅 **euid==0 或
+///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
+///   admin 组放宽；放宽的攻击面上限为充电策略操纵，无提权/无数据泄露），
 ///   否则错误回包（ok=false + 原文）。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
@@ -18,6 +20,8 @@ import CellarCore
 final class XPCServer: @unchecked Sendable {
     /// 鉴权失败取消阈值（评审：限流）。
     private static let authFailureLimit = 10
+    /// admin 组 GID（40 年 macOS 惯例固定值；放宽判定目标）。
+    private static let adminGroupGID: gid_t = 80
 
     private let core: DaemonCore
     private let log: os.Logger
@@ -132,12 +136,16 @@ final class XPCServer: @unchecked Sendable {
         }
     }
 
-    /// euid 门 + 鉴权失败限流（规格 §0.2）：非 root → 错误回包 + 拒绝计数；
-    /// 累计 ≥10 次 → 取消连接。返回 false = 已回错误包，调用方不再执行。
+    /// euid/组门 + 鉴权失败限流（规格 §0.2/§0）：root 或 admin 组（gid 80）成员可调
+    /// 变更命令；其余 → 错误回包 + 拒绝计数；累计 ≥10 次 → 取消连接。返回 false =
+    /// 已回错误包，调用方不再执行。
+    ///
+    /// 判定失败（用户查找/组列举失败）与原逻辑一致走限流路径——查不到即拒绝，
+    /// 绝不静默放行。
     private func authorize(_ peer: Peer, operation: String) -> Bool {
-        guard peer.euid == 0 else {
+        guard peer.euid == 0 || isAdminGroupMember(euid: peer.euid) else {
             peer.rejections += 1
-            send(errorReply("需要 root 权限（请使用 sudo cellar \(operation)）"), to: peer.connection)
+            send(errorReply("需要管理员权限（admin 组）才能执行 \(operation)。当前账户无此权限，请联系管理员。"), to: peer.connection)
             if peer.rejections >= Self.authFailureLimit {
                 log.error("鉴权拒绝累计 \(peer.rejections) 次，取消连接（限流）")
                 xpc_connection_cancel(peer.connection)
@@ -145,6 +153,38 @@ final class XPCServer: @unchecked Sendable {
             return false
         }
         return true
+    }
+
+    /// admin 组（gid 80）成员判定（P0 定版，规格 §0）：euid → getpwuid_r 取用户名
+    /// 与主 gid → getgrouplist 检查 80 ∈ 组数组。
+    ///
+    /// ⚠️ getgrouplist basegid 约束（P1 安全脚枪，v1.2 评审）：basegid 必须传
+    /// `pw_gid`（getpwuid_r 返回值），**禁止传 80**——getgrouplist 恒将 basegid
+    /// 计入输出数组，传 80 即任意用户都「命中 80」→ 鉴权静默全开放。
+    ///
+    /// 缓冲区不足（getgrouplist 返回 -1 且 *ngroups 已更新为所需数）时按其倍增
+    /// 重试；超过 4096 仍失败 → 拒绝（保守方，组数超上限的用户不存在于本环境）。
+    private func isAdminGroupMember(euid: uid_t) -> Bool {
+        var pwd = passwd()
+        var buffer = [CChar](repeating: 0, count: 1024)
+        var result: UnsafeMutablePointer<passwd>?
+        // result 非 nil 即 pwd 已被填充（指向传入的 &pwd，非独立分配）。
+        guard getpwuid_r(euid, &pwd, &buffer, buffer.count, &result) == 0, result != nil else {
+            return false
+        }
+        guard let name = String(cString: pwd.pw_name, encoding: .utf8) else { return false }
+
+        var count = 64
+        while count <= 4096 {
+            var groups = [gid_t](repeating: 0, count: count)
+            var ngroups = Int32(count)
+            let rc = getgrouplist(name, Int32(pwd.pw_gid), &groups, &ngroups)
+            if rc >= 0 {
+                return groups.prefix(Int(ngroups)).contains(Self.adminGroupGID)
+            }
+            count = max(Int(ngroups) * 2, count * 2)
+        }
+        return false
     }
 
     // MARK: - 回包

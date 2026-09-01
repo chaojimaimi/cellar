@@ -27,7 +27,7 @@ private final class FailureCounter: @unchecked Sendable {
     /// 出现过的场景标签（去重）——总数动态统计，避免每加用例都要手改结尾文案。
     private var scenarios: Set<String> = []
     func increment() { lock.withLock { count += 1 } }
-    func record(scenario: String) { lock.withLock { scenarios.insert(scenario) } }
+    func record(scenario: String) { lock.withLock { _ = scenarios.insert(scenario) } }
     var scenarioCount: Int { lock.withLock { scenarios.count } }
 }
 
@@ -265,7 +265,7 @@ private func batteryProps() -> [String: Any] {
 
 @main
 struct Main {
-    static func main() throws {
+    static func main() async throws {
         if CommandLine.arguments.contains("--dump-input") { dumpInput(); return }
         if CommandLine.arguments.contains("--matrix") { matrixSweep(); return }
         if CommandLine.arguments.contains("--probe") { probe(); return }
@@ -273,7 +273,7 @@ struct Main {
         if CommandLine.arguments.contains("--write-perm") { writePerm(); return }
         if CommandLine.arguments.contains("--battery") { battery(); return }
         if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
-        try runScenarios()
+        try await runScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
@@ -410,7 +410,7 @@ struct Main {
         print("input:", transport.last.map { String(format: "%02X", $0) }.joined(separator: " "))
     }
 
-    static func runScenarios() throws {
+    static func runScenarios() async throws {
         let badArgumentKR = Int32(bitPattern: 0xE000_02C7)
 
         // 用例 1：出站输入缓冲恒 80 字节（Swift struct 布局陷阱回归）。
@@ -1613,6 +1613,146 @@ struct Main {
                         "用例83", "服务未加载 → .unknown")
             expectEqual(DaemonRoute.route(fromPrintOutput: ""), .unknown,
                         "用例83", "空输出 → .unknown")
+        }
+
+        // MARK: - 场景（Phase 2 WP3 App↔daemon 通信层，用例 84–88）
+        // App 侧运行态/控制逻辑的可测部分下沉 CellarCore：轮询调度纯函数、
+        // 图标映射全序、偏好持久化（注入 URL）。StatusController 本体在 App target
+        // （依赖 ObservableObject/SMAppService，本工具不 import App——与用例 77 同模式）。
+
+        // 用例 84：refreshInterval 刷新矩阵（规格 §2.2）——面板可见 1s / 关闭 60s /
+        // 未注册 nil（4 组合全覆盖）。
+        do {
+            check(refreshInterval(panelVisible: true, daemonRegistered: true) == 1,
+                  "用例84", "可见 + 已注册 → 1s")
+            check(refreshInterval(panelVisible: false, daemonRegistered: true) == 60,
+                  "用例84", "关闭 + 已注册 → 60s")
+            check(refreshInterval(panelVisible: true, daemonRegistered: false) == nil,
+                  "用例84", "可见 + 未注册 → nil（不轮询）")
+            check(refreshInterval(panelVisible: false, daemonRegistered: false) == nil,
+                  "用例84", "关闭 + 未注册 → nil")
+        }
+
+        // 用例 85：菜单栏图标映射全序矩阵（规格 §2.5 五条）+ nil 字段矩阵逐行钉死。
+        // 独立实现以 switch 全称匹配（与实现的 if 短路链不同写法）——matrixSweep
+        // 双实现同模式；nil 字段矩阵四行按规格原文逐字落测，防 WP4 扯皮。
+        do {
+            func expectedIcon(status: DaemonStatus?, connection: ConnectionState) -> MenuBarIconState {
+                switch (connection, status?.mode, status?.lastExternalConnected, status?.lastChargingEnabled) {
+                case (.unreachable, _, _, _): return .alert
+                case (_, nil, _, _): return .disabled
+                case (_, "disabled", _, _): return .disabled
+                case (_, _, false, _): return .discharging
+                case (_, _, _, true): return .charging
+                default: return .holding
+                }
+            }
+            func makeStatus(mode: String, external: Bool?, charging: Bool?) -> DaemonStatus {
+                DaemonStatus(
+                    version: "fixture", mode: mode, upperLimit: 80, hysteresis: 2,
+                    lastExternalConnected: external, lastChargingEnabled: charging
+                )
+            }
+
+            // 穷举：3 connection ×（nil status + 2 模式 × 3 外接态 × 3 充电态）= 57 点。
+            let statuses: [DaemonStatus?] = [nil]
+                + ["active", "disabled"].flatMap { mode in
+                    [nil, false, true].flatMap { external in
+                        [nil, false, true].map { charging in
+                            makeStatus(mode: mode, external: external, charging: charging)
+                        }
+                    }
+                }
+            var checked = 0
+            var mismatches: [String] = []
+            for connection in [ConnectionState.connected, .unreachable, .unknown] {
+                for status in statuses {
+                    let actual = menuBarIconState(status: status, connection: connection)
+                    let want = expectedIcon(status: status, connection: connection)
+                    checked += 1
+                    if actual != want {
+                        mismatches.append(
+                            "connection=\(connection) mode=\(status?.mode ?? "nil") "
+                                + "external=\(status?.lastExternalConnected.map(String.init) ?? "nil") "
+                                + "charging=\(status?.lastChargingEnabled.map(String.init) ?? "nil")："
+                                + "实现=\(actual) 期望=\(want)"
+                        )
+                    }
+                }
+            }
+            check(mismatches.isEmpty, "用例85", "穷举 \(checked) 点：实现与独立期望完全一致"
+                + (mismatches.isEmpty ? "" : "（\(mismatches.joined(separator: "；")))"))
+
+            // 规格 §2.5 nil 字段矩阵四行：
+            // 双 nil（status=nil × 三 connection）、external nil + charging true、
+            // disabled + unreachable。
+            check(menuBarIconState(status: nil, connection: .unreachable) == .alert,
+                  "用例85", "双 nil（status=nil + unreachable）→ .alert")
+            check(menuBarIconState(status: nil, connection: .connected) == .disabled,
+                  "用例85", "双 nil（status=nil + connected）→ .disabled（规则 2 全称覆盖）")
+            check(menuBarIconState(status: nil, connection: .unknown) == .disabled,
+                  "用例85", "双 nil（status=nil + unknown）→ .disabled")
+            check(menuBarIconState(status: makeStatus(mode: "active", external: nil, charging: nil), connection: .connected) == .holding,
+                  "用例85", "双 nil 字段（external=nil + charging=nil）→ .holding（初态语义）")
+            check(menuBarIconState(status: makeStatus(mode: "active", external: nil, charging: true), connection: .connected) == .charging,
+                  "用例85", "external=nil + charging=true → .charging（nil 不拦截规则 5）")
+            check(menuBarIconState(status: makeStatus(mode: "disabled", external: true, charging: false), connection: .unreachable) == .alert,
+                  "用例85", "disabled + unreachable → .alert（规则 1 优先于模式）")
+        }
+
+        // 用例 86：AppConfig 持久化回环（临时目录注入 URL）——save → load 全字段、
+        // 权限 0644、临时文件清理（原子替换证据）、覆盖写。
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cellar-appconfig-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let fileURL = directory.appendingPathComponent("app-config.json")
+            let store = AppConfigStore(url: fileURL)
+
+            let config = AppConfig(launchAtLogin: true, style: "wine")
+            var saveOK = true
+            do { try await store.save(config) } catch { saveOK = false }
+            check(saveOK, "用例86", "save 无抛错（首写自动建父目录）")
+            check(await store.load() == config, "用例86", "save → load 回环 == 原值（launchAtLogin + style 全字段）")
+
+            let perms = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.posixPermissions] as? Int
+            check(perms == 0o644, "用例86", "文件权限 0644")
+            let tempURL = directory.appendingPathComponent(".app-config.json.tmp")
+            check(!FileManager.default.fileExists(atPath: tempURL.path), "用例86", "临时文件已清理（rename 原子替换）")
+
+            try await store.save(AppConfig(launchAtLogin: false, style: nil))
+            check(await store.load() == AppConfig(launchAtLogin: false, style: nil),
+                  "用例86", "覆盖写回环（默认值形态）")
+        }
+
+        // 用例 87：AppConfig 缺失/损坏回退默认（os_log 可见化，不抛错）。
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cellar-appconfig-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let fileURL = directory.appendingPathComponent("app-config.json")
+            let store = AppConfigStore(url: fileURL)
+
+            check(await store.load() == .default, "用例87", "文件缺失 → 默认（launchAtLogin=false, style=nil）")
+            try "not json{".write(to: fileURL, atomically: true, encoding: .utf8)
+            check(await store.load() == .default, "用例87", "写入垃圾 JSON → load 回默认")
+            try #"{"launchAtLogin":false,"style":42}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+            check(await store.load() == .default, "用例87", "字段类型不符（style=42）→ 解码失败回默认")
+        }
+
+        // 用例 88：面板「应用」本地预检矩阵（P1 补测：hysteresis 0/21 经 LimitPolicy
+        // 预检拒绝；60 地板组合 60/20 通过作对照组）。
+        do {
+            expectThrows(try LimitPolicy(upperLimit: 80, hysteresis: 0),
+                         as: LimitPolicyError.hysteresisOutOfRange(validRange: 1...20),
+                         "用例88", "hys=0 预检拒绝")
+            expectThrows(try LimitPolicy(upperLimit: 60, hysteresis: 21),
+                         as: LimitPolicyError.hysteresisOutOfRange(validRange: 1...20),
+                         "用例88", "hys=21 预检拒绝（含 60 地板组合）")
+            check((try? LimitPolicy(upperLimit: 60, hysteresis: 20)) != nil,
+                  "用例88", "60/20 通过预检（对照组）")
         }
     }
 

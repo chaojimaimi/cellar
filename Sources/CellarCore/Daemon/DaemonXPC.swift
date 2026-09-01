@@ -62,8 +62,9 @@ public enum DaemonClientError: Error, Equatable, Sendable {
 public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
     // install 后与 getStatus 的 version 核对（评审 F-3）；与 App 版本串同
-    // （0.2.0-alpha-dev）——daemon 行为有变更必须 bump，防 stale daemon 诊断混淆。
-    public static let daemonVersion = "0.2.0-alpha-dev"
+    // （0.2.1-alpha-dev）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更），
+    // 防 stale daemon 诊断混淆。
+    public static let daemonVersion = "0.2.1-alpha-dev"
 
     // MARK: - 线格式键与常量
 

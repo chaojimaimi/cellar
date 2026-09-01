@@ -51,6 +51,11 @@ final class DaemonInstaller: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var settingsOpened = false
 
+    /// MenuBarExtra 视图重建防轮询泄漏（规格 §2.6）。
+    deinit {
+        pollTask?.cancel()
+    }
+
     // MARK: - 查询（面板出现 / 授权轮询 / 操作完成后刷新）
 
     /// 刷新注册态。⚠️ 主线程只做本地文件检查；SMAppService status（同步 XPC）与

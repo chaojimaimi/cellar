@@ -1,0 +1,140 @@
+import Foundation
+import os
+
+// MARK: - 刷新调度（纯函数，规格 §2.2）
+
+/// 轮询间隔（秒）。nil = 不轮询（P2 改型采纳：0 哨兵废弃）。
+/// 面板可见 1s（控制操作即时反馈）、面板关闭 60s（菜单栏图标仍要新鲜度）、
+/// 未注册 nil（registration 门控：未注册不呈现任何运行态）。
+public func refreshInterval(panelVisible: Bool, daemonRegistered: Bool) -> TimeInterval? {
+    if !daemonRegistered { return nil }
+    return panelVisible ? 1 : 60
+}
+
+// MARK: - 连接态与图标映射（规格 §2.1/§2.5）
+
+/// daemon 连接态。registration 复位（离开 .enabled）时回落 .unknown——
+/// 防残留 .unreachable 让图标永久 .alert（用户主动卸载 ≠ 故障）。
+public enum ConnectionState: Equatable, Sendable {
+    /// 最近一次 getStatus 成功。
+    case connected
+    /// 最近一次 getStatus 失败（超时/连接失败）。
+    case unreachable
+    /// 尚未刷新过（首查前 / registration 复位后）。
+    case unknown
+}
+
+/// 菜单栏图标状态（Phase 2 仅逻辑 + 测试；多状态资产 WP4，单一模板图标不变）。
+public enum MenuBarIconState: Equatable, Sendable {
+    case charging
+    case holding
+    case discharging
+    case disabled
+    case alert
+}
+
+/// 图标状态映射，规则全序（规格 §2.5 定版五条，逐条短路）：
+/// 1. connection == .unreachable → .alert（失联优先于一切）
+/// 2. status == nil → .disabled（connection 已被规则 1 过滤，全称覆盖三 connection 值）
+/// 3. mode == "disabled" → .disabled
+/// 4. lastExternalConnected == false → .discharging
+/// 5. lastChargingEnabled == true → .charging；否则（含 nil 字段初态）→ .holding
+///
+/// nil 字段语义：nil ≠ false（规则 4 不触发）、nil ≠ true（规则 5 不触发）——
+/// 双 nil 落 .holding，与「未采样过」的初态语义一致。
+public func menuBarIconState(status: DaemonStatus?, connection: ConnectionState) -> MenuBarIconState {
+    if connection == .unreachable { return .alert }
+    guard let status else { return .disabled }
+    if status.mode == "disabled" { return .disabled }
+    if status.lastExternalConnected == false { return .discharging }
+    if status.lastChargingEnabled == true { return .charging }
+    return .holding
+}
+
+// MARK: - 用户域偏好持久化（规格 §2.4）
+
+/// 用户偏好（app-config.json 的 Codable 形态）。
+/// 范围定版：不镜像上限/滞回（策略唯一真相在 daemon）；仅持登录项开关与
+/// Phase 3 预留的风格字段。
+public struct AppConfig: Codable, Equatable, Sendable {
+    /// 开机启动（SMAppService.loginItem 注册态镜像；App 重建后登录项可能掉注册，
+    /// 属已知现象，WP6 统一验证）。
+    public var launchAtLogin: Bool
+    /// Phase 3 预留（面板风格）。当前恒 nil（默认值形态也合法）。
+    public var style: String?
+
+    public init(launchAtLogin: Bool = false, style: String? = nil) {
+        self.launchAtLogin = launchAtLogin
+        self.style = style
+    }
+
+    public static let `default` = AppConfig()
+}
+
+/// 用户偏好持久化（actor + 同目录临时文件原子替换，规格 §2.4）。
+///
+/// - 读：文件缺失 / 非 JSON / 解码失败 → 默认（os_log 可见化——偏好可重建，不值得
+///   抛错打断面板；不静默）。
+/// - 写：同目录临时文件（0644）+ rename 原子替换；父目录自动创建（用户域首写
+///   场景——App 不假设 Application Support/Cellar 已存在）。
+/// - **独立实现，不复用 PolicyStore 写路径**：共享需动 daemon 持久化代码（红线），
+///   且两者目录域不同（root 系统域 vs 用户域）。
+public actor AppConfigStore {
+    public let url: URL
+
+    /// 默认位置：用户域 `~/Library/Application Support/Cellar/app-config.json`。
+    public static var defaultURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Cellar/app-config.json")
+    }
+
+    /// 注入 URL 供测试（CellarCoreCheck 用临时目录；App 用 defaultURL）。
+    public init(url: URL) {
+        self.url = url
+    }
+
+    /// 读：缺失/损坏 → 默认（故障可见化但不抛错——偏好丢失自愈，属可重建状态）。
+    public func load() -> AppConfig {
+        guard let data = try? Data(contentsOf: url) else {
+            Self.log.info("app-config 缺失（\(self.url.path)），使用默认偏好")
+            return .default
+        }
+        guard let decoded = try? JSONDecoder().decode(AppConfig.self, from: data) else {
+            Self.log.error("app-config 损坏（非 JSON 或字段不符），回退默认偏好")
+            return .default
+        }
+        return decoded
+    }
+
+    /// 写：编码 → 临时文件 → chmod 0644 → rename（原子替换）。错误原样上抛
+    /// （面板上屏失败文案，不静默）。
+    public func save(_ config: AppConfig) throws {
+        let data = try JSONEncoder().encode(config)
+        let directory = url.deletingLastPathComponent()
+        // 首写建目录（用户域，无需特权；失败即上抛，绝不静默）。
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let temporaryURL = directory.appendingPathComponent(".app-config.json.tmp")
+        // 清理：任何失败路径都尽力移除临时文件（不覆盖原错误）。
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+
+        try data.write(to: temporaryURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: temporaryURL.path
+        )
+        #if canImport(Darwin)
+        guard rename(temporaryURL.path, url.path) == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        #else
+        // 非 Darwin 兜底（本包仅 macOS，此路径仅保持可编译性）：非原子替换。
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: url)
+        #endif
+    }
+
+    /// 日志（actor 静态成员非隔离；Logger Sendable，跨隔离界安全）。
+    private nonisolated static let log = Logger(subsystem: "com.cellar", category: "app-config")
+}
