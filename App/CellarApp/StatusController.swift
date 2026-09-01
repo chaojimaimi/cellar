@@ -15,6 +15,35 @@ enum ControlFeedback: Equatable {
     case staleDaemon
 }
 
+/// status 派生失败横幅形态（WP5 §2.3 P1-1 配套）：daemonStatus.lastAction 为
+/// enforce:error / enforce:verifyFailed 时由 StatusController 暴露——**不占用
+/// controlFeedback 通道**（daemon 侧 enforce 失败 WP4 横幅本不覆盖；原「双通道」
+/// 表述系引用未接线的通道，本条修复该矛盾）。
+enum StatusFailureKind: Equatable {
+    /// 写/传输失败（enforce:error）——红线 5。
+    case writeFailed
+    /// 外部写者冲突显式化（enforce:verifyFailed）。
+    case conflictSuspected
+
+    /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
+    var message: String {
+        switch self {
+        case .writeFailed: return NotificationService.writeFailedMessage
+        case .conflictSuspected: return NotificationService.conflictSuspectedMessage
+        }
+    }
+
+    /// 从 daemonStatus 派生（⚠️ lastAction 字面量与 CellarCore 通知分类同契约——
+    /// 变更两侧同步暴露，CellarCoreCheck 钉死精确值）。
+    init?(status: DaemonStatus) {
+        switch status.lastAction {
+        case "enforce:error": self = .writeFailed
+        case "enforce:verifyFailed": self = .conflictSuspected
+        default: return nil
+        }
+    }
+}
+
 /// 控制动作的可重放描述（告警横幅「重试」重发上次动作，规格 §2.7 分支 ①：
 /// runControl 入口记录、成功清除）。
 enum ControlAttempt: Equatable {
@@ -50,9 +79,18 @@ final class StatusController: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var controlFeedback: ControlFeedback?
     @Published private(set) var lastAttempt: ControlAttempt?
+    /// status 派生失败横幅（WP5 §2.3 P1-1 配套）：enforce:error / enforce:verifyFailed
+    /// 时呈现（不进 controlFeedback 通道；首次样本即呈现——失败类无需转移守卫）。
+    @Published private(set) var statusFailure: StatusFailureKind?
     /// 遥测快照（App 进程内 IOKit 只读，规格 §2.1 语义分源）。采样失败 → nil
     /// （不进横幅、不触发图标 .alert——失联才有 alert 的不变量不破）。
     @Published private(set) var batterySnapshot: BatterySnapshot?
+
+    /// 通知事件出口（CellarApp 注入 NotificationService.deliver；§2.3 单一入口投递）。
+    var onNotificationEvent: ((CellarNotificationEvent) -> Void)?
+
+    /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
+    private var notificationBaseline: DaemonStatus?
 
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
     var iconState: MenuBarIconState {
@@ -123,9 +161,31 @@ final class StatusController: ObservableObject {
             connection = .unknown
             controlFeedback = nil
             lastAttempt = nil
+            // 基线复位：重注册后首样本按「首样本」语义分类（limitReached 抑制、
+            // 失败类破例），失败横幅派生自 daemonStatus（nil 即清除）。
+            notificationBaseline = nil
+            statusFailure = nil
             return
         }
         setPolling(panelVisible: panelVisible, daemonRegistered: true)
+    }
+
+    // MARK: - 统一状态收口（WP5 §2.3 单一入口）
+
+    /// 统一状态收口：refreshOnce 与 finishControl 两条路径共用——通知分类
+    /// （previous 基线随每次更新推进，防双路径漏报/重报）→ 事件投递；
+    /// status 派生失败横幅同步。status == nil（轮询失败）不清基线、不产出事件。
+    func ingest(status: DaemonStatus?) {
+        if let status {
+            let events = notificationEvents(previous: notificationBaseline, current: status)
+            notificationBaseline = status
+            for event in events {
+                onNotificationEvent?(event)
+            }
+        }
+        daemonStatus = status
+        connection = status == nil ? .unreachable : .connected
+        statusFailure = status.flatMap(StatusFailureKind.init)
     }
 
     /// 面板打开时同步滑杆值的来源（仅本地态初始化用，非轮询回写）。
@@ -254,8 +314,7 @@ final class StatusController: ObservableObject {
         busy = false
         switch result {
         case .success(let status):
-            daemonStatus = status
-            connection = .connected
+            ingest(status: status)
             controlFeedback = .success(successFeedback)
             lastAttempt = nil
             onSuccess?(status)
@@ -289,12 +348,12 @@ final class StatusController: ObservableObject {
 
     /// 单次 getStatus（XPC 在 detached Task——主线程永不阻塞，WP2 实证）。
     /// 失败（超时/连接失败）→ connection=.unreachable；成功 → .connected。
+    /// 统一走 ingest（§2.3 单一入口：通知分类 + 失败横幅派生）。
     private func refreshOnce() async {
         let status = await Task.detached { () -> DaemonStatus? in
             try? DaemonXPCClient().getStatus()
         }.value
         guard !Task.isCancelled else { return }
-        daemonStatus = status
-        connection = status == nil ? .unreachable : .connected
+        ingest(status: status)
     }
 }

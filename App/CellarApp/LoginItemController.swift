@@ -48,7 +48,12 @@ final class LoginItemController: ObservableObject {
                 } else {
                     try await SMAppService.mainApp.unregister()
                 }
-                try await store.save(AppConfig(launchAtLogin: on))
+                // load-modify-save（§2.4 语义防覆盖）：只翻转登录项标志，保留
+                // style/onboardingCompleted 等其他偏好字段。
+                let config = await store.load()
+                var updated = config
+                updated.launchAtLogin = on
+                try await store.save(updated)
                 await MainActor.run {
                     guard let self else { return }
                     self.busy = false

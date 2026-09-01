@@ -1843,6 +1843,147 @@ struct Main {
             check(currentDirectionWord(isCharging: false, externalConnected: true) == nil,
                   "用例92", "外接 + 停充 → nil（方向词隐藏，修「停充显放电 0.00 A」）")
         }
+
+        // MARK: - 场景（Phase 2 WP5 首启引导 + 冲突门 + 通知中心，用例 93+）
+
+        // 用例 93：引导转移矩阵（§2.1 定版）——显式规则逐条钉死 + 全组合穷举
+        // （5 步 × 4 gate × 3 registration = 60 点）。done 为终结态：任何组合
+        // 继续转移 = 非法 → nil。
+        do {
+            check(onboardingNext(step: .welcome, gate: .clear, registration: .notRegistered) == .conflictCheck,
+                  "用例93", "welcome → conflictCheck（gate/registration 无关）")
+            check(onboardingNext(step: .welcome, gate: .exactBlocked, registration: .enabled) == .conflictCheck,
+                  "用例93", "welcome 无视 gate/registration（exact×enabled 亦前进冲突步）")
+            check(onboardingNext(step: .conflictCheck, gate: .exactBlocked, registration: .notRegistered) == .conflictCheck,
+                  "用例93", "exactBlocked 停留（硬阻断待清除）")
+            check(onboardingNext(step: .conflictCheck, gate: .genericNeedsConfirm, registration: .pending) == .conflictCheck,
+                  "用例93", "genericNeedsConfirm 停留（软警示待确认）")
+            check(onboardingNext(step: .conflictCheck, gate: .clear, registration: .notRegistered) == .install,
+                  "用例93", "clear → install")
+            check(onboardingNext(step: .conflictCheck, gate: .genericConfirmed, registration: .enabled) == .install,
+                  "用例93", "genericConfirmed → install")
+            check(onboardingNext(step: .install, gate: .clear, registration: .enabled) == .limit,
+                  "用例93", "install + enabled → limit（授权完成接续 step 4）")
+            check(onboardingNext(step: .install, gate: .clear, registration: .notRegistered) == .install,
+                  "用例93", "install + notRegistered 停留（UI 呈现安装入口）")
+            check(onboardingNext(step: .install, gate: .exactBlocked, registration: .pending) == .install,
+                  "用例93", "install + pending 停留（等待系统授权）")
+            check(onboardingNext(step: .limit, gate: .clear, registration: .enabled) == .done,
+                  "用例93", "limit → done")
+            check(onboardingNext(step: .done, gate: .clear, registration: .enabled) == nil,
+                  "用例93", "done 为终结态（继续转移 = 非法 nil）")
+            check(onboardingNext(step: .done, gate: .genericConfirmed, registration: .notRegistered) == nil,
+                  "用例93", "done 全组合非法（generic×notRegistered 亦 nil）")
+
+            // 穷举：与独立期望实现（不同写法）逐点比对。
+            var sweeps = 0
+            var mismatches = 0
+            let registrations: [RegistrationStatus] = [.notRegistered, .pending, .enabled]
+            let gates: [ConflictGateOutcome] = [.clear, .exactBlocked, .genericNeedsConfirm, .genericConfirmed]
+            func expected(_ step: OnboardingStep, _ gate: ConflictGateOutcome, _ registration: RegistrationStatus) -> OnboardingStep? {
+                switch step {
+                case .welcome: return .conflictCheck
+                case .conflictCheck:
+                    // 停留分支：exact 硬阻断 / generic 待确认；放行分支：clear / 已确认。
+                    return (gate == .clear || gate == .genericConfirmed) ? .install : .conflictCheck
+                case .install: return registration == .enabled ? .limit : .install
+                case .limit: return .done
+                case .done: return nil
+                }
+            }
+            for step in OnboardingStep.allCases {
+                for gate in gates {
+                    for registration in registrations {
+                        sweeps += 1
+                        let actual = onboardingNext(step: step, gate: gate, registration: registration)
+                        if actual != expected(step, gate, registration) {
+                            mismatches += 1
+                            print("  ✗ 用例93 穷举:\(step)/\(gate)/\(registration)：实际 \(String(describing: actual)) 期望 \(String(describing: expected(step, gate, registration)))")
+                        }
+                    }
+                }
+            }
+            check(mismatches == 0 && sweeps == 60, "用例93", "全组合穷举 \(sweeps) 点与独立期望一致（含 done→nil 非法段）")
+        }
+
+        // 用例 94：通知分类矩阵（§2.3）——lastAction 字面量钉死精确值：
+        // enforce:disableCharging / enforce:error / enforce:verifyFailed /
+        // sleep:disableCharging / disable / enable / noop 全覆盖；
+        // 首样本双例（limitReached 抑制 / writeFailed 破例）。
+        do {
+            func status(_ lastAction: String?, upper: Int = 90) -> DaemonStatus {
+                DaemonStatus(
+                    version: "0.2.1-alpha-dev", mode: "active", upperLimit: upper,
+                    hysteresis: 2, lastAction: lastAction, lastPercent: 90,
+                    lastExternalConnected: true, lastChargingEnabled: false
+                )
+            }
+
+            // 首样本（previous == nil）双例 + 抑制面。
+            check(notificationEvents(previous: nil, current: status("enforce:disableCharging")) == [],
+                  "用例94", "首样本 enforce:disableCharging → 抑制（陈旧 lastAction 不触发限充通知）")
+            check(notificationEvents(previous: nil, current: status("enforce:error")) == [.writeFailed],
+                  "用例94", "首样本 enforce:error 破例产出 writeFailed（持续失败永久静默违红线 5）")
+            check(notificationEvents(previous: nil, current: status("enforce:verifyFailed")) == [.conflictSuspected],
+                  "用例94", "首样本 enforce:verifyFailed 破例产出 conflictSuspected")
+            check(notificationEvents(previous: nil, current: status("enforce:noop")) == [],
+                  "用例94", "首样本 enforce:noop → 不通知")
+            check(notificationEvents(previous: nil, current: status("sleep:disableCharging")) == [],
+                  "用例94", "首样本 sleep:disableCharging → 不通知（睡眠路径语义）")
+            check(notificationEvents(previous: nil, current: status("disable")) == [],
+                  "用例94", "首样本 disable → 不通知（用户动作）")
+
+            // 转移触发三映射（previous.lastAction != current.lastAction）。
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:disableCharging")) == [.limitReached(upperLimit: 90)],
+                  "用例94", "转移 enforce:disableCharging → limitReached(90)（上限值取当前 status）")
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:error")) == [.writeFailed],
+                  "用例94", "转移 enforce:error → writeFailed")
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:verifyFailed")) == [.conflictSuspected],
+                  "用例94", "转移 enforce:verifyFailed → conflictSuspected")
+
+            // 不报面：sleep:* / disable / enable / noop。
+            check(notificationEvents(previous: status("enforce:enableCharging"), current: status("sleep:disableCharging")) == [],
+                  "用例94", "sleep:disableCharging 不报（≠ enforce:disableCharging，睡眠停充语义）")
+            check(notificationEvents(previous: status("enforce:disableCharging"), current: status("disable")) == [],
+                  "用例94", "disable 不报（用户动作）")
+            check(notificationEvents(previous: status("disable"), current: status("enable")) == [],
+                  "用例94", "enable 不报（用户动作）")
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:noop")) == [],
+                  "用例94", "noop 不变不报")
+            check(notificationEvents(previous: status("enforce:error"), current: status("enforce:error")) == [],
+                  "用例94", "持续失败无转移不重报（App 重启后首样本破例兜底，不重复轰炸）")
+            check(notificationEvents(previous: status("enforce:disableCharging"), current: status("enforce:noop")) == [],
+                  "用例94", "离开限充（disableCharging→noop）不报")
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:enableCharging")) == [],
+                  "用例94", "恢复充电（noop→enableCharging）不报（不在通知映射）")
+        }
+
+        // 用例 95：AppConfig 扩展（§2.4）——缺 key 旧文件兼容 + 全字段解码 +
+        // round-trip + encode 恒写新键。
+        do {
+            // 缺 onboardingCompleted key 的旧文件 → decodeIfPresent ?? false。
+            let legacyJSON = "{\"launchAtLogin\":true}"
+            let legacy = try JSONDecoder().decode(AppConfig.self, from: Data(legacyJSON.utf8))
+            check(legacy.onboardingCompleted == false, "用例95", "旧文件缺 onboardingCompleted 键 → false")
+            check(legacy.launchAtLogin == true, "用例95", "旧文件其余字段照常解码")
+
+            let fullJSON = "{\"launchAtLogin\":false,\"style\":\"dark\",\"onboardingCompleted\":true}"
+            let full = try JSONDecoder().decode(AppConfig.self, from: Data(fullJSON.utf8))
+            check(full.onboardingCompleted == true && full.style == "dark" && full.launchAtLogin == false,
+                  "用例95", "全字段解码")
+
+            // round-trip + encode 恒写。
+            let encoded = try JSONEncoder().encode(full)
+            let decoded = try JSONDecoder().decode(AppConfig.self, from: encoded)
+            check(decoded == full, "用例95", "round-trip：encode 后 decode 等值")
+            let encodedText = String(data: encoded, encoding: .utf8) ?? ""
+            check(encodedText.contains("onboardingCompleted"), "用例95", "encode 恒写新键（前向兼容）")
+            check(decoded.onboardingCompleted == true, "用例95", "round-trip 保留 completed 值")
+
+            // 默认值。
+            check(AppConfig.default.onboardingCompleted == false && AppConfig.default.launchAtLogin == false,
+                  "用例95", "AppConfig.default：completed 默认 false")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）

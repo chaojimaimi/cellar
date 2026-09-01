@@ -108,21 +108,52 @@ public func currentDirectionWord(isCharging: Bool, externalConnected: Bool) -> S
 // MARK: - 用户域偏好持久化（规格 §2.4）
 
 /// 用户偏好（app-config.json 的 Codable 形态）。
-/// 范围定版：不镜像上限/滞回（策略唯一真相在 daemon）；仅持登录项开关与
-/// Phase 3 预留的风格字段。
+/// 范围定版：不镜像上限/滞回（策略唯一真相在 daemon）；仅持登录项开关、
+/// Phase 3 预留的风格字段与 WP5 首启引导完成标志。
 public struct AppConfig: Codable, Equatable, Sendable {
     /// 开机启动（SMAppService.loginItem 注册态镜像；App 重建后登录项可能掉注册，
     /// 属已知现象，WP6 统一验证）。
     public var launchAtLogin: Bool
     /// Phase 3 预留（面板风格）。当前恒 nil（默认值形态也合法）。
     public var style: String?
+    /// WP5 首启引导完成标志（§2.4；默认 false——旧 app-config.json 缺 key 时
+    /// 经 decodeIfPresent 兼容为 false）。
+    public var onboardingCompleted: Bool
 
-    public init(launchAtLogin: Bool = false, style: String? = nil) {
+    public init(launchAtLogin: Bool = false, style: String? = nil, onboardingCompleted: Bool = false) {
         self.launchAtLogin = launchAtLogin
         self.style = style
+        self.onboardingCompleted = onboardingCompleted
     }
 
     public static let `default` = AppConfig()
+
+    // MARK: - Codable（WP5 自定义，§2.4）
+
+    /// CodingKeys 全字段显式。
+    private enum CodingKeys: String, CodingKey {
+        case launchAtLogin
+        case style
+        case onboardingCompleted
+    }
+
+    /// 自定义 decode：新键可缺席（旧文件兼容）——decodeIfPresent ?? false；
+    /// 其余字段同语义回退默认值。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        style = try container.decodeIfPresent(String.self, forKey: .style)
+        onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
+    }
+
+    /// 自定义 encode：onboardingCompleted 恒写（前向兼容）；style 沿用 encodeIfPresent
+    /// （nil 缺席，与旧合成编码一致）。
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(launchAtLogin, forKey: .launchAtLogin)
+        try container.encodeIfPresent(style, forKey: .style)
+        try container.encode(onboardingCompleted, forKey: .onboardingCompleted)
+    }
 }
 
 /// 用户偏好持久化（actor + 同目录临时文件原子替换，规格 §2.4）。

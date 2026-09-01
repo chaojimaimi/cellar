@@ -1,12 +1,20 @@
 import CellarCore
 import SwiftUI
 
-/// 菜单栏面板（Phase 2 WP4 正式面板，规格 §2.7 七层分区）：
-/// 告警横幅置顶 → 仪表（GaugeView）→ 状态行（StatusLineView）→ 控制区
-/// （仅 registration == .enabled）→ daemon 安装区（精简）→ 登录项 + 退出。
-/// 宽 340 统一。
+/// 菜单栏面板（Phase 2 WP4 正式面板，规格 §2.7 七层分区；WP5 引导模式门）：
+/// 引导模式（新用户/暂存步/冲突门阻断）呈现 OnboardingView，否则常规面板——
+/// 告警横幅置顶（含 status 派生失败横幅分支）→ 仪表（GaugeView）→ 状态行
+/// （StatusLineView）→ 控制区（仅 registration == .enabled）→ daemon 安装区
+/// （DaemonSectionView，统一安装 wrapper）→ 登录项 + 退出。宽 340 统一。
 ///
-/// 组合根提升（规格 §2.8）：三个控制器为 CellarApp 层 @StateObject 经
+/// **引导门（WP5 §2.1 触发式）：!onboardingCompleted &&（暂存步存在
+/// （step ∉ {.welcome, .done}）|| registration ∈ {.notRegistered, .pending}）→
+/// 引导**；installer.loaded 守卫（P1-3，首次 refresh 回包前不判定，防已注册用户
+/// 启动瞬间引导闪现）；enabled 且无暂存步且未完成 → 收尾规则静默补写标志
+/// （OnboardingController）。本视图只读判定，侧效应（收尾补写/安装接续）在
+/// onAppear 与 onChange 触发。
+///
+/// 组合根提升（规格 §2.8）：四控制器为 CellarApp 层 @StateObject 经
 /// environmentObject 注入——面板视图重建不断供数据源；本视图 onAppear/
 /// onDisappear 只做换档（status 1s↔60s + 遥测档启停），安装刷新在 App 启动。
 /// 控制逻辑沿用 WP3 不换（sliderSynced/预检/三态/busy/stale 比对全部保留）；
@@ -17,6 +25,7 @@ struct PanelView: View {
     @EnvironmentObject private var installer: DaemonInstaller
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var loginItems: LoginItemController
+    @EnvironmentObject private var onboarding: OnboardingController
     @Environment(\.cellarTheme) private var theme
 
     // 滑杆本地态（不同步于轮询回包，防「拖到 70 未应用被拽回 80」）。
@@ -37,11 +46,37 @@ struct PanelView: View {
     @State private var sliderSynced = false
 
     var body: some View {
+        Group {
+            // 引导模式门（WP5 §2.1）：loaded 守卫 + 触发式（OnboardingController 判定）。
+            if installer.loaded && onboarding.shouldShowOnboarding(registration: installer.registration) {
+                OnboardingView()
+            } else {
+                regularPanel
+            }
+        }
+        .frame(width: 340)
+        .onAppear(perform: panelAppeared)
+        .onDisappear(perform: panelDisappeared)
+        // 单向接线（规格 §2.1）：registration → StatusController 与 OnboardingController
+        // （面板打开期间的注册变化就近处理；两者幂等，双触发无害）。
+        .onChange(of: installer.registration) {
+            statusController.registrationChanged(installer.registration)
+            onboarding.registrationChanged(installer.registration)
+        }
+        // P1-3 守卫解锁：loaded 置位时补一次判定（首回包与注册同值不触发上面 onChange）。
+        .onChange(of: installer.loaded) {
+            onboarding.registrationChanged(installer.registration)
+        }
+    }
+
+    /// 常规面板（引导不活跃时）。
+    private var regularPanel: some View {
         VStack(spacing: 14) {
             AlertBanner(
                 feedback: statusController.controlFeedback,
                 connection: statusController.connection,
                 lastAttemptSummary: statusController.lastAttempt?.summary,
+                statusFailure: statusController.statusFailure,
                 onRetry: statusController.lastAttempt == nil
                     ? { statusController.refreshNow() }
                     : { statusController.retryLastAttempt() }
@@ -59,7 +94,7 @@ struct PanelView: View {
             }
 
             Divider()
-            daemonSection
+            DaemonSectionView()
 
             Divider()
             loginItemSection
@@ -71,14 +106,6 @@ struct PanelView: View {
             }
         }
         .padding(18)
-        .frame(width: 340)
-        .onAppear(perform: panelAppeared)
-        .onDisappear(perform: panelDisappeared)
-        // 单向接线（规格 §2.1）：registration → StatusController（与 App 层接线并存，
-        // 面板打开期间的注册变化就近处理；registrationChanged 幂等，双触发无害）。
-        .onChange(of: installer.registration) {
-            statusController.registrationChanged(installer.registration)
-        }
         // 首包同步（评审 P1；§7.1 语义扩展）：onAppear 时 status 多半未到，首个
         // 非 nil 回包补同步一次；此后轮询回包不再回写（用户拖动不被拽回）。
         // 拖动中首包到达：不回写（用户拖动值优先，松手即应用），但标记已同步——
@@ -104,6 +131,8 @@ struct PanelView: View {
         panelActive = true
         statusController.setPolling(panelVisible: true, daemonRegistered: installer.registration == .enabled)
         statusController.setTelemetry(panelVisible: true)
+        // 引导判定就近触发（收尾规则/安装接续，幂等；组合根 onChange 双触发无害）。
+        onboarding.registrationChanged(installer.registration)
         // 面板打开同步滑杆（规格 §2.3 同步时机之一）；应用成功经回调二次同步
         // （§7.1：拖动中不写回，防应用回包拽回正在拖动的滑杆）。
         statusController.onLimitsApplied = { upper, hys in
@@ -173,62 +202,13 @@ struct PanelView: View {
         )
     }
 
-    // MARK: - 守护进程安装区（§2.7 精简：状态行 + 主按钮 + 四象限文案 +
-    // anomaly 行保留 + lastError + 位置提示）
-
-    private var daemonSection: some View {
-        VStack(spacing: 8) {
-            Text("守护进程：\(statusText) · 路线：\(routeText)")
-                .font(.callout)
-                .fontWeight(.medium)
-
-            if !guidanceText.isEmpty {
-                Text(guidanceText)
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if installer.anomaly {
-                Text("异常：守护进程可达，但本 app 内未找到嵌入配置（可能由另一副本注册）")
-                    .font(.caption)
-                    .foregroundStyle(theme.warning)
-            }
-
-            if let error = installer.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(theme.alert)
-            }
-
-            // 位置提示（spike 局限 1.9）：注册跟随 .app 位置，移动/删除后需重新注册。
-            Text("提示：已注册的守护进程跟随 Cellar.app 位置；移动或删除应用后请重新安装。")
-                .font(.caption2)
-                .foregroundStyle(theme.tertiaryText)
-
-            Button(buttonTitle) {
-                if installer.registration == .enabled {
-                    installer.uninstall()
-                } else {
-                    installer.install()
-                }
-            }
-            // 迁移象限禁用安装：防用户绕过引导直接安装，制造手工+托管混合态（评审 P2-6）。
-            .disabled(
-                installer.busy
-                    || installer.registration == .pending
-                    || installer.guidance == .migrateFromLegacy
-            )
-        }
-    }
-
-    /// 策略控制区（规格 §2.3 定版 + §2.6 预设 + §7.1 即时应用）：预设 80/70/60
-    /// （设值即排程防抖应用，原两步制观感消失、一步完成；60 兼作地板可见性
-    /// 教育）+ 上限滑杆 60...100（松手防抖应用）+ 滞回 Stepper 1...20（步进
-    /// 防抖应用）+ 总开关（独立按钮，不受滑杆防抖影响）。§7.1 移除「应用」
-    /// 按钮与 .success 反馈行——成功确认 = band 弧即时移动（回包驱动）；失败
-    /// 仍走横幅（三分支不变）。disabled 态（mode == disabled）：滑杆/Stepper/
-    /// 预设全禁用 + 提示文案（P1 定版语义保留）。
+    // MARK: - 策略控制区（规格 §2.3 定版 + §2.6 预设 + §7.1 即时应用）：预设 80/70/60
+    // （设值即排程防抖应用，原两步制观感消失、一步完成；60 兼作地板可见性
+    // 教育）+ 上限滑杆 60...100（松手防抖应用）+ 滞回 Stepper 1...20（步进
+    // 防抖应用）+ 总开关（独立按钮，不受滑杆防抖影响）。§7.1 移除「应用」
+    // 按钮与 .success 反馈行——成功确认 = band 弧即时移动（回包驱动）；失败
+    // 仍走横幅（三分支不变）。disabled 态（mode == disabled）：滑杆/Stepper/
+    // 预设全禁用 + 提示文案（P1 定版语义保留）。
     private var controlSection: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
@@ -367,43 +347,5 @@ struct PanelView: View {
 
     private var isModeDisabled: Bool {
         statusController.daemonStatus?.mode == "disabled"
-    }
-
-    private var statusText: String {
-        switch installer.registration {
-        case .notRegistered: return "未注册"
-        case .pending: return "等待系统授权…"
-        case .enabled: return "已启用"
-        }
-    }
-
-    private var routeText: String {
-        switch installer.route {
-        case .appManaged: return "App 托管"
-        case .manual: return "手工路线"
-        case .unknown: return "未知"
-        }
-    }
-
-    private var buttonTitle: String {
-        switch installer.registration {
-        case .enabled: return "卸载守护进程"
-        case .pending: return "等待系统授权…"
-        case .notRegistered: return "安装守护进程"
-        }
-    }
-
-    /// 四象限文案（§2.2 表格逐行对应）。
-    private var guidanceText: String {
-        switch installer.guidance {
-        case .normalInstall:
-            return "守护进程未安装。点击「安装守护进程」注册，首次需在系统设置中批准。"
-        case .running:
-            return "守护进程随系统托管运行中。"
-        case .migrateFromLegacy:
-            return "检测到手工安装的守护进程。请先运行 sudo cellar uninstall，再点击「安装守护进程」。"
-        case .cleanMixedState:
-            return "检测到手工安装残留与托管注册并存。请先在本面板卸载，再运行 sudo cellar uninstall 清理残留，最后重新安装。"
-        }
     }
 }

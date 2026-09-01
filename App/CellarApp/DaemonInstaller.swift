@@ -47,6 +47,9 @@ final class DaemonInstaller: ObservableObject {
     @Published private(set) var anomaly = false
     @Published private(set) var busy = false
     @Published private(set) var lastError: String?
+    /// 首次 refresh 回包已置位（WP5 P1-3 竞态守卫）：引导门在 loaded == false 时
+    /// 不判定（常规面板呈现），防已注册用户启动瞬间引导闪现。
+    @Published private(set) var loaded = false
 
     private var pollTask: Task<Void, Never>?
     private var settingsOpened = false
@@ -69,6 +72,7 @@ final class DaemonInstaller: ObservableObject {
             let route = Self.queryRoute()
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                self.loaded = true   // P1-3：首次回包置位（引导门守卫）
                 self.registration = registration
                 self.route = route
                 self.guidance = migrationGuidance(
