@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.cellar.daemon</string>
+	<!-- BundleProgram（字符串）而非 ProgramArguments 数组：SMAppService 对嵌入二进制
+	     要求该键；数组形态注册会直接失败（plist content is invalid）。 -->
+	<key>BundleProgram</key>
+	<string>Contents/Library/LaunchDaemons/cellar-daemon</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- 无 StandardErrorPath：重定向目录缺失时 launchd 在 exec 前打开会失败，最坏
+	     情形 job 无法 spawn、自愈代码永远没机会跑；os_log 本就是主日志。 -->
+	<!-- KeepAlive 必须为字典 {SuccessfulExit:false}：布尔 true 会在干净退出
+	     （SIGTERM 恢复动作）后重拉 daemon，把恢复动作静默撤销；语义 = 仅崩溃/非零退出才重启。 -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<!-- ExitTimeOut=10：恢复含一次 SMC 写（写使能 00000000）。 -->
+	<key>ExitTimeOut</key>
+	<integer>10</integer>
+	<key>MachServices</key>
+	<dict>
+		<key>com.cellar.daemon</key>
+		<true/>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>

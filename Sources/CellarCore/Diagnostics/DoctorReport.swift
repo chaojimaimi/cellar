@@ -261,7 +261,7 @@ public enum DoctorReportGenerator {
         }
         return DoctorCheck(
             name: "daemon", status: .info,
-            detail: "未安装或未运行（cellar install 可启用限充）"
+            detail: "未安装或未运行（sudo cellar install 或从 Cellar 面板安装可启用限充）"
         )
     }
 }

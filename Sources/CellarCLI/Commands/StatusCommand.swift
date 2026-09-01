@@ -40,16 +40,37 @@ struct StatusCommand: ParsableCommand {
     // MARK: - daemon 段（XPC，尽力而为）
 
     /// XPC 失败不抛错：打印固定指引（spec §5 失败矩阵与 set/enable/disable 同文案）。
+    /// WP2 双路由化（§2.7）：XPC 可达 → 附加路由行；不可达 → 按手工 plist 是否存在分支
+    /// （已安装未运行 / 未安装 + 双路由安装指引）。
     private func printDaemonSection() {
         do {
             let status = try DaemonXPCClient().getStatus()
             DaemonCommandHelpers.printStatus(status)
+            printRouteLine()
         } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
-            print("daemon：\(DaemonCommandHelpers.daemonUnavailableMessage)")
+            if FileManager.default.fileExists(atPath: DaemonInstaller.plistPath) {
+                print("daemon：已安装未运行（手工路线）")
+                print("提示：请查看 /Library/Logs/Cellar/daemon.log 与 launchctl print system/com.cellar.daemon")
+            } else {
+                print("daemon：未安装")
+                print("安装指引：sudo cellar install（手工路线），或从 Cellar 菜单栏面板安装（托管）")
+            }
         } catch DaemonClientError.daemonError(let message) {
             print("daemon 状态查询失败：\(message)")
         } catch {
             print("daemon 状态查询失败：\(error)")
+        }
+    }
+
+    /// 路由行（§2.7）：XPC 可达时附加「App 托管」/「手工路线」（daemonRoute 纯函数判定）。
+    private func printRouteLine() {
+        switch DaemonCommandHelpers.queryDaemonRoute() {
+        case .appManaged:
+            print("安装路线：App 托管（请在 Cellar 面板中管理）")
+        case .manual:
+            print("安装路线：手工路线（sudo cellar uninstall 可卸载）")
+        case .unknown:
+            print("安装路线：未知（launchctl print 无 program 行）")
         }
     }
 

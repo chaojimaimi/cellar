@@ -26,6 +26,36 @@ enum DaemonCommandHelpers {
         }
     }
 
+    /// 路由查询（防线 c）：launchctl print system/com.cellar.daemon 的 program 路径 →
+    /// daemonRoute 纯函数。launchctl print 对已加载系统服务任意身份可读（2026-09-01
+    /// 实测）——root/非 root 同路径；无 program 行（job 未加载）→ .unknown。
+    static func queryDaemonRoute() -> DaemonRoute {
+        let printResult = DaemonInstaller.runLaunchctl(["print", "system/com.cellar.daemon"])
+        guard let path = DaemonRoute.programPath(fromPrintOutput: printResult.outputText) else {
+            return .unknown
+        }
+        return daemonRoute(programPath: path)
+    }
+
+    /// install 托管态守卫（§2.7）：检测到 App 托管 daemon → 拒绝并指引（App 面板管理）。
+    static func guardInstallNotAppManaged() throws {
+        guard queryDaemonRoute() != .appManaged else {
+            print("❌ 检测到 App 托管（SMAppService）的守护进程，已中止手工安装")
+            print("   请在 Cellar 菜单栏面板中管理；确需切换手工路线时请先在面板卸载")
+            throw ExitCode(1)
+        }
+    }
+
+    /// uninstall 托管态守卫（§2.7）：检测到 App 托管 daemon → 拒绝并指引孤儿态出口
+    /// （BTM 注册只有属主 App 与系统设置两条撤销路）。
+    static func guardUninstallNotAppManaged() throws {
+        guard queryDaemonRoute() != .appManaged else {
+            print("❌ 检测到 App 托管（SMAppService）的守护进程，已中止手工卸载")
+            print("   请在 Cellar 面板卸载；若 App 已删除：系统设置 → 通用 → 登录项与扩展 → 移除")
+            throw ExitCode(1)
+        }
+    }
+
     /// XPC 调用与失败矩阵：成功 → 打印状态；timeout/connectionFailed → 指引 + 69；
     /// daemonError → 原文 + 1。
     static func runDaemonCall(_ body: () throws -> DaemonStatus) throws {
@@ -142,6 +172,9 @@ struct InstallCommand: ParsableCommand {
 
     func run() throws {
         try DaemonCommandHelpers.requireRoot("install")
+        // 托管态守卫（第一条业务语句）：App 托管 daemon 注册在册时，后续 step 5 的
+        // 无条件 bootout system/com.cellar.daemon 会杀掉 App 托管 job 制造脏态——前置拦截。
+        try DaemonCommandHelpers.guardInstallNotAppManaged()
         try DaemonInstaller.install()
     }
 }
@@ -155,6 +188,9 @@ struct UninstallCommand: ParsableCommand {
 
     func run() throws {
         try DaemonCommandHelpers.requireRoot("uninstall")
+        // 托管态守卫（第一条业务语句）：BTM 注册只有属主 App 与系统设置两条撤销路——
+        // 检测到托管态必须指引，不能直接 bootout（孤儿态出口）。
+        try DaemonCommandHelpers.guardUninstallNotAppManaged()
         try DaemonInstaller.uninstall()
     }
 }
@@ -346,21 +382,28 @@ enum DaemonInstaller {
 
     // MARK: - launchctl（原始错误透传）
 
-    /// 运行 launchctl 并返回退出码 + stderr 原文（bootstrap 失败必须打印原始错误）。
-    private static func runLaunchctl(_ arguments: [String]) -> (status: Int32, errorText: String) {
+    /// 运行 launchctl 并返回退出码 + stdout（print 走此通道）+ stderr 原文
+    /// （bootstrap/bootout 失败必须打印原始错误）。DaemonCommandHelpers.queryDaemonRoute 共用。
+    static func runLaunchctl(_ arguments: [String]) -> (status: Int32, outputText: String, errorText: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
+        let outputPipe = Pipe()
         let errorPipe = Pipe()
+        process.standardOutput = outputPipe
         process.standardError = errorPipe
-        process.standardOutput = Pipe()
         do {
             try process.run()
         } catch {
-            return (-1, "launchctl 无法执行：\(error)")
+            return (-1, "", "launchctl 无法执行：\(error)")
         }
         process.waitUntilExit()
-        let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        return (
+            process.terminationStatus,
+            String(data: outputData, encoding: .utf8) ?? "",
+            String(data: errorData, encoding: .utf8) ?? ""
+        )
     }
 }

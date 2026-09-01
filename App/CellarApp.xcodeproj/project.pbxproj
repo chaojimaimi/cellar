@@ -77,6 +77,7 @@
 				A10000000000000000000007 /* Sources */,
 				A10000000000000000000008 /* Frameworks */,
 				A10000000000000000000009 /* Resources */,
+				A10000000000000000000014 /* 内嵌 daemon 构建与落位 */,
 			);
 			buildRules = (
 			);
@@ -140,6 +141,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A10000000000000000000014 /* 内嵌 daemon 构建与落位 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "内嵌 daemon 构建与落位";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n# 内嵌 daemon：swift build + 落位 + 产物自检（防模板回退 / 防 stale 二进制）。\n# 不声明 outputFiles（alwaysOutOfDate=1）：每次构建必跑——「只改 daemon 源码」也不会\n# 嵌入旧二进制；内层 swift build 增量 no-op 秒级。嵌入二进制随后随 app 签名封装\n# （codesign 隐式收尾晚于所有 phase）。\nxcrun swift build -c release --package-path \"${SRCROOT}/..\" --product cellar-daemon\nDAEMON_SRC=\"${SRCROOT}/../.build/release/cellar-daemon\"\nDAEMON_DIR=\"${BUILT_PRODUCTS_DIR}/Cellar.app/Contents/Library/LaunchDaemons\"\nPLIST_SRC=\"${SRCROOT}/Tools/com.cellar.daemon.plist\"\nPLIST=\"${DAEMON_DIR}/com.cellar.daemon.plist\"\nmkdir -p \"${DAEMON_DIR}\"\ncp \"${DAEMON_SRC}\" \"${DAEMON_DIR}/cellar-daemon\"\ncp \"${PLIST_SRC}\" \"${PLIST}\"\n# 产物自检（失败即构建失败）。\ntest -x \"${DAEMON_DIR}/cellar-daemon\"\n/usr/bin/plutil -lint \"${PLIST}\" >/dev/null\nif /usr/bin/plutil -extract ProgramArguments raw \"${PLIST}\" >/dev/null 2>&1; then\n  echo 'error: 嵌入 plist 不应包含 ProgramArguments（SMAppService 须用 BundleProgram）' >&2\n  exit 1\nfi\nif [ \"$(/usr/bin/plutil -extract BundleProgram raw \"${PLIST}\")\" != 'Contents/Library/LaunchDaemons/cellar-daemon' ]; then\n  echo 'error: 嵌入 plist 的 BundleProgram 非该字符串（或类型非字符串）' >&2\n  exit 1\nfi\nif [ \"$(/usr/bin/plutil -extract KeepAlive.SuccessfulExit raw \"${PLIST}\")\" != 'false' ]; then\n  echo 'error: 嵌入 plist 的 KeepAlive.SuccessfulExit 必须为 false' >&2\n  exit 1\nfi\nif [ \"$(/usr/bin/plutil -extract RunAtLoad raw \"${PLIST}\")\" != 'true' ]; then\n  echo 'error: 嵌入 plist 的 RunAtLoad 必须为 true' >&2\n  exit 1\nfi\nif ! /usr/bin/plutil -extract MachServices raw \"${PLIST}\" | /usr/bin/grep -q 'com.cellar.daemon'; then\n  echo 'error: 嵌入 plist 缺少 MachServices.com.cellar.daemon' >&2\n  exit 1\nfi";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000007 /* Sources */ = {

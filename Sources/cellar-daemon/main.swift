@@ -15,6 +15,7 @@
 import Foundation
 import IOKit
 import IOKit.pwr_mgt
+import Darwin
 import os
 import CellarCore
 
@@ -29,9 +30,32 @@ nonisolated(unsafe) private var powerRootPort: io_connect_t = 0
 /// 信号源强引用（DispatchSourceSignal 释放即失效）。
 nonisolated(unsafe) private var signalSources: [DispatchSourceSignal] = []
 
+/// 跨进程互斥锁 fd（防线 b）：进程生命周期全局持有，从不关闭——文件锁随进程退出自动释放。
+nonisolated(unsafe) private var daemonLockFD: Int32 = -1
+
 private let lifecycleLog = Logger(subsystem: "com.cellar.daemon", category: "lifecycle")
 
 // MARK: - 入口
+
+// 0. 跨进程互斥（防线 b，第一条可执行逻辑）：双路线（App 托管 / CLI 手工）可注册同一
+// Label——launchd 对同 Label 碰撞的行为未经隔离实证，flock 是进程级兜底：另一路线的
+// daemon 存活即拿不到锁。失败 → fault + 非零退出；配合 KeepAlive 与 launchd 默认
+// ThrottleInterval=10s，最坏每 10s 一次快速失败——另一方死后本进程在下一节流窗接管。
+if !acquireDaemonLock() {
+    lifecycleLog.fault("互斥锁获取失败（\(DaemonRegistration.daemonLockPath) 被占用）——另一 daemon 实例运行中，退出")
+    exit(1)
+}
+
+// 0.5 自举策略目录（幂等）：嵌入路线无 CLI install 创建目录，缺目录仅影响持久化
+// （PolicyStore 写失败记日志，内存策略继续生效）——显式创建并可见化失败，不静默。
+do {
+    try FileManager.default.createDirectory(
+        atPath: "/Library/Application Support/Cellar",
+        withIntermediateDirectories: true
+    )
+} catch {
+    lifecycleLog.error("自举策略目录失败（\(error)）——策略持久化将不可用（内存策略继续生效）")
+}
 
 // 1/2. 单一属主 + 启动即校对（失败只记日志，绝不退出）。
 // daemonCore 为 nonisolated(unsafe) 全局：信号/C 回调等非隔离上下文经它访问属主。
@@ -67,6 +91,21 @@ lifecycleLog.info("daemon 启动完成：version=\(DaemonXPC.daemonVersion, priv
 
 // 常驻：主 RunLoop 驱动定时器与电源通知；XPC/信号在各自队列。
 CFRunLoopRun()
+
+// MARK: - 跨进程互斥（防线 b，flock 实现）
+
+/// 对 `DaemonRegistration.daemonLockPath` 加 flock(LOCK_EX|LOCK_NB)：成功 → fd 存
+/// 全局（进程存活期不关闭）；失败（另一实例持有/路径打开失败）→ 返回 false。
+private func acquireDaemonLock() -> Bool {
+    let fd = open(DaemonRegistration.daemonLockPath, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { return false }
+    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+        close(fd)
+        return false
+    }
+    daemonLockFD = fd
+    return true
+}
 
 // MARK: - 信号（评审 C-4：先 signal(SIG_IGN) 再 DispatchSourceSignal；全局队列）
 

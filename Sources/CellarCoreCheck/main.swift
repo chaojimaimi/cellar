@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 76 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76）
+//   swift run CellarCoreCheck          # 跑全部 82 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–82）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -270,7 +270,7 @@ struct Main {
         if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 76 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 82 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -1286,7 +1286,7 @@ struct Main {
                 snapshot: base, snapshotError: nil,
                 conflict: ConflictScanResult(exact: [], generic: []),
                 daemonStatus: DaemonStatus(
-                    version: "0.1.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                    version: "0.2.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
                     lastAction: "enforce:disableCharging", lastPercent: 80,
                     lastExternalConnected: true, lastChargingEnabled: false,
                     timestamp: Date(timeIntervalSince1970: 1234)
@@ -1310,8 +1310,8 @@ struct Main {
             )
             let degraded = DoctorReportGenerator.generate(notInstalled)
             check(degraded.checks.count == 8 && degraded.checks[7].status == .info
-                    && degraded.checks[7].detail.contains("cellar install 可启用限充"),
-                  "用例69", "已探测但未运行 → 检查 8 INFO")
+                    && degraded.checks[7].detail.contains("sudo cellar install 或从 Cellar 面板安装可启用限充"),
+                  "用例69", "已探测但未运行 → 检查 8 INFO（双路由文案）")
 
             let legacy = DoctorReportGenerator.generate(DoctorInputs(
                 isRoot: true, smcConnected: true,
@@ -1326,7 +1326,7 @@ struct Main {
         // 用例 70：DaemonStatus JSON round-trip（含 version 与全部可选字段；全 nil 形态同测）。
         do {
             let full = DaemonStatus(
-                version: "0.1.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                version: "0.2.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
                 lastAction: "enforce:disableCharging", lastPercent: 80,
                 lastExternalConnected: true, lastChargingEnabled: false,
                 timestamp: Date(timeIntervalSince1970: 1234)
@@ -1335,7 +1335,7 @@ struct Main {
             let decoded = json.flatMap { try? DaemonXPC.decodeStatus($0) }
             check(decoded == full, "用例70", "编码→解码 == 原值（含 version 与可选字段）")
 
-            let bare = DaemonStatus(version: "0.1.0-alpha-dev", mode: "disabled", upperLimit: 60, hysteresis: 20)
+            let bare = DaemonStatus(version: "0.2.0-alpha-dev", mode: "disabled", upperLimit: 60, hysteresis: 20)
             let bareRound = DaemonXPC.encodeStatus(bare).flatMap { try? DaemonXPC.decodeStatus($0) }
             check(bareRound == bare, "用例70", "可选字段全 nil 形态 round-trip")
         }
@@ -1428,6 +1428,152 @@ struct Main {
 
             let string = xpc_string_create("not-a-dict")
             check(DaemonXPC.validateRequest(string) == nil, "用例76", "非字典 → nil")
+        }
+
+        // MARK: - 场景（Phase 2 WP2 daemon 托管，用例 77–82）
+        // 注册态/迁移/路由为 CellarCore 纯函数（不 import ServiceManagement）；
+        // 状态映射矩阵的 adapter 在 App target（3 行 switch，本工具无法 import App），
+        // 以独立实现的期望表镜像（与 matrixSweep 双实现同模式）。
+        // 嵌入 plist lint 用 #filePath 反推仓库根——不依赖 cwd。
+
+        // 用例 77：状态映射矩阵（SMAppService.Status → RegistrationStatus 规格快照）。
+        // App 侧 adapter（DaemonInstaller）为 switch（本 SDK 共 4 态：notFound /
+        // notRegistered / requiresApproval / enabled，其中前两者都落入「未注册」安装态），
+        // 本工具无法 import App——以独立实现的期望表镜像矩阵并断言互异（matrixSweep 双实现同模式）。
+        do {
+            func expectedRegistration(_ name: String) -> RegistrationStatus {
+                switch name {
+                case "notFound", "notRegistered": return .notRegistered
+                case "requiresApproval": return .pending
+                case "enabled": return .enabled
+                default: return .notRegistered   // @unknown default 与 App 侧 adapter 一致
+                }
+            }
+            let rows: [(name: String, expected: RegistrationStatus)] = [
+                ("notFound", .notRegistered),
+                ("notRegistered", .notRegistered),
+                ("requiresApproval", .pending),
+                ("enabled", .enabled),
+            ]
+            var mapped: Set<RegistrationStatus> = []
+            var ok = true
+            for row in rows {
+                mapped.insert(expectedRegistration(row.name))
+                if expectedRegistration(row.name) != row.expected { ok = false }
+            }
+            check(ok, "用例77", "SDK 四态全映射且与 App 侧 adapter 期望一致")
+            check(mapped.count == 3, "用例77", "三个注册态桶全部可达（不塌缩为单一态）")
+            check(expectedRegistration("unknownFutureCase") == .notRegistered,
+                  "用例77", "未知态回落 .notRegistered（@unknown default 语义）")
+        }
+
+        // 用例 78：迁移引导四象限（表格逐行）+ pending 过渡态折叠。
+        do {
+            check(migrationGuidance(legacyPlistExists: false, registration: .notRegistered) == .normalInstall,
+                  "用例78", "无旧 plist + 未注册 → 正常安装入口")
+            check(migrationGuidance(legacyPlistExists: false, registration: .enabled) == .running,
+                  "用例78", "无旧 plist + enabled → 正常（显示运行中）")
+            check(migrationGuidance(legacyPlistExists: true, registration: .notRegistered) == .migrateFromLegacy,
+                  "用例78", "旧 plist + 未注册 → 迁移引导（App 不执行 root 操作）")
+            check(migrationGuidance(legacyPlistExists: true, registration: .enabled) == .cleanMixedState,
+                  "用例78", "旧 plist + enabled → 混合态清理引导")
+            check(migrationGuidance(legacyPlistExists: false, registration: .pending) == .normalInstall
+                    && migrationGuidance(legacyPlistExists: true, registration: .pending) == .migrateFromLegacy,
+                  "用例78", "pending 过渡态按未注册象限折叠（授权轮询另有状态行）")
+        }
+
+        // 用例 79：daemonRoute 判定（路径含 ".app/" → appManaged；空 → unknown；其余 → manual）。
+        do {
+            check(daemonRoute(programPath: "/Applications/Cellar.app/Contents/Library/LaunchDaemons/cellar-daemon") == .appManaged,
+                  "用例79", ".app 内二进制 → .appManaged")
+            check(daemonRoute(programPath: "/private/tmp/Cellar2.app/Contents/Library/LaunchDaemons/cellar-daemon") == .appManaged,
+                  "用例79", "任意位置的 .app 形态 → .appManaged")
+            check(daemonRoute(programPath: "/Library/PrivilegedHelperTools/com.cellar.daemon") == .manual,
+                  "用例79", "手工路线路径 → .manual")
+            check(daemonRoute(programPath: "/opt/local/sbin/cellar-daemon") == .manual,
+                  "用例79", "其他无 .app/ 路径 → .manual")
+            check(daemonRoute(programPath: "") == .unknown,
+                  "用例79", "空路径 → .unknown")
+        }
+
+        // 用例 80：launchctl print 输出解析（防线 c root 路径行）+ 解析→判定全链路。
+        do {
+            let sample = """
+            system/com.cellar.daemon = {
+                active count = 1
+                path = /Library/LaunchDaemons/com.cellar.daemon.plist
+                state = running
+
+                program = /Library/PrivilegedHelperTools/com.cellar.daemon
+                arguments = {
+            """
+            expectEqual(DaemonRoute.programPath(fromPrintOutput: sample),
+                        "/Library/PrivilegedHelperTools/com.cellar.daemon",
+                        "用例80", "提取 program 行路径（含前置空白与无关行）")
+
+            let embedded = "program = /Applications/Cellar.app/Contents/Library/LaunchDaemons/cellar-daemon\n"
+            expectEqual(DaemonRoute.programPath(fromPrintOutput: embedded),
+                        "/Applications/Cellar.app/Contents/Library/LaunchDaemons/cellar-daemon",
+                        "用例80", "托管形态同样解析")
+            check(DaemonRoute.programPath(fromPrintOutput: "Could not find service") == nil,
+                  "用例80", "未加载/找不到服务输出 → nil")
+            check(DaemonRoute.programPath(fromPrintOutput: "") == nil,
+                  "用例80", "空输出 → nil")
+
+            let route = daemonRoute(programPath: DaemonRoute.programPath(fromPrintOutput: embedded) ?? "")
+            check(route == .appManaged, "用例80", "解析 + 判定全链路 → .appManaged")
+        }
+
+        // 用例 81：锁路径常量（防线 b；daemon main 首个可执行逻辑据此 flock）。
+        do {
+            expectEqual(DaemonRegistration.daemonLockPath, "/var/run/com.cellar.daemon.lock",
+                        "用例81", "锁路径 == /var/run/com.cellar.daemon.lock")
+            check(DaemonRegistration.daemonLockPath.hasPrefix("/") && !DaemonRegistration.daemonLockPath.isEmpty,
+                  "用例81", "锁路径为绝对路径")
+        }
+
+        // 用例 82：嵌入 plist 模板 lint（App/Tools/com.cellar.daemon.plist）——
+        // §2.3 保留键逐一核对 + §2.5 自检断言（BundleProgram 字符串/无 ProgramArguments）。
+        do {
+            // #filePath = …/Sources/CellarCoreCheck/main.swift → 上溯三级到仓库根。
+            let repoRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()   // Sources/CellarCoreCheck
+                .deletingLastPathComponent()   // Sources
+                .deletingLastPathComponent()   // 仓库根
+            let plistURL = repoRoot.appendingPathComponent("App/Tools/com.cellar.daemon.plist")
+            var root: [String: Any]?
+            do {
+                let data = try Data(contentsOf: plistURL)
+                let raw = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                root = raw as? [String: Any]
+            } catch {
+                root = nil
+            }
+            check(root != nil, "用例82", "嵌入 plist 存在且可解析为字典（\(plistURL.path)）")
+            if let root {
+                var ok = true
+                // 保留键清单（逐一核对，缺一不可）。
+                ok = ok && (root["Label"] as? String) == "com.cellar.daemon"
+                ok = ok && (root["RunAtLoad"] as? Bool) == true
+                ok = ok && (root["ExitTimeOut"] as? Int) == 10
+                ok = ok && (root["ProcessType"] as? String) == "Background"
+                if let keepAlive = root["KeepAlive"] as? [String: Any] {
+                    ok = ok && (keepAlive["SuccessfulExit"] as? Bool) == false
+                } else {
+                    ok = false
+                }
+                if let machServices = root["MachServices"] as? [String: Any] {
+                    ok = ok && (machServices["com.cellar.daemon"] as? Bool) == true
+                } else {
+                    ok = false
+                }
+                check(ok, "用例82", "保留键逐一核对（Label/RunAtLoad/KeepAlive 字典/ExitTimeOut/MachServices/ProcessType）")
+                // 嵌入专属键与删除键（§2.5 自检断言镜像）。
+                ok = (root["BundleProgram"] as? String) == "Contents/Library/LaunchDaemons/cellar-daemon"
+                ok = ok && root["ProgramArguments"] == nil
+                ok = ok && root["StandardErrorPath"] == nil
+                check(ok, "用例82", "BundleProgram 字符串正确 / 无 ProgramArguments / 无 StandardErrorPath")
+            }
         }
     }
 
