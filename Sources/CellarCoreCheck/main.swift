@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 82 个 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–82）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -24,10 +24,15 @@ private final class FailureCounter: @unchecked Sendable {
     static let shared = FailureCounter()
     private let lock = NSLock()
     private(set) var count = 0
+    /// 出现过的场景标签（去重）——总数动态统计，避免每加用例都要手改结尾文案。
+    private var scenarios: Set<String> = []
     func increment() { lock.withLock { count += 1 } }
+    func record(scenario: String) { lock.withLock { scenarios.insert(scenario) } }
+    var scenarioCount: Int { lock.withLock { scenarios.count } }
 }
 
 private func check(_ condition: Bool, _ scenario: String, _ message: String) {
+    FailureCounter.shared.record(scenario: scenario)
     if condition {
         print("  ✓ \(scenario): \(message)")
     } else {
@@ -270,7 +275,7 @@ struct Main {
         if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
         try runScenarios()
         let failures = FailureCounter.shared.count
-        print(failures == 0 ? "\n全部 82 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
+        print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
     }
 
@@ -1574,6 +1579,40 @@ struct Main {
                 ok = ok && root["StandardErrorPath"] == nil
                 check(ok, "用例82", "BundleProgram 字符串正确 / 无 ProgramArguments / 无 StandardErrorPath")
             }
+        }
+
+        // 用例 83：route(fromPrintOutput:) 双格式判定（2026-09-01 真机输出 fixture）——
+        // SMAppService/BTM 托管任务无 program 行（managed_by 归因），只认 program 行会误判 unknown。
+        do {
+            let btmManaged = """
+            system/com.cellar.daemon = {
+                active count = 2
+                path = (submitted by smd.26709)
+                type = Submitted
+                managed_by = com.apple.xpc.ServiceManagement
+                state = running
+
+                program identifier = Contents/Library/LaunchDaemons/cellar-daemon (mode: 2)
+                parent bundle identifier = com.cellar.app
+                pid = 66792
+            """
+            expectEqual(DaemonRoute.route(fromPrintOutput: btmManaged), .appManaged,
+                        "用例83", "BTM 托管格式（managed_by）→ .appManaged")
+            check(DaemonRoute.programPath(fromPrintOutput: btmManaged) == nil,
+                  "用例83", "BTM 托管格式无 program 行（旧解析路径在此为 nil）")
+
+            let manual = """
+            system/com.cellar.daemon = {
+                state = running
+                program = /Library/PrivilegedHelperTools/com.cellar.daemon
+            }
+            """
+            expectEqual(DaemonRoute.route(fromPrintOutput: manual), .manual,
+                        "用例83", "手工格式（program 行）→ .manual")
+            expectEqual(DaemonRoute.route(fromPrintOutput: "Could not find service"), .unknown,
+                        "用例83", "服务未加载 → .unknown")
+            expectEqual(DaemonRoute.route(fromPrintOutput: ""), .unknown,
+                        "用例83", "空输出 → .unknown")
         }
     }
 

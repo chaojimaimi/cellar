@@ -26,15 +26,12 @@ enum DaemonCommandHelpers {
         }
     }
 
-    /// 路由查询（防线 c）：launchctl print system/com.cellar.daemon 的 program 路径 →
-    /// daemonRoute 纯函数。launchctl print 对已加载系统服务任意身份可读（2026-09-01
-    /// 实测）——root/非 root 同路径；无 program 行（job 未加载）→ .unknown。
+    /// 路由查询（防线 c）：launchctl print system/com.cellar.daemon 输出 → route 纯函数。
+    /// launchctl print 对已加载系统服务任意身份可读（2026-09-01 实测）——root/非 root
+    /// 同路径；同时识别手工格式（program 行）与 SMAppService/BTM 托管格式（managed_by 行）。
     static func queryDaemonRoute() -> DaemonRoute {
         let printResult = DaemonInstaller.runLaunchctl(["print", "system/com.cellar.daemon"])
-        guard let path = DaemonRoute.programPath(fromPrintOutput: printResult.outputText) else {
-            return .unknown
-        }
-        return daemonRoute(programPath: path)
+        return DaemonRoute.route(fromPrintOutput: printResult.outputText)
     }
 
     /// install 托管态守卫（§2.7）：检测到 App 托管 daemon → 拒绝并指引（App 面板管理）。

@@ -208,12 +208,12 @@ final class DaemonInstaller: ObservableObject {
 
     // MARK: - 路由 / 文件探测
 
-    /// 路由来源（防线 c）：launchctl print system/com.cellar.daemon 的 program 路径。
-    /// 非 root 亦可读已加载系统服务（2026-09-01 实测）；无 program 行 → .unknown。
+    /// 路由来源（防线 c）：launchctl print system/com.cellar.daemon 输出 → route 纯函数。
+    /// 非 root 亦可读已加载系统服务（2026-09-01 实测）；同时识别手工格式与
+    /// SMAppService/BTM 托管格式（后者无 program 行，managed_by 行归因）。
     private nonisolated static func queryRoute() -> DaemonRoute {
         let output = runLaunchctl(["print", "system/com.cellar.daemon"])
-        guard let path = DaemonRoute.programPath(fromPrintOutput: output) else { return .unknown }
-        return daemonRoute(programPath: path)
+        return DaemonRoute.route(fromPrintOutput: output)
     }
 
     private static var embeddedPlistExists: Bool {

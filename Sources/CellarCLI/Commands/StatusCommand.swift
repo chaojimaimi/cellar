@@ -70,7 +70,7 @@ struct StatusCommand: ParsableCommand {
         case .manual:
             print("安装路线：手工路线（sudo cellar uninstall 可卸载）")
         case .unknown:
-            print("安装路线：未知（launchctl print 无 program 行）")
+            print("安装路线：未知（服务未加载或 launchctl 输出无法识别）")
         }
     }
 

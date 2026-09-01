@@ -57,6 +57,25 @@ public enum DaemonRoute: Equatable, Sendable {
     /// 无法判定（program 路径为空/不可解析：job 未加载或输出格式不符）。
     case unknown
 
+    /// 从 `launchctl print system/com.cellar.daemon` 输出直接判定安装路线。
+    /// 两种实测格式（2026-09-01，macOS 26.6.2）：
+    /// - SMAppService/BTM 托管：**无 `program =` 行**，代之以
+    ///   `managed_by = com.apple.xpc.ServiceManagement`（另有 `program identifier =
+    ///   <bundle 相对路径>`）——只认 program 行会把托管任务误判为 .unknown
+    /// - 手工路线（launchctl bootstrap）：`program = <绝对路径>`
+    public static func route(fromPrintOutput output: String) -> DaemonRoute {
+        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("managed_by = "), line.contains("com.apple.xpc.ServiceManagement") {
+                return .appManaged
+            }
+        }
+        if let path = programPath(fromPrintOutput: output) {
+            return daemonRoute(programPath: path)
+        }
+        return .unknown
+    }
+
     /// 从 `launchctl print system/com.cellar.daemon` 输出提取 program 路径
     /// （行形如 `program = /path/to/binary`）。job 未加载/找不到服务时输出无
     /// program 行 → nil。
