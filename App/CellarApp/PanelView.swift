@@ -9,7 +9,10 @@ import SwiftUI
 /// 组合根提升（规格 §2.8）：三个控制器为 CellarApp 层 @StateObject 经
 /// environmentObject 注入——面板视图重建不断供数据源；本视图 onAppear/
 /// onDisappear 只做换档（status 1s↔60s + 遥测档启停），安装刷新在 App 启动。
-/// 控制逻辑沿用 WP3 不换（sliderSynced/预检/三态/busy/stale 比对全部保留）。
+/// 控制逻辑沿用 WP3 不换（sliderSynced/预检/三态/busy/stale 比对全部保留）；
+/// §7.1 即时应用：滑杆松手 / Stepper 步进 / 预设点击 → 防抖 300ms → 既有
+/// applyLimits 全链路（移除「应用」按钮与成功反馈行——成功确认 = band 弧即时
+/// 移动，回包驱动；失败仍走横幅三分支）。
 struct PanelView: View {
     @EnvironmentObject private var installer: DaemonInstaller
     @EnvironmentObject private var statusController: StatusController
@@ -19,6 +22,15 @@ struct PanelView: View {
     // 滑杆本地态（不同步于轮询回包，防「拖到 70 未应用被拽回 80」）。
     @State private var upperLimit: Double = 80
     @State private var hysteresis = 2
+    /// 拖动中（§7.1 语义扩展）：isEditing 期间跳过一切外部同步回写——首包同步
+    /// 保留（非拖动时照常），拖动中到达的回包 / 应用成功回包不回写滑杆。
+    @State private var isEditing = false
+    /// 面板活跃守卫（评审 P2-2）：手势拆除与 onDisappear 的相对顺序无保证——
+    /// 防抖排程入口据此拒绝面板拆除后迟到的 onEditingChanged(false) 重排。
+    @State private var panelActive = false
+    /// 防抖应用任务（§7.1）：新排程先 cancel 旧任务；300ms 后走 applyLimits
+    /// 全链路。面板消失（onDisappear）时 cancel，防关闭面板后静默落盘。
+    @State private var applyTask: Task<Void, Never>?
     /// 本次面板打开是否已完成「首包同步」（评审 P1）：onAppear 时 daemonStatus 往往
     /// 尚未到达（registration 异步刷新），需等首个非 nil 回包补一次同步，此后轮询
     /// 回包不再回写滑杆。每次面板打开重置（规格 §2.3 同步时机 = 面板打开 + 应用成功）。
@@ -67,10 +79,16 @@ struct PanelView: View {
         .onChange(of: installer.registration) {
             statusController.registrationChanged(installer.registration)
         }
-        // 首包同步（评审 P1）：onAppear 时 status 多半未到，首个非 nil 回包补同步
-        // 一次；此后轮询回包不再回写（用户拖动不被拽回）。
+        // 首包同步（评审 P1；§7.1 语义扩展）：onAppear 时 status 多半未到，首个
+        // 非 nil 回包补同步一次；此后轮询回包不再回写（用户拖动不被拽回）。
+        // 拖动中首包到达：不回写（用户拖动值优先，松手即应用），但标记已同步——
+        // 维持「轮询回包不再回写」不变量，防面板延迟关闭后值被旧回包覆盖。
         .onChange(of: statusController.daemonStatus) {
-            guard !sliderSynced, let (upper, hys) = statusController.syncSliderFromStatus() else { return }
+            guard !sliderSynced else { return }
+            guard !isEditing, let (upper, hys) = statusController.syncSliderFromStatus() else {
+                if isEditing { sliderSynced = true }
+                return
+            }
             upperLimit = Double(upper)
             hysteresis = hys
             sliderSynced = true
@@ -83,13 +101,16 @@ struct PanelView: View {
         // 注册态新鲜度（评审 P2-1）：CLI 卸载（面板迁移指引就是让用户跑
         // sudo cellar uninstall）后重开面板必须重查，否则呈现误导性失联态。
         installer.refresh()
+        panelActive = true
         statusController.setPolling(panelVisible: true, daemonRegistered: installer.registration == .enabled)
         statusController.setTelemetry(panelVisible: true)
-        // 面板打开同步滑杆（规格 §2.3 同步时机之一）；应用成功经回调二次同步。
+        // 面板打开同步滑杆（规格 §2.3 同步时机之一）；应用成功经回调二次同步
+        // （§7.1：拖动中不写回，防应用回包拽回正在拖动的滑杆）。
         statusController.onLimitsApplied = { upper, hys in
+            sliderSynced = true
+            guard !isEditing else { return }
             upperLimit = Double(upper)
             hysteresis = hys
-            sliderSynced = true
         }
         sliderSynced = false
         if let (upper, hys) = statusController.syncSliderFromStatus() {
@@ -101,6 +122,12 @@ struct PanelView: View {
     }
 
     private func panelDisappeared() {
+        // §7.1：面板消失即取消未触发的防抖应用（300ms 窗口内关闭不落盘）；
+        // 拖动态复位，防下次打开时外部同步被残留 isEditing 跳过。
+        panelActive = false
+        applyTask?.cancel()
+        applyTask = nil
+        isEditing = false
         installer.stopPolling()
         statusController.setPolling(panelVisible: false, daemonRegistered: installer.registration == .enabled)
         statusController.setTelemetry(panelVisible: false)
@@ -195,20 +222,26 @@ struct PanelView: View {
         }
     }
 
-    /// 策略控制区（规格 §2.3 定版 + §2.6 预设微调）：预设 80/70/60（两步制，
-    /// 仅设滑杆防误触；60 兼作地板可见性教育）+ 上限滑杆 60...100 + 滞回
-    /// Stepper 1...20 + 「应用」（本地预检 → setLimits）+ 总开关 + 成功反馈行。
+    /// 策略控制区（规格 §2.3 定版 + §2.6 预设 + §7.1 即时应用）：预设 80/70/60
+    /// （设值即排程防抖应用，原两步制观感消失、一步完成；60 兼作地板可见性
+    /// 教育）+ 上限滑杆 60...100（松手防抖应用）+ 滞回 Stepper 1...20（步进
+    /// 防抖应用）+ 总开关（独立按钮，不受滑杆防抖影响）。§7.1 移除「应用」
+    /// 按钮与 .success 反馈行——成功确认 = band 弧即时移动（回包驱动）；失败
+    /// 仍走横幅（三分支不变）。disabled 态（mode == disabled）：滑杆/Stepper/
+    /// 预设全禁用 + 提示文案（P1 定版语义保留）。
     private var controlSection: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 ForEach([80, 70, 60], id: \.self) { preset in
                     Button("\(preset)%") {
-                        upperLimit = Double(preset)   // 两步制：仅设定滑杆值
+                        upperLimit = Double(preset)   // 预设 = 设值 + 排程（§7.1）
+                        scheduleApplyLimits()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(isModeDisabled)
                 }
-                Text("预设仅设滑杆，确认后点「应用」")
+                Text("预设与滑杆改动后自动应用")
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
             }
@@ -220,20 +253,42 @@ struct PanelView: View {
                 Text("\(Int(upperLimit))%")
                     .monospacedDigit()
             }
-            Slider(value: $upperLimit, in: 60...100, step: 1)   // UI 层 60 地板（红线 1）
+            // §7.1：松手（onEditingChanged(false)）→ 防抖 300ms → applyLimits
+            // 全链路（预检/三态/banner/busy/stale 比对全复用）。
+            Slider(
+                value: $upperLimit,
+                in: 60...100,   // UI 层 60 地板（红线 1）
+                step: 1,
+                onEditingChanged: { editing in
+                    isEditing = editing
+                    if !editing { scheduleApplyLimits() }
+                }
+            )
+            .disabled(isModeDisabled)
 
             HStack {
                 Text("滞回幅度")
                 Spacer()
-                Stepper("\(hysteresis)", value: $hysteresis, in: 1...20)
+                // §7.1：macOS Stepper 按钮点击的 onEditingChanged 触发不可靠，
+                // 用显式步进回调（点击即用户意图），步进后同走防抖排程。
+                Stepper("\(hysteresis)") {
+                    if hysteresis < 20 {
+                        hysteresis += 1
+                        scheduleApplyLimits()
+                    }
+                } onDecrement: {
+                    if hysteresis > 1 {
+                        hysteresis -= 1
+                        scheduleApplyLimits()
+                    }
+                }
+                .disabled(isModeDisabled)
             }
 
             HStack(spacing: 8) {
-                Button("应用") { applyLimits() }
-                    .disabled(isModeDisabled || statusController.busy)
                 if isModeDisabled {
                     // setLimits 会强制切回 active（DaemonCore 语义），隐式重新启用
-                    // 反直觉——disabled 态禁用并提供提示（P1 定版）。
+                    // 反直觉——disabled 态禁用并提供提示（P1 定版，§7.1 保留）。
                     Text("启用限充后可调整")
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
@@ -244,12 +299,6 @@ struct PanelView: View {
                 }
                 // 模式未知（首查前/失联）时总开关无意义（不知当前是停用还是启用）。
                 .disabled(statusController.daemonStatus == nil || statusController.busy)
-            }
-
-            if case .success(let text) = statusController.controlFeedback {
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(theme.success)
             }
 
             Text("守护进程版本：\(statusController.daemonStatus?.version ?? "未知") · 期望 \(DaemonXPC.daemonVersion)")
@@ -275,7 +324,35 @@ struct PanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 「应用」按钮动作：本地预检（LimitPolicy 双层防线第一层）→ setLimits。
+    /// 防抖应用排程（规格 §7.1）：新排程先 cancel 旧任务；延迟 300ms 后走
+    /// applyLimits 全链路（LimitPolicy 预检/三态/banner/busy 门控/stale 比对
+    /// 全复用）。回调遇 busy（控制在途，毫秒级）→ 单次延后重排，仍 busy 则放弃
+    /// （下次改动重新排程）。主线程纪律：View 隐式 @MainActor，Task 继承主
+    /// actor——sleep 挂起不阻塞主线程，applyLimits 本就 @MainActor。
+    private func scheduleApplyLimits(allowRetry: Bool = true) {
+        guard panelActive else { return }
+        applyTask?.cancel()
+        applyTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.3))
+            guard !Task.isCancelled else { return }
+            guard !statusController.busy else {
+                if allowRetry { scheduleApplyLimits(allowRetry: false) }
+                else {
+                    // 放弃前把滑杆拉回 daemon 真相（评审 P2-1）：静默丢弃用户改动
+                    // 会造成「滑杆显示 V2、实际策略 V1」的矛盾呈现。
+                    if let (upper, hys) = statusController.syncSliderFromStatus() {
+                        upperLimit = Double(upper)
+                        hysteresis = hys
+                    }
+                }
+                return
+            }
+            applyLimits()
+        }
+    }
+
+    /// 本地预检（LimitPolicy 双层防线第一层）→ setLimits（StatusController 后台
+    /// XPC，结果回主 actor）。
     private func applyLimits() {
         let upper = Int(upperLimit)
         do {

@@ -51,15 +51,21 @@ public func menuBarIconState(status: DaemonStatus?, connection: ConnectionState)
     return .holding
 }
 
-// MARK: - 菜单栏多状态符号（WP4 规格 §2.2 候选表）
+// MARK: - 菜单栏多状态符号（WP4 规格 §2.2 候选表 + §7.3 图标纪律）
 
-/// 菜单栏图标 SF Symbol 首选名（规格 §2.2 候选表首选项；评审实测 macOS 26 目标下
-/// 候选全部存在）。形状承载语义优先、颜色仅作增强（.alert 由形状三角形表达）。
+/// 菜单栏图标 SF Symbol 首选名（规格 §2.2 候选表首选项 + §7.3 修订；评审实测
+/// macOS 26 目标下候选全部存在）。形状承载语义优先、颜色仅作增强（.alert 由
+/// 形状三角形表达）。
+///
+/// **图标纪律（规格 §7.3，验收 Q2 修复）**：菜单栏图标只表达 Cellar 的管理状态，
+/// 永不用电量档位字形——系统菜单栏已有真实电量图标，档位字形（如 battery.100
+/// 在 85% 呈「满电」形）必然被读成电量且必然误导；discharging 用
+/// arrow.down.circle（回退 minus.circle）表达放电而无档位含义。
 public func menuBarSymbolName(for state: MenuBarIconState) -> String {
     switch state {
     case .charging: return "bolt.fill"
     case .holding: return "gauge.with.needle"
-    case .discharging: return "battery.100"
+    case .discharging: return "arrow.down.circle"
     case .disabled: return "powerplug.slash"
     case .alert: return "exclamationmark.triangle.fill"
     }
@@ -71,7 +77,7 @@ public func menuBarSymbolFallbackName(for state: MenuBarIconState) -> String {
     switch state {
     case .charging: return "bolt.circle.fill"
     case .holding: return "circle.dashed"
-    case .discharging: return "battery.25"
+    case .discharging: return "minus.circle"
     case .disabled: return "power.dotted"
     case .alert: return "exclamationmark.triangle"
     }
@@ -85,6 +91,18 @@ public func menuBarSymbolFallbackName(for state: MenuBarIconState) -> String {
 /// （「App 不得成为耗电源」）。未注册 daemon 时遥测照常（门控只有 panelVisible）。
 public func telemetrySampleInterval(panelVisible: Bool) -> TimeInterval? {
     panelVisible ? 1 : nil
+}
+
+// MARK: - 状态行电流方向词（WP4 规格 §7.2 P2-2 修复）
+
+/// 电流方向词（规格 §7.2 方向词规则）：充电中 →「充电」；电池供电（未外接）→
+/// 「放电」；外接 + 停充 → nil（方向词隐藏、幅值照显——修「停充态显示放电
+/// 0.00 A」的自相矛盾）。规则顺序：isCharging 优先——边界（外接断开瞬间
+/// isCharging 可能仍为 true）按充电呈现；其次 !externalConnected；其余 nil。
+public func currentDirectionWord(isCharging: Bool, externalConnected: Bool) -> String? {
+    if isCharging { return "充电" }
+    if !externalConnected { return "放电" }
+    return nil
 }
 
 // MARK: - 用户域偏好持久化（规格 §2.4）

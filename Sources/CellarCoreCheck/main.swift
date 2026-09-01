@@ -1783,7 +1783,8 @@ struct Main {
         }
 
         // MARK: - 场景（Phase 2 WP4 面板，用例 90+）
-        // 菜单栏符号映射（规格 §2.2 候选表）与遥测采样节奏（§2.1 独立门控）。
+        // 菜单栏符号映射（规格 §2.2 候选表 + §7.3 图标纪律修订）、遥测采样节奏
+        // （§2.1 独立门控）与状态行方向词（§7.2 P2-2 修复）。
 
         // 用例 90：五态符号映射——首选表逐行钉死 + 回退链逐行钉死 +
         // 首选与回退互异（防复制粘贴错行）+ 非空。
@@ -1791,7 +1792,7 @@ struct Main {
             let primary: [(MenuBarIconState, String)] = [
                 (.charging, "bolt.fill"),
                 (.holding, "gauge.with.needle"),
-                (.discharging, "battery.100"),
+                (.discharging, "arrow.down.circle"),
                 (.disabled, "powerplug.slash"),
                 (.alert, "exclamationmark.triangle.fill"),
             ]
@@ -1799,12 +1800,12 @@ struct Main {
             for (state, expected) in primary {
                 if menuBarSymbolName(for: state) != expected { ok = false }
             }
-            check(ok, "用例90", "首选表逐行一致（charging/holding/discharging/disabled/alert）")
+            check(ok, "用例90", "首选表逐行一致（charging/holding/discharging/disabled/alert；§7.3 discharging 改 arrow.down.circle）")
 
             let fallback: [(MenuBarIconState, String)] = [
                 (.charging, "bolt.circle.fill"),
                 (.holding, "circle.dashed"),
-                (.discharging, "battery.25"),
+                (.discharging, "minus.circle"),
                 (.disabled, "power.dotted"),
                 (.alert, "exclamationmark.triangle"),
             ]
@@ -1827,6 +1828,20 @@ struct Main {
                   "用例91", "面板关闭 → nil（停止采样）")
             check(refreshInterval(panelVisible: false, daemonRegistered: true) == 60,
                   "用例91", "对照：status 图标档关闭后仍 60s（遥测档不复用同一循环，互不干扰）")
+        }
+
+        // 用例 92：状态行电流方向词（规格 §7.2 P2-2 修复）——三分支
+        // （充电/放电/隐藏）+ 全组合边界。修「停充态显示放电 0.00 A」自相矛盾：
+        // 外接 + 停充 → nil（方向词隐藏、幅值照显）。
+        do {
+            check(currentDirectionWord(isCharging: true, externalConnected: true) == "充电",
+                  "用例92", "充电中（外接）→ 充电")
+            check(currentDirectionWord(isCharging: true, externalConnected: false) == "充电",
+                  "用例92", "边界：isCharging 优先（外接断开瞬间仍按充电呈现）")
+            check(currentDirectionWord(isCharging: false, externalConnected: false) == "放电",
+                  "用例92", "电池供电（未外接）→ 放电")
+            check(currentDirectionWord(isCharging: false, externalConnected: true) == nil,
+                  "用例92", "外接 + 停充 → nil（方向词隐藏，修「停充显放电 0.00 A」）")
         }
     }
 
