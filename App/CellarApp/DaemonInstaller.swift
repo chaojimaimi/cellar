@@ -28,8 +28,10 @@ extension RegistrationStatus {
 /// （使用处创建，不存成员）。本类型 @MainActor 全隔离——Swift 6 严格并发下状态只属主线程。
 @MainActor
 final class DaemonInstaller: ObservableObject {
-    /// SMAppService daemon plist 名（按调用方主 bundle 的 Contents/Library/LaunchDaemons/ 解析）。
-    nonisolated static let plistName = "com.cellar.daemon"
+    /// SMAppService daemon plist 名（按调用方主 bundle 的 Contents/Library/LaunchDaemons/
+    /// 解析）。⚠️ 必须带 `.plist` 扩展名——缺扩展名报 code=108「Unable to read plist」
+    /// （2026-09-01 真机实证，用户首次安装失败的根因）。
+    nonisolated static let plistName = "com.cellar.daemon.plist"
     /// 手工路线 plist（迁移四象限的 legacyPlistExists 输入）。
     nonisolated static let legacyPlistPath = "/Library/LaunchDaemons/com.cellar.daemon.plist"
     /// 嵌入 plist 文件名（bundle 内探测）。
