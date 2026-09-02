@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -20,7 +20,7 @@ import XPC
 
 // MARK: - 计数器（Swift 6 严格并发下的可变状态盒）
 
-private final class FailureCounter: @unchecked Sendable {
+final class FailureCounter: @unchecked Sendable {
     static let shared = FailureCounter()
     private let lock = NSLock()
     private(set) var count = 0
@@ -31,7 +31,9 @@ private final class FailureCounter: @unchecked Sendable {
     var scenarioCount: Int { lock.withLock { scenarios.count } }
 }
 
-private func check(_ condition: Bool, _ scenario: String, _ message: String) {
+// ⚠️ 以下助手为 internal（S2 场景域按域拆独立文件——WP2' 起跨文件调用；
+// executable target 的 internal 仅模块内可见，无泄露面）。
+func check(_ condition: Bool, _ scenario: String, _ message: String) {
     FailureCounter.shared.record(scenario: scenario)
     if condition {
         print("  ✓ \(scenario): \(message)")
@@ -41,7 +43,7 @@ private func check(_ condition: Bool, _ scenario: String, _ message: String) {
     }
 }
 
-private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: String, _ message: String) {
+func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: String, _ message: String) {
     check(actual == expected, scenario, actual == expected ? message : "\(message)（实际 \(actual)，期望 \(expected)）")
 }
 
@@ -53,7 +55,7 @@ private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ scenario: S
 /// ⚠️ 用例 46 断言 `.serviceNotFound` 时因 SMCError 亦有同名 case，必须写全类型前缀
 /// `BatteryMonitorError.serviceNotFound`，否则前导点歧义编译失败。
 /// `expected` 为 nil 时仅要求抛错、不校验类型。
-private func expectThrows<T>(
+func expectThrows<T>(
     _ body: @autoclosure () throws -> T,
     as expected: SMCError?,
     _ scenario: String,
@@ -73,7 +75,7 @@ private func expectThrows<T>(
     }
 }
 
-private func expectThrows<T>(
+func expectThrows<T>(
     _ body: @autoclosure () throws -> T,
     as expected: BackendError?,
     _ scenario: String,
@@ -93,7 +95,7 @@ private func expectThrows<T>(
     }
 }
 
-private func expectThrows<T>(
+func expectThrows<T>(
     _ body: @autoclosure () throws -> T,
     as expected: BatteryMonitorError?,
     _ scenario: String,
@@ -113,7 +115,7 @@ private func expectThrows<T>(
     }
 }
 
-private func expectThrows<T>(
+func expectThrows<T>(
     _ body: @autoclosure () throws -> T,
     as expected: LimitPolicyError?,
     _ scenario: String,
@@ -135,7 +137,7 @@ private func expectThrows<T>(
 
 // MARK: - 最小 mock（独立实现，字面偏移）
 
-private enum Spec {
+enum Spec {
     static let dataSizeOffset = 28
     static let dataTypeOffset = 32
     static let resultOffset = 40
@@ -146,7 +148,7 @@ private enum Spec {
     static let write: UInt8 = 6
 }
 
-private final class CheckTransport: SMCTransport, @unchecked Sendable {
+final class CheckTransport: SMCTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var queues: [UInt8: [(output: [UInt8], kr: Int32)]] = [:]
     private(set) var inputs: [[UInt8]] = []
@@ -173,7 +175,7 @@ private final class CheckTransport: SMCTransport, @unchecked Sendable {
 }
 
 /// 组装 80 字节回包（字面偏移）。
-private func reply(
+func reply(
     result: UInt8 = 0,
     dataSize: UInt32 = 0, type: String? = nil,
     bytes: [UInt8] = [], length: Int = 80
@@ -212,14 +214,25 @@ private struct ThrowingPropertySource: BatteryPropertySource {
 
 /// WP4 内存态后端 mock（评审 E-3 契约：name="tahoe"、keyNames=["CHTE"]）：
 /// 可变 enabled 内部态 + 写调用计数 + 可注入"写不生效"故障开关（ignoreWrites）。
+/// WP2' 适配器控制（CHIE）同构：adapterControlSupported + adapterEnabledRaw 内部态 +
+/// 可注入"适配器写不生效"故障开关（adapterIgnoreAdapterWrites / adapterFailWrites）。
 /// 纯内存，不触碰任何 SMC/IOKit 传输。与 Tests/CellarCoreTests/LimitControllerTests.swift
 /// 的内联 MockChargingBackend 行为一致，两边必须同步修改。
-private final class MockChargingBackend: ChargingBackend, @unchecked Sendable {
+final class MockChargingBackend: ChargingBackend, @unchecked Sendable {
     var name: String { "tahoe" }
     var keyNames: [String] { ["CHTE"] }
     private(set) var enabled: Bool
     private(set) var writeCount = 0
     var ignoreWrites = false
+
+    // WP2' 适配器控制（CHIE）：语义态 true=使能（0x00）· false=禁用（0x08）。
+    var adapterControlSupported = true
+    /// 语义态可写（场景域置初态；internal setter 仅测试栈可达）。
+    var adapterEnabledRaw: Bool = true
+    var adapterIgnoreAdapterWrites = false
+    /// 前 N 次适配器写被吞（写不生效模拟）；N 耗尽后写入生效——重试阶梯验证。
+    var adapterFailWrites = 0
+    private(set) var adapterWriteCount = 0
 
     init(enabled: Bool) {
         self.enabled = enabled
@@ -231,12 +244,27 @@ private final class MockChargingBackend: ChargingBackend, @unchecked Sendable {
         writeCount += 1
         if !ignoreWrites { self.enabled = enabled }
     }
+
+    func setAdapterEnabled(_ enabled: Bool) throws {
+        guard adapterControlSupported else { throw BackendError.adapterControlUnsupported }
+        adapterWriteCount += 1
+        if adapterFailWrites > 0 {
+            adapterFailWrites -= 1
+            return
+        }
+        if !adapterIgnoreAdapterWrites { adapterEnabledRaw = enabled }
+    }
+
+    func adapterEnabled() throws -> Bool? {
+        guard adapterControlSupported else { return nil }
+        return adapterEnabledRaw
+    }
 }
 
 /// WP3 fixture 基准字典：与 Tests/CellarCoreTests/BatterySnapshotTests.swift 的
 /// makeSampleProps() 值一致（规格 §4），两边必须同步修改。工厂函数而非 static let
 /// （评审 C-2：Swift 6 下 static let 存非 Sendable 的 [String: Any] 编译不过）。
-private func batteryProps() -> [String: Any] {
+func batteryProps() -> [String: Any] {
     [
         "CurrentCapacity": 86,
         "Voltage": 12211,
@@ -274,6 +302,10 @@ struct Main {
         if CommandLine.arguments.contains("--battery") { battery(); return }
         if CommandLine.arguments.contains("--doctor-report") { doctorReport(); return }
         try await runScenarios()
+        // WP2'：场景域按域拆独立文件（main.swift 不再增长，评审 P2-9）——放电域 +
+        // 健康度/能力域；与 runScenarios 共用 FailureCounter 与断言助手。
+        try runDischargeDomainScenarios()
+        try runHealthCapabilitiesDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
@@ -2270,7 +2302,7 @@ struct Main {
                     == "vocabulary.amber.statusHoldingExternal",
                 "用例106", "key 形态钉死：vocabulary.<style>.<word>（§3.6 示例 = 真实词条名）"
             )
-            check(VocabularyWord.allCases.count == 7, "用例106", "词条数 = 7（对账表定版成员，不多不少）")
+            check(VocabularyWord.allCases.count == 11, "用例106", "词条数 = 11（对账表定版 7 成员 + WP2' 新增 4：powerFlow×3 + health×1，不多不少）")
         }
 
         // 用例 107：AppConfigStore.update 原子读改写（评审 P0-1 定版）——

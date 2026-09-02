@@ -9,18 +9,27 @@ import os
 /// `\(kind):start` / `\(kind):done` / `\(kind):cancel` / `\(kind):timeout` /
 /// `\(kind):cancel(crash-recovery)`。
 public struct OneShotAction: Codable, Equatable, Sendable {
-    /// 动作类型字面量（当前仅 "fullOnce"；"/Library/Application Support/Cellar/action.json"
-    /// 载入时 kind != "fullOnce" → 视为缺失）。
+    /// 动作类型字面量（"fullOnce" | "dischargeToLimit"；"/Library/Application Support/
+    /// Cellar/action.json" 载入时 kind 不在白名单 → 视为缺失）。
     public var kind: String
     /// 启动时刻。
     public var startedAt: Date
     /// 超时截止（start 时捕获的**绝对 Date**；SIGHUP 重载不重算，规格 §1.1）。
     public var deadline: Date
+    /// 放电目标电量 %（WP2' dischargeToLimit 专用；fullOnce 恒 nil——评审 P1-6：
+    /// 可选字段 + 合成 Codable decodeIfPresent，旧格式 fullOnce JSON 无本键 → nil 兼容）。
+    public var targetPercent: Int?
 
-    public init(kind: String = OneShot.fullOnceKind, startedAt: Date, deadline: Date) {
+    public init(
+        kind: String = OneShot.fullOnceKind,
+        startedAt: Date,
+        deadline: Date,
+        targetPercent: Int? = nil
+    ) {
         self.kind = kind
         self.startedAt = startedAt
         self.deadline = deadline
+        self.targetPercent = targetPercent
     }
 }
 
@@ -35,9 +44,20 @@ public enum OneShot {
     /// 完成判定去抖所需连续 tick 数（30s tick ×2 = 60s 去抖，规格 §1.3）。
     public static let fullOnceDebounceTicks = 2
 
-    /// 创建一次性动作（deadline = now + 超时窗口）。
-    public static func onshotStart(now: Date, kind: String = fullOnceKind) -> OneShotAction {
-        OneShotAction(kind: kind, startedAt: now, deadline: now.addingTimeInterval(fullOnceTimeout))
+    /// 创建一次性动作（deadline = now + 超时窗口；targetPercent 仅 discharge 使用；
+    /// timeout 按动作族区分：fullOnce 4h 默认，discharge 2h 由调用方显式传入）。
+    public static func onshotStart(
+        now: Date,
+        kind: String = fullOnceKind,
+        targetPercent: Int? = nil,
+        timeout: TimeInterval = fullOnceTimeout
+    ) -> OneShotAction {
+        OneShotAction(
+            kind: kind,
+            startedAt: now,
+            deadline: now.addingTimeInterval(timeout),
+            targetPercent: targetPercent
+        )
     }
 
     /// 完成判定（规格 §1.3）：
@@ -78,6 +98,8 @@ public enum OneShotLiteral {
     public static func cancel(kind: String = OneShot.fullOnceKind) -> String { "\(kind):cancel" }
     public static func timeout(kind: String = OneShot.fullOnceKind) -> String { "\(kind):timeout" }
     public static func cancelCrashRecovery(kind: String = OneShot.fullOnceKind) -> String { "\(kind):cancel(crash-recovery)" }
+    /// WP2' 安全终止字面量（温度/地板/监护缺失/CHIE 残留巡检共用；§2.5 定版族）。
+    public static func safety(kind: String = OneShot.fullOnceKind) -> String { "\(kind):safety" }
 }
 
 // MARK: - 启动前置（纯函数，规格 §1.1/§1.3）
@@ -128,12 +150,22 @@ public enum OneShotTickOutcome: Equatable, Sendable {
 /// 终态字面量锁存（P0-2 方案 a）、完成去抖计数全部经本类型转移，daemon 在调用点
 /// 依返回值执行 IO/日志副作用。锁纪律不变：本类型被 daemon 锁内单实例持有。
 public struct OneShotTrack: Equatable, Sendable {
-    public private(set) var action: OneShotAction?
+    /// 动作轨道（internal(set)：Discharge.swift 扩展的 tickDischarge 同模块写入；
+    /// daemon 模块只读，转移仍全部经本类型 mutating 方法——单一属主不变量不破）。
+    public internal(set) var action: OneShotAction?
     /// 终态字面量锁存（P0-2 方案 a）：fullOnce:* 终态被锁存，常规 tick 不覆盖，
     /// 直到下一次用户动作（setLimits/enable/disable/fullOnce 重启）才清除。
-    public private(set) var latchedLiteral: String?
+    public internal(set) var latchedLiteral: String?
     /// 完成判定去抖计数（连续满足条件 tick 数；中断归零）。
     public private(set) var debounceTicks = 0
+    /// WP2' 放电判定链计数器（存储属性本体——扩展不能加存储属性；转移逻辑见
+    /// Discharge.swift 的 tickDischarge/noteMonitoringLoss）。
+    /// ext 异常去抖计数（N=2；ext=false 或 CHIE 被保活纠正 → 清零）。
+    public internal(set) var extDebounceTicks = 0
+    /// CHIE 保活连续失败计数（≥3 → 取消 + 告警）。
+    public internal(set) var keepAliveFailures = 0
+    /// 监护缺失连续 tick 计数（backend/采样早退；≥3 → 安全终止 + 告警，评审 P1-5）。
+    public internal(set) var monitoringLossTicks = 0
 
     public init() {}
 
@@ -141,13 +173,21 @@ public struct OneShotTrack: Equatable, Sendable {
 
     /// fullOnce 启动（前置已在调用方校验——mode/external）：已活跃 → false
     /// （幂等语义：daemon 回当前状态而非错误）；否则接管动作 + 清锁存（用户动作
-    /// 清除锁存，P0-2）+ 去抖归零。
+    /// 清除锁存，P0-2）+ 去抖归零。targetPercent 仅 dischargeToLimit 使用；
+    /// timeout 按动作族区分（fullOnce 默认 4h；discharge 由 daemon 传 2h——
+    /// 各动作族的超时窗口不得混用）。
     @discardableResult
-    public mutating func startIfIdle(now: Date, kind: String = OneShot.fullOnceKind) -> Bool {
+    public mutating func startIfIdle(
+        now: Date,
+        kind: String = OneShot.fullOnceKind,
+        targetPercent: Int? = nil,
+        timeout: TimeInterval = OneShot.fullOnceTimeout
+    ) -> Bool {
         guard !isActive else { return false }
-        action = OneShot.onshotStart(now: now, kind: kind)
+        action = OneShot.onshotStart(now: now, kind: kind, targetPercent: targetPercent, timeout: timeout)
         latchedLiteral = nil
         debounceTicks = 0
+        resetDischargeCounters()
         return true
     }
 
@@ -190,6 +230,7 @@ public struct OneShotTrack: Equatable, Sendable {
         self.action = nil
         latchedLiteral = nil
         debounceTicks = 0
+        resetDischargeCounters()
         return literal
     }
 
@@ -203,7 +244,36 @@ public struct OneShotTrack: Equatable, Sendable {
         self.action = nil
         latchedLiteral = literal
         debounceTicks = 0
+        resetDischargeCounters()
         return literal
+    }
+
+    /// 锁存式取消（审查 M3，daemon 发起取消专用：睡眠/setLimits/disable/SIGHUP-
+    /// disabled/restoreAndExit）：cancel 字面量**锁存**（与 done/safety 终态同形态，
+    /// 直到下次用户动作清除）——App 轮询必见终态 → 通知必发；不锁存会被下一
+    /// 常规 tick 的 enforce:xxx 覆盖（面板关闭 60s 轮询档可能永久漏发通知）。
+    /// XPC 直接取消（用户点击取消）仍走 `cancel()`（不锁存——App 有即时反馈路径）。
+    /// 空轨 → nil（幂等成功语义，与 cancel() 同）。
+    @discardableResult
+    public mutating func cancelLatched() -> String? {
+        guard let action else { return nil }
+        let literal = OneShotLiteral.cancel(kind: action.kind)
+        self.action = nil
+        latchedLiteral = literal
+        debounceTicks = 0
+        resetDischargeCounters()
+        return literal
+    }
+
+    /// 崩溃恢复接管（P0-2 修正，WP2' 一并启用）：startup 载入 pending 动作后先注入
+    /// 轨道再取消——终态字面量 `cancel(crash-recovery)` 经锁存对 App 可见（原实现
+    /// 对空轨直接取消，锁存永远不落，App 轮询见不到终态——与 P0-2 文档意图相悖）。
+    @discardableResult
+    public mutating func adoptForCrashRecovery(_ pending: OneShotAction) -> String? {
+        action = pending
+        debounceTicks = 0
+        resetDischargeCounters()
+        return cancelForCrashRecovery()
     }
 
     /// SIGHUP 重载语义（P1-1）：cancelled（重载后 mode == "disabled"）→ 取消动作；
@@ -250,19 +320,24 @@ public struct ActionStore: Sendable {
         FileManager.default.fileExists(atPath: url.path)
     }
 
-    /// 校验式读：缺失 / 损坏 / kind 不符 → nil + 日志（绝不回落部分动作）。
+    /// 校验式读：缺失 / 损坏 / kind 不在白名单 → nil + 日志（绝不回落部分动作）。
+    /// WP2'：白名单扩 {"fullOnce", "dischargeToLimit"}（旧格式 fullOnce JSON 无
+    /// targetPercent 键 → 合成 Codable decodeIfPresent 自动 nil，评审 P1-6）。
     public func load() -> OneShotAction? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let decoded = try? JSONDecoder().decode(OneShotAction.self, from: data) else {
             Self.log.error("action.json 损坏（非 JSON 或字段不符），按缺失处理")
             return nil
         }
-        guard decoded.kind == OneShot.fullOnceKind else {
-            Self.log.error("action.json 动作类型未知（kind=\(decoded.kind)）——仅支持 fullOnce，按缺失处理")
+        guard Self.knownKinds.contains(decoded.kind) else {
+            Self.log.error("action.json 动作类型未知（kind=\(decoded.kind)）——仅支持 fullOnce/dischargeToLimit，按缺失处理")
             return nil
         }
         return decoded
     }
+
+    /// kind 白名单（载入判定：不在清单即 treat-as-absent——未知动作不进入恢复路径）。
+    private static let knownKinds: Set<String> = [OneShot.fullOnceKind, Discharge.dischargeToLimitKind]
 
     /// 原子写（同目录临时文件 + rename），文件权限 0644。
     /// 父目录缺失等错误原样上抛（daemon main 已自举目录；写失败拒绝动作启动）。

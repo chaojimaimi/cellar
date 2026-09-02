@@ -207,6 +207,10 @@ public struct CellarTheme: Sendable {
         case .quit: return "退出 Cellar"
         case .tempLabel: return "温度"
         case .limitLabel: return "充电上限"
+        case .powerFlowCharging: return "充电中"
+        case .powerFlowFloating: return "已停充"
+        case .powerFlowOnBattery: return "电池供电"
+        case .healthLabel: return "健康"
         }
     }
 

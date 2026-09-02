@@ -27,4 +27,12 @@ public enum RuntimeProbe {
         }
         throw BackendError.noBackendAvailable
     }
+
+    /// discharge 能力探测（WP2' §2.1，评审 P1-1 fail-closed）：backend == "tahoe"
+    /// **且** CHIE getKeyInfo 在位 → true。Legacy 后端 / CHIE 缺席机器 / CHIE 探测
+    /// 失败（传输错误经 try? 折叠为 false）→ false——能力恒不出现在不满足条件处。
+    public static func supportsDischarge(backend: any ChargingBackend, client: SMCClient) -> Bool {
+        guard backend.name == "tahoe" else { return false }
+        return (try? client.keyExists("CHIE")) == true
+    }
 }

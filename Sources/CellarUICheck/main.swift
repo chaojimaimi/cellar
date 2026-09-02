@@ -38,7 +38,8 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 48：组件 × 风格(2) × 外观(2) × 态）
+// MARK: - 矩阵案例定义（§3.3 N = 60：组件 × 风格(2) × 外观(2) × 态；
+// WP2' 自 48 扩 60——PowerFlow 12 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -94,6 +95,9 @@ private func makeSnapshot(
         "FullyCharged": false,
         "AppleRawMaxCapacity": 6_087,
         "AppleRawCurrentCapacity": 4_838,
+        // WP2' 健康度：Nominal 显式在场（6030/6300 → 96%——与 rawMax 兜底 97%
+        // 有区分度，golden 钉死「循环 123 · 健康 96%」）。
+        "AppleNominalChargeCapacity": 6_030,
         "BatteryData": ["CellVoltage": [3_890, 3_895, 3_888], "FccComp1": 5_900],
     ]
     if let adapter {
@@ -125,7 +129,7 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 48 案例清单
+// MARK: 60 案例清单（WP2'：仪表 20 + 状态行 16 + 功率流向 12 + 横幅 12）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -190,6 +194,27 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
+            // 功率流向 3 态（充电/停充漂浮/电池供电）×4（WP2' §4.2 新增 12 张）：
+            // 输入 = 快照两字段投影（externalConnected/isCharging）；onBattery 以
+            // (false, false) 入阵（(false, true) 为异常过渡态按 .charging 呈现，映射
+            // 语义由 PowerFlowView.flow 单一实现，矩阵 3 态全绿即覆盖）。
+            let powerFlows: [(String, Bool?, Bool?)] = [
+                ("charging", true, true),
+                ("floating", true, false),
+                ("onBattery", false, false),
+            ]
+            for (flowName, external, charging) in powerFlows {
+                cases.append(SnapshotCase(
+                    name: "PowerFlow_\(flowName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        PowerFlowView(externalConnected: external, isCharging: charging)
+                            .frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
             // 横幅 3 态（控制失败/daemon 失联/statusFailure writeFailed）×4。
             // ⚠️ lastAttemptSummary / statusFailureMessage 为生产同款字面量：
             // ControlAttempt.summary 与 StatusFailureKind.message 均为 App 层
@@ -224,7 +249,9 @@ private func buildCases() -> [SnapshotCase] {
 
 // MARK: - 渲染（ImageRenderer，主线程 + RunLoop 泵等待）
 
-/// 渲染并归一化为 sRGB 白底无 alpha 位图。返回 nil = 渲染失败（打印原因）。
+/// 渲染并归一化（底色按被测态 colorScheme 合成——审查修复：dark 态系统语义
+/// 白字/白图标合成到白底会整体不可见，native_dark 系 golden 曾接近全白且对比门
+/// 不可检测该回归）。返回 nil = 渲染失败（打印原因）。
 @MainActor
 private func renderFlattened(_ testCase: SnapshotCase) -> CGImage? {
     let renderer = ImageRenderer(content: testCase.makeView())
@@ -237,11 +264,25 @@ private func renderFlattened(_ testCase: SnapshotCase) -> CGImage? {
         FileHandle.standardError.write("渲染失败（cgImage nil）：\(testCase.name)\n".data(using: .utf8)!)
         return nil
     }
-    return flattenToSRGB(cgImage)
+    return flattenToSRGB(cgImage, background: flattenBackground(for: testCase.scheme))
 }
 
-/// sRGB CGContext 白底合成去 alpha（硬事实 8 归一化：diff 与落盘同走本函数）。
-private func flattenToSRGB(_ image: CGImage) -> CGImage? {
+/// 归一化合成底色（按被测态 colorScheme 选择）：light → 白底；dark → 深灰底
+/// #1E1E1E（不取纯黑——保留深色面板底/阴影的区分度）。diff 与落盘同走本函数，
+/// 两系各自底色一致 → 对比判定不变式成立。
+private func flattenBackground(for scheme: ColorScheme) -> CGColor {
+    switch scheme {
+    case .dark:
+        return CGColor(red: 0x1E / 255.0, green: 0x1E / 255.0, blue: 0x1E / 255.0, alpha: 1)
+    case .light:
+        return CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+    @unknown default:
+        return CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+    }
+}
+
+/// sRGB 底色合成去 alpha（硬事实 8 归一化：diff 与落盘同走本函数）。
+private func flattenToSRGB(_ image: CGImage, background: CGColor) -> CGImage? {
     guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
     let width = image.width
     let height = image.height
@@ -254,7 +295,7 @@ private func flattenToSRGB(_ image: CGImage) -> CGImage? {
         space: colorSpace,
         bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
     ) else { return nil }
-    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    context.setFillColor(background)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     context.interpolationQuality = .none
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
@@ -274,10 +315,12 @@ private func writePNG(_ image: CGImage, to url: URL) -> String? {
     return nil
 }
 
-private func loadPNG(_ url: URL) -> CGImage? {
+/// golden 读取归一化（底色按被测态 colorScheme——golden 落盘时已按该底合成，
+/// 加载回读保持同底，diff 不变式成立）。
+private func loadPNG(_ url: URL, scheme: ColorScheme) -> CGImage? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-    return flattenToSRGB(image)
+    return flattenToSRGB(image, background: flattenBackground(for: scheme))
 }
 
 /// 位图像素缓冲（统一经 sRGB noneSkipLast 上下文，逐字节可比）。
@@ -363,7 +406,7 @@ private func runSnapshot(regenerate: Bool) -> Int32 {
             }
             continue
         }
-        guard let golden = loadPNG(url) else {
+        guard let golden = loadPNG(url, scheme: testCase.scheme) else {
             failures.append("\(testCase.name)：golden 缺失或不可读（先跑 --snapshot --regen）")
             continue
         }

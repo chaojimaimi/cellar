@@ -89,11 +89,51 @@ extension DaemonCore {
     }
 
     /// 统一取消（规格 §1.1 setLimits/disable/restoreAndExit/SIGHUP 行共用）：
-    /// 写 CHTE 停充恢复限充语义 → lastAction=`fullOnce:cancel`（不锁存，直写）→
-    /// 清锁存 → 删 action.json。任何失败仅记日志——取消本身不因写失败中断。
-    func cancelActionLocked(events: inout [LogEvent]) {
-        guard let literal = actionTrack.cancel() else { return }
-        if let backend {
+/// - fullOnce：写 CHTE 停充恢复限充语义 → lastAction=`fullOnce:cancel`（不锁存，直写）；
+/// - dischargeToLimit（WP2' §2.3）：**恢复 CHIE=0x0（重试阶梯 + 告警——取消写失败
+///   ≠ 取消完成，红线 5）→ enforce CHTE**（恢复限充语义，数据源 = lastStatus；
+///   失败下 tick 常规 enforce 兜底）→ lastAction=`dischargeToLimit:cancel`；
+/// - 清锁存 → 删 action.json。任何失败仅记日志——取消本身不因写失败中断。
+///
+/// `latchCancelled`（审查 M3）：setLimits/disable/restoreAndExit/SIGHUP-disabled
+/// 为 daemon 发起取消 → discharge 取消字面量**锁存**（App 轮询必见终态、通知必发）；
+/// XPC cancelAction（用户点击取消）默认 false 不锁存（App 即时反馈路径）。
+/// fullOnce 不受本参数影响（恒走 cancel() 旧语义）。
+    func cancelActionLocked(events: inout [LogEvent], latchCancelled: Bool = false) {
+        // kind 预取：cancel 会清空动作，分流判断必须在取消之前。
+        let kind = actionTrack.action?.kind
+        let literal: String?
+        if latchCancelled && kind == Discharge.dischargeToLimitKind {
+            literal = actionTrack.cancelLatched()
+        } else {
+            literal = actionTrack.cancel()
+        }
+        guard let literal else { return }
+        if kind == Discharge.dischargeToLimitKind {
+            // 放电统一取消：恢复 CHIE（重试阶梯）+ enforce CHTE（恢复限充语义）。
+            if let backend, backend.adapterControlSupported {
+                let restoreError = DischargeAdapterControl.restoreEnabled(
+                    backend: backend, attempts: Discharge.terminalRestoreAttempts
+                )
+                if let restoreError {
+                    events.append(LogEvent(
+                        category: .control, level: .error,
+                        message: "取消放电动作：CHIE 恢复失败（\(restoreError)——重试阶梯耗尽），残留交 §2.4 残留不变量巡检"
+                    ))
+                } else {
+                    events.append(LogEvent(
+                        category: .control, level: .info,
+                        message: "取消放电动作：已恢复适配器使能（CHIE=0x00，回读校验通过）"
+                    ))
+                }
+                enforceLimitChargingLocked(backend: backend, events: &events)
+            } else {
+                events.append(LogEvent(
+                    category: .control, level: .warn,
+                    message: "取消放电动作：无控制后端，跳过 CHIE 恢复与 enforce（仅落终态）"
+                ))
+            }
+        } else if let backend {
             do {
                 _ = try controller.perform(.disableCharging, backend: backend)
                 events.append(LogEvent(

@@ -89,6 +89,13 @@ struct PanelView: View {
                 .frame(width: 150, height: 150)
                 .padding(.top, 4)
 
+            // WP2' §4.2：功率流向图（数据源 = App 侧 1s telemetry 快照——非
+            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。
+            PowerFlowView(
+                externalConnected: statusController.batterySnapshot?.externalConnected,
+                isCharging: statusController.batterySnapshot?.isCharging
+            )
+
             StatusLineView(snapshot: statusController.batterySnapshot)
 
             // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——

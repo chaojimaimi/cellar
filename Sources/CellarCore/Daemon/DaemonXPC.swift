@@ -22,6 +22,10 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 活跃的一次性动作（WP2「充满一次」；nil = 无动作）。可选字段 + 合成 Codable 的
     /// decodeIfPresent——旧 daemon 回包/旧客户端解码天然兼容（缺席 → nil）。
     public var action: OneShotAction?
+    /// daemon 能力清单（WP2' 能力发现，§2.1）：启动探测通过时置 `["discharge"]`；
+    /// nil = 旧 daemon 未上报（App 提示升级）；[] = 已上报但不含 discharge（机型不支持）。
+    /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容（评审 P2-5）。
+    public var capabilities: [String]?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -35,6 +39,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         lastExternalConnected: Bool? = nil,
         lastChargingEnabled: Bool? = nil,
         action: OneShotAction? = nil,
+        capabilities: [String]? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -46,6 +51,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.lastExternalConnected = lastExternalConnected
         self.lastChargingEnabled = lastChargingEnabled
         self.action = action
+        self.capabilities = capabilities
         self.timestamp = timestamp
     }
 }
@@ -67,9 +73,15 @@ public enum DaemonClientError: Error, Equatable, Sendable {
 public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
     // install 后与 getStatus 的 version 核对（评审 F-3）；与 App/CLI 版本串一致
-    // （0.3.0-alpha-dev）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更、
-    // WP2 扩 XPC 协议 fullOnce/cancelAction），防 stale daemon 诊断混淆。
-    public static let daemonVersion = "0.3.0-alpha-dev"
+    // ——daemon 行为有变更必须 bump（WP2' 扩 dischargeToLimit 协议 + ActionState
+    // 扩展 + capabilities 字段，行为变更第三次破例）："0.3.0-alpha-dev" 已发布
+    // 于 WP2 面板卸载重装验证，本包为 0.3.1（发布归宿 0.3.1-alpha，防版本回退）。
+    public static let daemonVersion = "0.3.1-alpha-dev"
+    /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
+    /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
+    /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
+    /// 重装）；[] = 当前机型不支持放电。
+    public static let capabilityDischarge = "discharge"
 
     // MARK: - 线格式键与常量
 
@@ -194,6 +206,13 @@ public struct DaemonXPCClient: Sendable {
     /// 取消当前一次性动作（无动作时幂等成功，回当前状态）。
     public func cancelAction() throws -> DaemonStatus {
         try exchange(cmd: "cancelAction")
+    }
+
+    /// WP2'：放电到上限（无参数——目标 = daemon 当前策略上限启动时快照）。
+    /// 前置（外接 && mode=active && percent > 目标 && 能力在位）不满足 → daemonError
+    /// 原文；动作已在轨 → 幂等回当前状态。
+    public func dischargeToLimit() throws -> DaemonStatus {
+        try exchange(cmd: "dischargeToLimit")
     }
 
     // MARK: - 内部

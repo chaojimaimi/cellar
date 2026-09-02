@@ -121,10 +121,20 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 循环次数。
+    /// 循环次数 + WP2' 健康度（batteryHealthPercent：Nominal/Design 官方口径；
+    /// nominal 缺席 → rawMax 兜底；两级缺席 → 仅循环零回归）。「健康」标签随风格
+    /// （word(.healthLabel)——en: Health，WP2' catalog 先行）。
     private func cycleSegment(_ snapshot: BatterySnapshot) -> some View {
-        segment(caption: "循环") {
-            Text("\(snapshot.cycleCount)")
+        let health = batteryHealthPercent(
+            nominal: snapshot.nominalChargeCapacityMAh ?? snapshot.rawMaxCapacityMAh,
+            design: snapshot.designCapacityMAh
+        )
+        return segment(caption: "循环") {
+            if let health {
+                Text("\(snapshot.cycleCount) · \(theme.word(.healthLabel)) \(health)%")
+            } else {
+                Text("\(snapshot.cycleCount)")
+            }
         }
     }
 

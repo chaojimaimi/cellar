@@ -32,6 +32,10 @@ public struct BatterySnapshot: Equatable, Sendable {
     public let rawMaxCapacityMAh: Int?
     /// 原始当前容量 mAh（AppleRawCurrentCapacity，缺席 → nil）。
     public let rawCurrentCapacityMAh: Int?
+    /// 标称容量 mAh（AppleNominalChargeCapacity，缺席 → nil）。
+    /// WP2' 健康度口径：与 DesignCapacity 同源 Apple 官方（系统设置同源）；
+    /// 缺席时消费侧回落 rawMaxCapacityMAh（方案 §4.3）。
+    public let nominalChargeCapacityMAh: Int?
     /// 电芯电压 mV（BatteryData.CellVoltage，缺席 → nil）。
     public let cellVoltagesMV: [Int]?
     /// 全充满补偿容量 mAh（BatteryData.FccComp1，缺席 → nil）。
@@ -41,6 +45,18 @@ public struct BatterySnapshot: Equatable, Sendable {
     public let adapter: AdapterInfo?
     /// 快照时刻（调用方注入，见 BatterySnapshotParser.parse）。
     public let timestamp: Date
+}
+
+/// 电池健康度（WP2' §4.3）：Nominal/Design 官方口径百分比。
+///
+/// - `design <= 0` → nil（DesignCapacity 必需字段理论上 >0，防御 guard）；
+/// - `nominal == nil` → nil（消费侧先经 rawMaxCapacityMAh 兜底再调用本函数——
+///   两级缺席均 nil，UI 仅显示循环次数零回归）；
+/// - 结果 clamp 0...100（标称高于设计等异常源不穿透显示，评审 P2-8）。
+public func batteryHealthPercent(nominal: Int?, design: Int) -> Int? {
+    guard design > 0, let nominal else { return nil }
+    let percent = Int((Double(nominal) / Double(design) * 100).rounded())
+    return min(max(percent, 0), 100)
 }
 
 /// 适配器信息（AdapterDetails 字典的字段级提取；缺席/结构变化 → 整个 nil 或字段级 nil）。

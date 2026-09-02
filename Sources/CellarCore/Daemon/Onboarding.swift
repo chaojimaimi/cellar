@@ -64,7 +64,7 @@ public func onboardingNext(
 // MARK: - 通知分类（WP5 §2.3 定版）
 
 /// 通知事件（三类；App 侧 NotificationService 投递，10 分钟同类型冷却；
-/// WP2 动作终态三事件独立 identifier + 豁免冷却——一次性命中，不重复打扰）。
+    /// WP2 动作终态三事件独立 identifier + 豁免冷却——一次性命中，不重复打扰）。
 public enum CellarNotificationEvent: Hashable, Sendable {
     /// 已达充电上限（lastAction 转移 enforce:disableCharging 触发）。
     case limitReached(upperLimit: Int)
@@ -72,12 +72,22 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     case writeFailed
     /// 检测到外部写者在写充电状态（enforce:verifyFailed——外部写者冲突显式化）。
     case conflictSuspected
-    /// 一次性动作完成（lastAction 转移 fullOnce:done；kind = 动作类型字面量）。
+    /// 一次性动作完成（lastAction 转移 fullOnce:done / dischargeToLimit:done；
+    /// kind = 动作类型字面量）。
     case actionCompleted(kind: String)
-    /// 一次性动作超时（lastAction 转移 fullOnce:timeout）。
+    /// 一次性动作超时（lastAction 转移 fullOnce:timeout / dischargeToLimit:timeout）。
     case actionTimeout(kind: String)
-    /// 一次性动作中断（lastAction 转移 fullOnce:cancel(crash-recovery)）。
+    /// 一次性动作中断（lastAction 转移 fullOnce:cancel(crash-recovery) /
+    /// dischargeToLimit:cancel(crash-recovery)）。
     case actionInterrupted(kind: String)
+    /// WP2' discharge 安全终止（lastAction 转移 dischargeToLimit:safety——温度/
+    /// 地板/监护缺失/CHIE 残留巡检；App 文案含当前电量组装）。
+    case actionSafetyTerminated(kind: String)
+    /// WP2' discharge 取消（lastAction 转移 dischargeToLimit:cancel——用户取消/
+    /// disable/SIGTERM/睡眠/setLimits/ext 异常/保活失败。与 fullOnce 的用户取消
+    /// 静默不同：放电取消具安全显著性——适配器供电状态被变更，需用户知情，§2.3
+    /// 统一 cancel → 通知）。
+    case actionCancelled(kind: String)
 }
 
 /// 通知分类纯函数（§2.3 定版）。
@@ -119,11 +129,16 @@ public func notificationEvents(
         }
     }
     guard current.lastAction != previous.lastAction else { return [] }
+    let dischargeKind = Discharge.dischargeToLimitKind
     switch current.lastAction {
     case "enforce:disableCharging":
-        // P1-4：previous 为 fullOnce:*（终态锁存）→ 恢复停充是动作的期望收尾，
-        // 不误报 limitReached（前缀含 start——该转移不可达，防御覆盖无害）。
-        if previous.lastAction?.hasPrefix("fullOnce:") == true { return [] }
+        // P1-4：previous 为 fullOnce:*/dischargeToLimit:*（终态锁存或动作期）→ 恢复
+        // 停充是动作的期望收尾，不误报 limitReached（前缀含 start——该转移不可达，
+        // 防御覆盖无害）。
+        if previous.lastAction?.hasPrefix("fullOnce:") == true
+            || previous.lastAction?.hasPrefix("\(dischargeKind):") == true {
+            return []
+        }
         return [.limitReached(upperLimit: current.upperLimit)]
     case "enforce:error":
         return [.writeFailed]
@@ -137,6 +152,16 @@ public func notificationEvents(
         return [.actionInterrupted(kind: OneShot.fullOnceKind)]
     case OneShotLiteral.cancel():
         return []
+    case OneShotLiteral.done(kind: dischargeKind):
+        return [.actionCompleted(kind: dischargeKind)]
+    case OneShotLiteral.timeout(kind: dischargeKind):
+        return [.actionTimeout(kind: dischargeKind)]
+    case OneShotLiteral.safety(kind: dischargeKind):
+        return [.actionSafetyTerminated(kind: dischargeKind)]
+    case OneShotLiteral.cancelCrashRecovery(kind: dischargeKind):
+        return [.actionInterrupted(kind: dischargeKind)]
+    case OneShotLiteral.cancel(kind: dischargeKind):
+        return [.actionCancelled(kind: dischargeKind)]
     default:
         return []
     }

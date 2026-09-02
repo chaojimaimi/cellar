@@ -31,7 +31,9 @@ public enum PanelStyle: String, Sendable {
 
 // MARK: - 语汇词条（WP3 §3.5 对账表定版成员）
 
-/// 面板语汇词条枚举——只收录 WP3 真实渲染面（§3.5 对账表定版 7 词条）。
+/// 面板语汇词条枚举——只收录真实渲染面（§3.5 对账表定版 7 词条 + WP2' 新增 4）。
+/// WP2' 新增词条（powerFlow×3 + health×1，en 译文随本包 catalog 先行——时序声明
+/// WP4 S3 本地化串冻结显式排后）。
 ///
 /// **显式延后，不建词条、不留死键**（§3.5/§1.7 克制原则裁定）：badge 行（demo
 /// 「窖藏中」徽章——现 UI 无宿主，交付须新增面板头部行，预算外）；告警词（与
@@ -54,4 +56,12 @@ public enum VocabularyWord: String, CaseIterable, Sendable {
     case tempLabel
     /// 控制区上限标签（native「充电上限」）。
     case limitLabel
+    /// WP2' 功率流向短标签——充电中（PowerFlowView；en: Charging）。
+    case powerFlowCharging
+    /// WP2' 功率流向短标签——外接停充漂浮（PowerFlowView；en: Floating）。
+    case powerFlowFloating
+    /// WP2' 功率流向短标签——电池供电（PowerFlowView；en: On Battery）。
+    case powerFlowOnBattery
+    /// WP2' 健康度段标签（StatusLineView 循环段「… · 健康 N%」；en: Health）。
+    case healthLabel
 }

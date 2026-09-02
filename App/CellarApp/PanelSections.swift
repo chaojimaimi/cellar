@@ -5,27 +5,29 @@ import SwiftUI
 // MARK: - 面板分区（WP3 S5a 自 PanelView 迁出：PanelView 行数回落项目规 ≤400；
 // 语汇消费按 §3.5 对账表，组件层零风格判断——G1）
 
-/// 一次性动作区（WP2 §1.1 交付面）：动作活跃 → 状态行 + 取消按钮；无动作且
-/// mode == active → 「充满一次」按钮（语汇 word(.actionFullOnce)——amber 值含
-/// 「醒酒 · 」前缀，功能词后缀保留；§1.7：活跃中控制反馈不 B 化，保持原文）。
+/// 一次性动作区（WP2 §1.1 + WP2' §4.1 交付面）：
+/// - 动作活跃 → 状态行（fullOnce「充满中…」/ discharge「放电中…当前 N% → 目标 M%」）
+///   + 取消按钮；
+/// - 无动作且 mode == active → 「充满一次」按钮（语汇 word(.actionFullOnce)——amber
+///   值含「醒酒 · 」前缀，功能词后缀保留）+
+///   WP2' 放电按钮（显示条件 §4.1 五条：daemonStatus != nil ∧ mode==active ∧
+///   capabilities 含 discharge ∧ ext==true ∧ percent > upperLimit ∧ 无进行中动作）；
+/// - capabilities 两态文案：nil（旧 daemon）= 升级提示（面板卸载重装）；[] = 机型
+///   不支持（评审 P1-1 fail-closed 呈现）。
+/// AX 标签用功能词（§4.1）。
 struct ActionSectionView: View {
     @EnvironmentObject private var statusController: StatusController
     @Environment(\.cellarTheme) private var theme
+    /// 放电确认对话框（外设断电警告 + 合盖外显睡眠提示，§4.1）。
+    @State private var showDischargeConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if isActionActive {
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt.fill")
-                        .foregroundStyle(theme.success)
-                    Text("充满中…预计 100% 后自动恢复")
-                        .font(.caption)
-                    Spacer(minLength: 4)
-                    Button("取消") {
-                        statusController.cancelFullOnce()
-                    }
-                    .controlSize(.small)
-                    .disabled(statusController.busy)
+                if statusController.action?.kind == Discharge.dischargeToLimitKind {
+                    dischargeProgressRow
+                } else {
+                    fullOnceProgressRow
                 }
             } else if statusController.daemonStatus?.mode == "active" {
                 Button {
@@ -35,9 +37,104 @@ struct ActionSectionView: View {
                 }
                 .controlSize(.small)
                 .disabled(statusController.busy)
+                dischargeSection
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// fullOnce 进行中状态行（WP2 原形态）。
+    private var fullOnceProgressRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.fill")
+                .foregroundStyle(theme.success)
+            Text("充满中…预计 100% 后自动恢复")
+                .font(.caption)
+            Spacer(minLength: 4)
+            Button("取消") {
+                statusController.cancelFullOnce()
+            }
+            .controlSize(.small)
+            .disabled(statusController.busy)
+        }
+    }
+
+    /// 放电进行中状态行（WP2' §4.1）：「放电中…当前 N% → 目标 M%」+ 取消。
+    /// 当前 N% 数据源 = 1s telemetry 快照（优先）→ daemonStatus.lastPercent 兜底
+    /// （与 PowerFlowView 同数据源纪律；目标 M% = 动作 targetPercent）。
+    private var dischargeProgressRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle")
+                .foregroundStyle(theme.success)
+            Text(dischargeProgressText)
+                .font(.caption)
+            Spacer(minLength: 4)
+            Button("取消") {
+                statusController.cancelDischarge()
+            }
+            .controlSize(.small)
+            .disabled(statusController.busy)
+        }
+    }
+
+    private var dischargeProgressText: String {
+        let current = statusController.batterySnapshot?.percent
+            ?? statusController.daemonStatus?.lastPercent
+        let target = statusController.action?.targetPercent
+        let currentText = current.map { "\($0)%" } ?? "--"
+        let targetText = target.map { "\($0)%" } ?? "--"
+        return "放电中…当前 \(currentText) → 目标 \(targetText)"
+    }
+
+    /// 放电区（按钮 + capabilities 两态文案；显示条件 §4.1 五条）。
+    @ViewBuilder
+    private var dischargeSection: some View {
+        let capabilities = statusController.capabilities
+        if capabilities == nil {
+            // 旧 daemon 未上报能力：升级提示（stale 版本比对另有横幅通道）。
+            Text("放电功能需升级守护进程（面板卸载重装）")
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+        } else if capabilities?.contains(DaemonXPC.capabilityDischarge) != true {
+            // 已上报但不含 discharge（Legacy 后端 / CHIE 缺席机器 / 探测失败）。
+            Text("当前机型不支持放电")
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+        } else if canStartDischarge {
+            Button {
+                showDischargeConfirm = true
+            } label: {
+                Label("放电到上限", systemImage: "arrow.down.circle")
+            }
+            .controlSize(.small)
+            .disabled(statusController.busy)
+            .accessibilityLabel("放电到上限：将适配器断电，电量降至目标后自动恢复限充")
+            .confirmationDialog(
+                "开始放电到上限？",
+                isPresented: $showDischargeConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("放电到上限") {
+                    statusController.dischargeToLimit()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                // §4.1 显著警告：外设断电 + 合盖外显睡眠。
+                Text("放电期间适配器将断电：外接硬盘/Hub 会瞬断，请先移除数据盘；合盖后外接显示器可能进入睡眠。")
+            }
+        }
+    }
+
+    /// 放电按钮显示条件（§4.1 五条：daemonStatus 非 nil ∧ mode==active ∧
+    /// capabilities 含 discharge ∧ ext==true ∧ percent > 上限 ∧ 无进行中动作；
+    /// capabilities 两态已在上层分支消费）。
+    private var canStartDischarge: Bool {
+        guard let status = statusController.daemonStatus, status.mode == "active" else { return false }
+        guard statusController.capabilities?.contains(DaemonXPC.capabilityDischarge) == true else { return false }
+        guard statusController.action == nil else { return false }
+        guard status.lastExternalConnected == true else { return false }
+        guard let percent = status.lastPercent, percent > status.upperLimit else { return false }
+        return true
     }
 
     /// 动作活跃判定（滑杆/预设/总开关的禁用依据；PanelView 同语义各持私有计算）。

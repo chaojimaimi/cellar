@@ -24,16 +24,22 @@ public enum StatusFailureKind: Equatable {
     case actionCompleted
     case actionTimedOut
     case actionInterrupted
+    /// WP2' discharge 安全终止（dischargeToLimit:safety——温度/地板/监护缺失/
+    /// CHIE 残留巡检；横幅 + 通知同源，App 侧文案含当前电量组装）。
+    case actionSafetyTerminated
 
     /// 从 daemonStatus 派生（⚠️ lastAction 字面量与 CellarCore 通知分类同契约——
-    /// 变更两侧同步暴露，CellarCoreCheck 钉死精确值）。
+    /// 变更两侧同步暴露，CellarCoreCheck 钉死精确值）。discharge 完成/超时/崩溃
+    /// 中断复用既有 case（kind 语义由通知 channel 区分）；取消（cancel）不入通道
+    /// （用户动作，fullOnce 同构不打扰）。
     public init?(status: DaemonStatus) {
         switch status.lastAction {
         case "enforce:error": self = .writeFailed
         case "enforce:verifyFailed": self = .conflictSuspected
-        case "fullOnce:done": self = .actionCompleted
-        case "fullOnce:timeout": self = .actionTimedOut
-        case "fullOnce:cancel(crash-recovery)": self = .actionInterrupted
+        case "fullOnce:done", "dischargeToLimit:done": self = .actionCompleted
+        case "fullOnce:timeout", "dischargeToLimit:timeout": self = .actionTimedOut
+        case "fullOnce:cancel(crash-recovery)", "dischargeToLimit:cancel(crash-recovery)": self = .actionInterrupted
+        case "dischargeToLimit:safety": self = .actionSafetyTerminated
         default: return nil
         }
     }

@@ -51,4 +51,15 @@ public struct LegacyBackend: ChargingBackend, Sendable {
             throw BackendError.partialWrite(failedKey: "CH0C", cause: cause)
         }
     }
+
+    // MARK: - 适配器控制（WP2' dischargeToLimit；评审 P1-3：Legacy 不支持）
+
+    /// Legacy 代无 CHIE 键（SMC-NOTES §7.5 为 Tahoe 代键位实测）——恒不支持。
+    public var adapterControlSupported: Bool { false }
+
+    public func setAdapterEnabled(_ enabled: Bool) throws {
+        throw BackendError.adapterControlUnsupported
+    }
+
+    public func adapterEnabled() throws -> Bool? { nil }
 }

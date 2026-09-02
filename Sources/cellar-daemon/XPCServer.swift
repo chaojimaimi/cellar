@@ -120,6 +120,10 @@ final class XPCServer: @unchecked Sendable {
             // WP2 一次性动作（鉴权门同变更命令：root / admin 组）。
             respondChange(peer: peer, operation: "fullOnce", body: { try core.fullOnce() })
 
+        case "dischargeToLimit":
+            // WP2' 放电到上限（鉴权门同 fullOnce；无参数——目标 = 当前策略快照）。
+            respondChange(peer: peer, operation: "dischargeToLimit", body: { try core.dischargeToLimit() })
+
         case "cancelAction":
             respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
 

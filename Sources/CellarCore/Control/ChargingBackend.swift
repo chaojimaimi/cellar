@@ -13,6 +13,22 @@ public protocol ChargingBackend: Sendable {
     func chargingEnabled() throws -> Bool
     /// 允许/停止充电。不含回读验证（回读与状态校对由 WP4/WP6 负责）。
     func setChargingEnabled(_ enabled: Bool) throws
+
+    // MARK: - 适配器控制（WP2' dischargeToLimit；评审 P1-3 分层定版）
+
+    /// 是否支持适配器控制（CHIE）。仅 Tahoe 后端（CHIE 为 Tahoe 代键）为 true；
+    /// Legacy 后端恒 false——调用方经本字段 fail-closed（能力门控），
+    /// 禁止以异常作为「不支持」的判定路径。
+    var adapterControlSupported: Bool { get }
+    /// 使能/禁用适配器（写 CHIE：使能 → 0x00、禁用 → 0x08；SMC-NOTES §7.5 实证值）。
+    /// 不含回读校验（写后校验由调用层/DischargeAdapterControl 负责）。
+    /// 不支持的后端（adapterControlSupported == false）→ 抛
+    /// `BackendError.adapterControlUnsupported`。
+    func setAdapterEnabled(_ enabled: Bool) throws
+    /// 回读适配器状态：0x00 → true（使能）、0x08 → false（禁用）、
+    /// 其余值/长度不符 → nil（未知——调用方按需恢复 fail-closed）。
+    /// 传输错误原样上抛（不吞）。不支持的后端 → nil（无 CHIE 键）。
+    func adapterEnabled() throws -> Bool?
 }
 
 /// 后端域错误（与 SMCError 分域：SMCError 原样透传，不包装）。
@@ -29,4 +45,7 @@ public enum BackendError: Error, Equatable, Sendable {
     /// ⚠️ 外部写者（同类工具/手动 smc）在写读之间翻转状态时触发是期望行为（冲突显式化，
     /// WP6 不得误诊为协议故障）。
     case verifyFailed(key: String, desired: Bool, actual: Bool)
+    /// 后端不支持适配器控制（Legacy/无 CHIE——discharge 功能不可用）。
+    /// 预期调用方已按 `adapterControlSupported` 门控；本 case 为纵深防御的显式报错。
+    case adapterControlUnsupported
 }

@@ -26,8 +26,9 @@ struct CellarApp: App {
         // willPresent（前台呈现策略失效）。
         notifications.installDelegate()
         // §2.3 单一入口接线：StatusController 事件出口 → NotificationService 投递。
-        statusController.onNotificationEvent = { [notifications] event in
-            notifications.deliver(event)
+        // WP2'：载荷附带 status.lastPercent（放电终态文案「当前电量 N%」组装）。
+        statusController.onNotificationEvent = { [notifications] event, lastPercent in
+            notifications.deliver(event, lastPercent: lastPercent)
         }
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in

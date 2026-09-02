@@ -31,6 +31,7 @@ public enum BatterySnapshotParser {
             fullyCharged: boolValue(props["FullyCharged"]),
             rawMaxCapacityMAh: intValue(props["AppleRawMaxCapacity"]),
             rawCurrentCapacityMAh: intValue(props["AppleRawCurrentCapacity"]),
+            nominalChargeCapacityMAh: intValue(props["AppleNominalChargeCapacity"]),
             cellVoltagesMV: batteryData.flatMap { cellVoltages(from: $0) },
             fccMAh: batteryData.flatMap { intValue($0["FccComp1"]) },
             adapter: adapter(from: props["AdapterDetails"]),

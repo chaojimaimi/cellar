@@ -11,6 +11,7 @@ import os
 /// notification.* key）。现文案原样，零行为变化。
 extension StatusFailureKind {
     /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
+    /// WP2'：safety 终态（温度/地板/监护缺失/CHIE 残留巡检）同通道呈现。
     var message: String {
         switch self {
         case .writeFailed: return NotificationService.writeFailedMessage
@@ -18,6 +19,7 @@ extension StatusFailureKind {
         case .actionCompleted: return NotificationService.actionCompletedMessage
         case .actionTimedOut: return NotificationService.actionTimeoutMessage
         case .actionInterrupted: return NotificationService.actionInterruptedMessage
+        case .actionSafetyTerminated: return NotificationService.actionSafetyTerminatedMessage
         }
     }
 }
@@ -30,6 +32,9 @@ enum ControlAttempt: Equatable {
     /// WP2 一次性动作（重试 = 重新发送动作命令；cancelAction 幂等，重试无害）。
     case fullOnce
     case cancelFullOnce
+    /// WP2' 放电动作（同 fullOnce 形态：重试 = 重新发送命令）。
+    case dischargeToLimit
+    case cancelDischarge
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -44,6 +49,10 @@ enum ControlAttempt: Equatable {
             return "开始「充满一次」"
         case .cancelFullOnce:
             return "取消「充满一次」"
+        case .dischargeToLimit:
+            return "开始放电到上限"
+        case .cancelDischarge:
+            return "取消放电"
         }
     }
 }
@@ -75,7 +84,9 @@ final class StatusController: ObservableObject {
     @Published private(set) var batterySnapshot: BatterySnapshot?
 
     /// 通知事件出口（CellarApp 注入 NotificationService.deliver；§2.3 单一入口投递）。
-    var onNotificationEvent: ((CellarNotificationEvent) -> Void)?
+    /// WP2'：载荷附带 lastPercent——放电终态文案「当前电量 N%」由 App 按
+    /// event.kind + status.lastPercent 组装（评审 P2-6：参数不进 lastAction 线格式）。
+    var onNotificationEvent: ((CellarNotificationEvent, Int?) -> Void)?
 
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
@@ -83,6 +94,12 @@ final class StatusController: ObservableObject {
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
     var iconState: MenuBarIconState {
         menuBarIconState(status: daemonStatus, connection: connection)
+    }
+
+    /// daemon 能力清单透出（WP2' §2.1）：nil = 旧 daemon 未上报（升级提示）；
+    /// [] = 已上报但不含 discharge（机型不支持）。放电按钮显示条件的消费面。
+    var capabilities: [String]? {
+        daemonStatus?.capabilities
     }
 
     /// 控制成功回调（面板据此同步滑杆本地态；轮询回包不回写滑杆——规格 §2.3
@@ -155,7 +172,7 @@ final class StatusController: ObservableObject {
             let events = notificationEvents(previous: notificationBaseline, current: status)
             notificationBaseline = status
             for event in events {
-                onNotificationEvent?(event)
+                onNotificationEvent?(event, status.lastPercent)
             }
         }
         daemonStatus = status
@@ -258,6 +275,26 @@ final class StatusController: ObservableObject {
         )
     }
 
+    /// 「放电到上限」（WP2'）：禁用适配器 → 电量降至策略上限 → 自动恢复限充。
+    /// 前置（模式/外接/电量高于目标/能力）拒绝 → daemonError 原文上屏；动作已在轨
+    /// → daemon 幂等回当前状态（按钮随状态消失）。目标 = daemon 当前策略上限快照。
+    func dischargeToLimit() {
+        runControl(
+            attempt: .dischargeToLimit,
+            operation: { try DaemonXPCClient().dischargeToLimit() },
+            successFeedback: "放电已开始：电量降至上限后自动恢复限充"
+        )
+    }
+
+    /// 取消放电动作（XPC 同 cancelAction——幂等；横幅摘要区分动作类型）。
+    func cancelDischarge() {
+        runControl(
+            attempt: .cancelDischarge,
+            operation: { try DaemonXPCClient().cancelAction() },
+            successFeedback: "已取消放电，恢复充电"
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -270,6 +307,10 @@ final class StatusController: ObservableObject {
             fullOnce()
         case .cancelFullOnce:
             cancelFullOnce()
+        case .dischargeToLimit:
+            dischargeToLimit()
+        case .cancelDischarge:
+            cancelDischarge()
         }
     }
 

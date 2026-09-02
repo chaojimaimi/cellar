@@ -28,4 +28,20 @@ public struct TahoeBackend: ChargingBackend, Sendable {
     public func setChargingEnabled(_ enabled: Bool) throws {
         try client.write("CHTE", bytes: enabled ? [0x00, 0x00, 0x00, 0x00] : [0x01, 0x00, 0x00, 0x00])
     }
+
+    // MARK: - 适配器控制（WP2' dischargeToLimit；写后回读由调用层负责）
+
+    public var adapterControlSupported: Bool { true }
+
+    public func setAdapterEnabled(_ enabled: Bool) throws {
+        try client.write(
+            "CHIE",
+            bytes: enabled ? Discharge.chieEnabledBytes : Discharge.chieDisabledBytes
+        )
+    }
+
+    public func adapterEnabled() throws -> Bool? {
+        let bytes = try client.read("CHIE")
+        return Discharge.adapterState(from: bytes)
+    }
 }
