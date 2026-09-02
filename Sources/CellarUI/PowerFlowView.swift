@@ -27,11 +27,16 @@ public enum PowerFlow: Equatable, Sendable {
 public struct PowerFlowView: View {
     public let externalConnected: Bool?
     public let isCharging: Bool?
+    /// 电池侧实测功率 W（Voltage×Amperage/1e6，IOKit 实测值；适配器实际输出功率
+    /// 无公开数据源——WP1.5 §7.5 标定结论）。nil/漂浮态（电池电流≈0，显示 0W 会
+    /// 误导「系统未耗电」）不显示功率数字。
+    public let batteryPowerW: Double?
     @Environment(\.cellarTheme) private var theme
 
-    public init(externalConnected: Bool?, isCharging: Bool?) {
+    public init(externalConnected: Bool?, isCharging: Bool?, batteryPowerW: Double? = nil) {
         self.externalConnected = externalConnected
         self.isCharging = isCharging
+        self.batteryPowerW = batteryPowerW
     }
 
     public var body: some View {
@@ -50,6 +55,11 @@ public struct PowerFlowView: View {
                 Text(word(for: flow))
                     .font(.caption2)
                     .foregroundStyle(theme.secondaryText)
+                if let powerText = powerText(for: flow) {
+                    Text(powerText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(theme.accent)
+                }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(axLabel(for: flow))
@@ -94,6 +104,17 @@ public struct PowerFlowView: View {
         case .floating: return theme.word(.powerFlowFloating)
         case .onBattery: return theme.word(.powerFlowOnBattery)
         }
+    }
+
+    /// 功率数字（评审语境：用户要「当前实际功率」——可给的是电池侧实测 V×A；
+    /// 漂浮态电池功率≈0 而系统实际由适配器直供，显示 0W 误导 → 不显示）。
+    private func powerText(for flow: PowerFlow) -> String? {
+        guard let batteryPowerW, flow != .floating else { return nil }
+        // 充电显示入电池功率（+），放电显示出电池功率（−，取绝对值加方向由
+        // 态标签承载）。
+        let watts = flow == .charging ? batteryPowerW : abs(batteryPowerW)
+        guard watts >= 0.05 else { return nil }   // 微瓦级抖动不显示
+        return String(format: "%+.0f W", flow == .charging ? watts : -watts)
     }
 
     private func axLabel(for flow: PowerFlow) -> String {

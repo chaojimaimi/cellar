@@ -90,10 +90,15 @@ struct PanelView: View {
                 .padding(.top, 4)
 
             // WP2' §4.2：功率流向图（数据源 = App 侧 1s telemetry 快照——非
-            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。
+            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。batteryPowerW
+            // = 电池侧实测功率（Voltage×Amperage，WP1.5 §7.5：适配器实际输出无
+            // 公开数据源，电池侧为可靠替代）。
             PowerFlowView(
                 externalConnected: statusController.batterySnapshot?.externalConnected,
-                isCharging: statusController.batterySnapshot?.isCharging
+                isCharging: statusController.batterySnapshot?.isCharging,
+                batteryPowerW: statusController.batterySnapshot.map {
+                    Double($0.voltageMV) * Double($0.amperageMA) / 1_000_000
+                }
             )
 
             StatusLineView(snapshot: statusController.batterySnapshot)

@@ -177,16 +177,22 @@ struct LoginItemSectionView: View {
     }
 }
 
-/// 面板页脚（WP3 S5b：设置入口 + 退出，自 PanelView 底部行迁出）：「设置…」走
-/// 原生 SettingsLink（spike S1 定版形态）；退出按钮语汇随风格（word(.quit)——
-/// amber「封存退出」，demo footer；native 原文兜底语义见 Theme.word）。
+/// 面板页脚（WP3 S5b：设置入口 + 退出，自 PanelView 底部行迁出）：「设置…」经
+/// openSettings + NSApp.activate（真机验收修正 2026-09-02：LSUIElement app 的
+/// Settings 窗口落在前台应用后面——SettingsLink 声式入口无激活钩子，改为按钮
+/// 先把 App 带到前台再打开设置）；退出按钮语汇随风格（word(.quit)）。
 struct PanelFooterView: View {
     @Environment(\.cellarTheme) private var theme
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // 无对齐框定：保持迁出前两行在面板纵向中轴的呈现（A 原生视觉零回归）。
         VStack(spacing: 14) {
-            SettingsLink {
+            Button {
+                // 先激活（设置窗口才能盖过其它应用），再开/前置 Settings。
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            } label: {
                 Label("设置…", systemImage: "gearshape")
             }
             Button(theme.word(.quit)) {

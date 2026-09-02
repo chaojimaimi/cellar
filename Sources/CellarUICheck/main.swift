@@ -209,7 +209,7 @@ private func buildCases() -> [SnapshotCase] {
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {
-                        PowerFlowView(externalConnected: external, isCharging: charging)
+                        PowerFlowView(externalConnected: external, isCharging: charging, batteryPowerW: flowName == "charging" ? 33.0 : flowName == "onBattery" ? -8.2 : nil)
                             .frame(width: 304, alignment: .leading)
                     })
                 })
