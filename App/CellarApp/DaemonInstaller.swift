@@ -1,5 +1,6 @@
 import AppKit
 import CellarCore
+import CellarUI
 import Foundation
 import os
 import ServiceManagement
@@ -170,7 +171,7 @@ final class DaemonInstaller: ObservableObject {
             beginPolling()
         case .failure(let error):
             refresh()
-            lastError = "注册失败：\(error.localizedDescription)"
+            lastError = CellarL10n.s("panel.install.registerFailed", error.localizedDescription)
         }
     }
 
@@ -181,7 +182,7 @@ final class DaemonInstaller: ObservableObject {
             refresh()
         case .failure(let error):
             refresh()
-            lastError = "卸载失败：\(error.localizedDescription)"
+            lastError = CellarL10n.s("panel.install.unregisterFailed", error.localizedDescription)
         }
     }
 

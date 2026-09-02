@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import Foundation
 import os
 import UserNotifications
@@ -12,29 +13,14 @@ import UserNotifications
 /// - 投递冷却：同事件类型 10 分钟（**内存级，App 重启清零**，登记 §2.3）。
 /// - 前台（面板可见）呈现 = `.list`（通知中心留档不弹横幅——面板内已有横幅
 ///   通道，双通道错开）。
-/// - 文案定版（§2.3，Phase 2 仅中文；面板失败横幅文案与本类常量同源）。
+/// - 文案定版（WP4 S3）：全部经 CellarL10n 解析 notification.* key（compose 时
+///   在 App 进程内解析——UNUserNotificationCenter 展示不再解析，硬事实 9）；
+///   面板失败横幅文案与通知同 catalog 同源（§2.3）。
 @MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
-    /// 已达充电上限（§2.3 定版文案）。
-    nonisolated static let limitReachedFormat = "已达充电上限 %d%，已停止充电"
-    /// 写失败告警（红线 5）。
-    nonisolated static let writeFailedMessage = "充电控制写入失败，限充可能未生效——请打开面板查看"
-    /// 外部写者冲突告警。
-    nonisolated static let conflictSuspectedMessage = "检测到其他工具在改动充电状态，可能与 Cellar 冲突"
-    /// WP2 一次性动作终态文案（§1.1 终态事件；与失败横幅通道同源）。
-    nonisolated static let actionCompletedMessage = "「充满一次」已完成：已恢复限充"
-    nonisolated static let actionTimeoutMessage = "「充满一次」超时（4 小时未充满）：已恢复限充"
-    nonisolated static let actionInterruptedMessage = "「充满一次」已中断（守护进程重启）：已恢复限充"
-    /// WP2' 放电终态文案（中文硬编码，WP4 S3 统一本地化；「当前电量 N%」按
-    /// event.kind + status.lastPercent 组装——评审 P2-6，参数不进线格式）。
-    nonisolated static let dischargeCompletedFormat = "已放电至上限 %d%%，限充已恢复"
-    nonisolated static let dischargeTimeoutFormat = "已达安全时限，已恢复限充（当前电量 %d%%）"
-    nonisolated static let dischargeSafetyMessageFormat = "放电已安全终止，已恢复充电（当前电量 %d%%）"
-    nonisolated static let dischargeCancelledMessage = "已取消放电，已恢复充电"
-    nonisolated static let dischargeInterruptedMessage = "放电已中断（守护进程重启）：已恢复充电"
-    /// safety 终态横幅文案（横幅通道无 lastPercent 可组装，与通知文案的百分比
-    /// 变体同源去参——StatusFailureKind.message App 侧扩展消费）。
-    nonisolated static let actionSafetyTerminatedMessage = "放电已安全终止，已恢复充电"
+    // S3：文案常量全部移除——message(for:) 经 CellarL10n 解析 notification.* key
+    // （catalog 双形态：xcodebuild 编译 lproj / swift build 原始 xcstrings 回退）；
+    // 面板横幅（StatusFailureKind.message）与通知同源共用同一批 key。
 
     /// 同事件类型投递冷却（秒；内存级，App 重启清零）。
     private static let cooldownSeconds: TimeInterval = 600
@@ -84,36 +70,37 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// 文案映射（投递 + 面板失败横幅同源——§2.3 定版常量集中本类）。
-    /// WP2'：放电终态文案按 kind 分流（fullOnce 文案不变，零回归）+ lastPercent
-    /// 组装「当前电量 N%」。
+    /// 文案映射（投递 + 面板失败横幅同源——§2.3 定版：同走 CellarL10n 的
+    /// notification.* key）。⚠️ 解析点 = **compose 时**（App 进程内，硬事实 9）；
+    /// 插值经 CellarL10n.s 的 String(format:)（%lld%% 转义）。lastPercent 组装
+    /// 「当前电量 N%」。
     nonisolated static func message(for event: CellarNotificationEvent, lastPercent: Int? = nil) -> String {
         let dischargeKind = Discharge.dischargeToLimitKind
         switch event {
         case .limitReached(let upperLimit):
-            return String(format: limitReachedFormat, upperLimit)
+            return CellarL10n.s("notification.limitReached", upperLimit)
         case .writeFailed:
-            return writeFailedMessage
+            return CellarL10n.s("notification.writeFailed")
         case .conflictSuspected:
-            return conflictSuspectedMessage
+            return CellarL10n.s("notification.conflictSuspected")
         case .actionCompleted(let kind):
             return kind == dischargeKind
-                ? String(format: dischargeCompletedFormat, lastPercent ?? 0)
-                : actionCompletedMessage
+                ? CellarL10n.s("notification.dischargeCompleted", lastPercent ?? 0)
+                : CellarL10n.s("notification.actionCompleted")
         case .actionTimeout(let kind):
             return kind == dischargeKind
-                ? String(format: dischargeTimeoutFormat, lastPercent ?? 0)
-                : actionTimeoutMessage
+                ? CellarL10n.s("notification.dischargeTimeout", lastPercent ?? 0)
+                : CellarL10n.s("notification.actionTimeout")
         case .actionSafetyTerminated(let kind):
             return kind == dischargeKind
-                ? String(format: dischargeSafetyMessageFormat, lastPercent ?? 0)
-                : actionSafetyTerminatedMessage
+                ? CellarL10n.s("notification.dischargeSafety", lastPercent ?? 0)
+                : CellarL10n.s("notification.actionSafetyTerminated")
         case .actionCancelled:
             // 仅 discharge 系产生 actionCancelled（fullOnce 用户取消不通知，§2.3
             // 对照）——kind 无分流，单一文案（审查 L3：收敛恒等三元）。
-            return dischargeCancelledMessage
+            return CellarL10n.s("notification.dischargeCancelled")
         case .actionInterrupted(let kind):
-            return kind == dischargeKind ? dischargeInterruptedMessage : actionInterruptedMessage
+            return kind == dischargeKind ? CellarL10n.s("notification.dischargeInterrupted") : CellarL10n.s("notification.actionInterrupted")
         }
     }
 

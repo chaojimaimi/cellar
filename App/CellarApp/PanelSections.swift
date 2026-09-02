@@ -48,10 +48,10 @@ struct ActionSectionView: View {
         HStack(spacing: 8) {
             Image(systemName: "bolt.fill")
                 .foregroundStyle(theme.success)
-            Text("充满中…预计 100% 后自动恢复")
+            Text(CellarL10n.s("panel.action.fullOnceProgress"))
                 .font(.caption)
             Spacer(minLength: 4)
-            Button("取消") {
+            Button(CellarL10n.s("common.cancel")) {
                 statusController.cancelFullOnce()
             }
             .controlSize(.small)
@@ -69,7 +69,7 @@ struct ActionSectionView: View {
             Text(dischargeProgressText)
                 .font(.caption)
             Spacer(minLength: 4)
-            Button("取消") {
+            Button(CellarL10n.s("common.cancel")) {
                 statusController.cancelDischarge()
             }
             .controlSize(.small)
@@ -83,7 +83,7 @@ struct ActionSectionView: View {
         let target = statusController.action?.targetPercent
         let currentText = current.map { "\($0)%" } ?? "--"
         let targetText = target.map { "\($0)%" } ?? "--"
-        return "放电中…当前 \(currentText) → 目标 \(targetText)"
+        return CellarL10n.s("panel.action.dischargeProgress", currentText, targetText)
     }
 
     /// 放电区（按钮 + capabilities 两态文案；显示条件 §4.1 五条）。
@@ -92,12 +92,12 @@ struct ActionSectionView: View {
         let capabilities = statusController.capabilities
         if capabilities == nil {
             // 旧 daemon 未上报能力：升级提示（stale 版本比对另有横幅通道）。
-            Text("放电功能需升级守护进程（面板卸载重装）")
+            Text(CellarL10n.s("panel.action.needUpgrade"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         } else if capabilities?.contains(DaemonXPC.capabilityDischarge) != true {
             // 已上报但不含 discharge（Legacy 后端 / CHIE 缺席机器 / 探测失败）。
-            Text("当前机型不支持放电")
+            Text(CellarL10n.s("panel.action.unsupported"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         } else if canStartDischarge {
@@ -107,17 +107,17 @@ struct ActionSectionView: View {
                 // 展开保持窗口常驻，警告信息同等显著）。
                 VStack(alignment: .leading, spacing: 6) {
                     // §4.1 显著警告：外设断电 + 合盖外显睡眠。
-                    Text("放电期间适配器将断电：外接硬盘/Hub 会瞬断，请先移除数据盘；合盖后外接显示器可能进入睡眠。")
+                    Text(CellarL10n.s("panel.action.dischargeWarning"))
                         .font(.caption)
                         .foregroundStyle(theme.warning)
                     HStack(spacing: 8) {
-                        Button("确认放电") {
+                        Button(CellarL10n.s("panel.action.confirmDischarge")) {
                             showDischargeConfirm = false
                             statusController.dischargeToLimit()
                         }
                         .controlSize(.small)
                         .disabled(statusController.busy)
-                        Button("返回") {
+                        Button(CellarL10n.s("panel.action.back")) {
                             showDischargeConfirm = false
                         }
                         .controlSize(.small)
@@ -127,11 +127,11 @@ struct ActionSectionView: View {
                 Button {
                     showDischargeConfirm = true
                 } label: {
-                    Label("放电到上限", systemImage: "arrow.down.circle")
+                    Label(CellarL10n.s("panel.action.dischargeTitle"), systemImage: "arrow.down.circle")
                 }
                 .controlSize(.small)
                 .disabled(statusController.busy)
-                .accessibilityLabel("放电到上限：将适配器断电，电量降至目标后自动恢复限充")
+                .accessibilityLabel(CellarL10n.s("panel.action.dischargeAx"))
             }
         }
     }
@@ -162,7 +162,7 @@ struct LoginItemSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("开机启动 Cellar", isOn: Binding(
+            Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
                 get: { loginItems.launchAtLogin },
                 set: { loginItems.toggle($0) }
             ))
@@ -170,7 +170,9 @@ struct LoginItemSectionView: View {
             if let feedback = loginItems.feedback {
                 Text(feedback)
                     .font(.caption)
-                    .foregroundStyle(feedback.hasPrefix("已") ? theme.success : theme.alert)
+                    // 成功/失败配色不再按「已」中文前缀判定（反馈已本地化）——
+                    // 控制器新发布 feedbackIsSuccess 判别位（S3 配套改动）。
+                    .foregroundStyle(loginItems.feedbackIsSuccess ? theme.success : theme.alert)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -193,7 +195,7 @@ struct PanelFooterView: View {
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()
             } label: {
-                Label("设置…", systemImage: "gearshape")
+                Label(CellarL10n.s("panel.footerSettings"), systemImage: "gearshape")
             }
             Button(theme.word(.quit)) {
                 NSApplication.shared.terminate(nil)

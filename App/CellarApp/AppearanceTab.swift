@@ -16,19 +16,19 @@ struct AppearanceTab: View {
 
     var body: some View {
         Form {
-            Picker("面板风格", selection: Binding(
+            Picker(CellarL10n.s("settings.panelStyle"), selection: Binding(
                 get: { styleController.style },
                 set: { styleController.setStyle($0) }
             )) {
-                Text("原生").tag(PanelStyle.native)
-                Text("酒窖琥珀").tag(PanelStyle.amber)
+                Text(CellarL10n.s("settings.styleNative")).tag(PanelStyle.native)
+                Text(CellarL10n.s("settings.styleAmber")).tag(PanelStyle.amber)
             }
             .disabled(!styleController.loaded)
 
             // 色板行：随选中风格即时刷新（Picker 未生效前色板与环境值可能不一致
             // ——以选中风格 resolve 为准，而非当前 environment）。
             VStack(alignment: .leading, spacing: 6) {
-                Text("强调 · 渐变起止 · 面板底")
+                Text(CellarL10n.s("settings.swatchHint"))
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
                 HStack(spacing: 6) {

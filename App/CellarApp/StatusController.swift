@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import Combine
 import Foundation
 import os
@@ -6,25 +7,25 @@ import os
 // WP4：ControlFeedback / StatusFailureKind 两类型按硬事实 3 判据迁 CellarCore
 // （依赖闭包仅 Foundation；用户可见串剥离）——本文件仅保留 App 域文案投影。
 
-/// StatusFailureKind 的 App 域横幅文案（Core 枚举本体已迁，文案常量留
-/// NotificationService——§2.3 定版与通知同源；S3 时同走 CellarL10n
-/// notification.* key）。现文案原样，零行为变化。
+/// StatusFailureKind 的 App 域横幅文案（Core 枚举本体已迁；S3 起经 CellarL10n
+/// 解析 notification.* key——与通知文案同 catalog 同源，§2.3/§4.2 定版）。
+/// 现文案原样，零行为变化。
 extension StatusFailureKind {
     /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
     /// WP2'：safety 终态（温度/地板/监护缺失/CHIE 残留巡检）同通道呈现。
     var message: String {
         switch self {
-        case .writeFailed: return NotificationService.writeFailedMessage
-        case .conflictSuspected: return NotificationService.conflictSuspectedMessage
-        case .actionTimedOut: return NotificationService.actionTimeoutMessage
-        case .actionInterrupted: return NotificationService.actionInterruptedMessage
-        case .actionSafetyTerminated: return NotificationService.actionSafetyTerminatedMessage
+        case .writeFailed: return CellarL10n.s("notification.writeFailed")
+        case .conflictSuspected: return CellarL10n.s("notification.conflictSuspected")
+        case .actionTimedOut: return CellarL10n.s("notification.actionTimeout")
+        case .actionInterrupted: return CellarL10n.s("notification.actionInterrupted")
+        case .actionSafetyTerminated: return CellarL10n.s("notification.actionSafetyTerminated")
         }
     }
 }
 
 /// 控制动作的可重放描述（告警横幅「重试」重发上次动作，规格 §2.7 分支 ①：
-/// runControl 入口记录、成功清除）。
+/// runControl 入口记录、成功清除）。摘要经 CellarL10n（status.summary.*）。
 enum ControlAttempt: Equatable {
     case setLimits(upperLimit: Int, hysteresis: Int)
     case setChargingEnabled(Bool)
@@ -39,19 +40,19 @@ enum ControlAttempt: Equatable {
     var summary: String {
         switch self {
         case .setLimits(let upperLimit, _):
-            return "设置上限 \(upperLimit)%"
+            return CellarL10n.s("status.summary.setLimits", upperLimit)
         case .setChargingEnabled(true):
-            return "启用限充"
+            return CellarL10n.s("panel.enableLimit")
         case .setChargingEnabled(false):
-            return "停用限充"
+            return CellarL10n.s("panel.disableLimit")
         case .fullOnce:
-            return "开始「充满一次」"
+            return CellarL10n.s("status.summary.fullOnce")
         case .cancelFullOnce:
-            return "取消「充满一次」"
+            return CellarL10n.s("status.summary.cancelFullOnce")
         case .dischargeToLimit:
-            return "开始放电到上限"
+            return CellarL10n.s("status.summary.discharge")
         case .cancelDischarge:
-            return "取消放电"
+            return CellarL10n.s("status.summary.cancelDischarge")
         }
     }
 }
@@ -188,8 +189,11 @@ final class StatusController: ObservableObject {
             let wasDone = lastActionLiteral == "fullOnce:done"
                 || lastActionLiteral == "dischargeToLimit:done"
             if isDone && !wasDone {
-                let kindWord = status.lastAction == "fullOnce:done" ? "「充满一次」" : "放电到上限"
-                setSuccessFeedback("\(kindWord)已完成：已恢复限充")
+                // done 终态按动作类型拆两个 key（「充满一次」/放电到上限的
+                // kindWord 组装不适合单格式串——zh 引号差异在 en 无对应形态）。
+                setSuccessFeedback(status.lastAction == "fullOnce:done"
+                    ? CellarL10n.s("status.doneFullOnce")
+                    : CellarL10n.s("status.doneDischarge"))
             }
             lastActionLiteral = status.lastAction
         }
@@ -273,7 +277,7 @@ final class StatusController: ObservableObject {
         runControl(
             attempt: .setLimits(upperLimit: upperLimit, hysteresis: hysteresis),
             operation: { try DaemonXPCClient().setLimits(upperLimit: upperLimit, hysteresis: hysteresis) },
-            successFeedback: "已应用：上限 \(upperLimit)%、滞回 \(hysteresis)"
+            successFeedback: CellarL10n.s("status.applied", upperLimit, hysteresis)
         ) { [weak self] status in
             self?.onLimitsApplied?(status.upperLimit, status.hysteresis)
         }
@@ -282,9 +286,9 @@ final class StatusController: ObservableObject {
     /// 总开关：mode 驱动「停用限充 / 启用限充」（禁用/启用命令语义相反）。
     func toggleCharging(enabled: Bool) {
         if enabled {
-            runControl(attempt: .setChargingEnabled(true), operation: { try DaemonXPCClient().enable() }, successFeedback: "已启用限充")
+            runControl(attempt: .setChargingEnabled(true), operation: { try DaemonXPCClient().enable() }, successFeedback: CellarL10n.s("status.enabled"))
         } else {
-            runControl(attempt: .setChargingEnabled(false), operation: { try DaemonXPCClient().disable() }, successFeedback: "已停用限充（恢复默认充电）")
+            runControl(attempt: .setChargingEnabled(false), operation: { try DaemonXPCClient().disable() }, successFeedback: CellarL10n.s("status.disabled"))
         }
     }
 
@@ -294,7 +298,7 @@ final class StatusController: ObservableObject {
         runControl(
             attempt: .fullOnce,
             operation: { try DaemonXPCClient().fullOnce() },
-            successFeedback: "「充满一次」已开始：充满后自动恢复限充"
+            successFeedback: CellarL10n.s("status.fullOnceStarted")
         )
     }
 
@@ -303,7 +307,7 @@ final class StatusController: ObservableObject {
         runControl(
             attempt: .cancelFullOnce,
             operation: { try DaemonXPCClient().cancelAction() },
-            successFeedback: "已取消「充满一次」，恢复限充"
+            successFeedback: CellarL10n.s("status.fullOnceCancelled")
         )
     }
 
@@ -314,7 +318,7 @@ final class StatusController: ObservableObject {
         runControl(
             attempt: .dischargeToLimit,
             operation: { try DaemonXPCClient().dischargeToLimit() },
-            successFeedback: "放电已开始：电量降至上限后自动恢复限充"
+            successFeedback: CellarL10n.s("status.dischargeStarted")
         )
     }
 
@@ -323,7 +327,7 @@ final class StatusController: ObservableObject {
         runControl(
             attempt: .cancelDischarge,
             operation: { try DaemonXPCClient().cancelAction() },
-            successFeedback: "已取消放电，恢复充电"
+            successFeedback: CellarL10n.s("status.dischargeCancelled")
         )
     }
 

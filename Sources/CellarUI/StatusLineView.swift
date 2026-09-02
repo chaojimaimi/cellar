@@ -5,16 +5,12 @@ import SwiftUI
 /// 电源｜电流｜电压 // 温度｜循环｜适配器；每段 caption 标签 + monospacedDigit 值，
 /// 分段自适应宽、零截断（消除 §7.2 反馈的流式单行截断与跳动）。
 ///
-/// 全部来自 BatterySnapshot：电流段幅值 + 方向词（currentDirectionWord 纯函数，
-/// 规格 §7.2——外接停充方向词 nil 时只显幅值，修「停充显放电 0.00 A」矛盾）；
+/// 全部来自 BatterySnapshot：电流段幅值 + 方向词（currentDirection 纯函数，
+/// 规格 §7.2——外接停充方向词 nil 时只显幅值，修「停充显放电 0.00 A」矛盾；
+/// WP4 §4.3 消费 CellarCore 枚举 + CellarL10n 词条）；
 /// 适配器 W 取 adapter.watts 实时数据（§7.2：数值随硬件真实变化即正确，
 /// 缺席整体隐藏、留空位保网格稳定）；采样失败（snapshot == nil）→
 /// 「遥测不可用」（不进告警横幅，防 1s 刷屏）。
-///
-/// ⚠️ WP4 下沉注记：段标签与降级文案仍为 LocalizedStringKey 字面量（「遥测不可
-/// 用」/「电源」等）——S3 §4.3 随方向词枚举化一并门面化（方案定版：方向词改造
-/// 不在 S1 做，currentDirectionWord 调用原样保留，报告注明）。字面量不在
-/// catalog 内 → 显示原文不变，下沉零行为差异。
 public struct StatusLineView: View {
     public let snapshot: BatterySnapshot?
     @Environment(\.cellarTheme) private var theme
@@ -42,7 +38,7 @@ public struct StatusLineView: View {
                 }
             }
         } else {
-            Text("遥测不可用")
+            Text(CellarL10n.s("statusline.unavailable"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         }
@@ -64,7 +60,7 @@ public struct StatusLineView: View {
     /// 电源段：外接（充电中/已停充）或电池供电，词随风格（§3.5 对账表——
     /// statusChargingExternal / statusHoldingExternal / statusBattery）。
     private func powerSegment(_ snapshot: BatterySnapshot) -> some View {
-        segment(caption: "电源") {
+        segment(caption: CellarL10n.s("statusline.power")) {
             if snapshot.externalConnected && snapshot.isCharging {
                 Text(theme.word(.statusChargingExternal))
             } else if snapshot.externalConnected {
@@ -93,23 +89,30 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 电流段：幅值（mA → A，两位小数）+ 方向词（currentDirectionWord 纯函数，
-    /// 规格 §7.2；方向词 nil = 外接停充 → 只显幅值不标方向）。
+    /// 电流段：幅值（mA → A，两位小数）+ 方向词（currentDirection 纯函数，
+    /// 规格 §7.2；方向词 nil = 外接停充 → 只显幅值不标方向；方向词经
+    /// CellarL10n 词条解析，native/amber 同值不 B 化——WP4 §4.3）。
     private func currentSegment(_ snapshot: BatterySnapshot) -> some View {
         let amperage = Double(abs(snapshot.amperageMA)) / 1000
         let ampText = String(format: "%.2f A", amperage)
-        let word = currentDirectionWord(
+        let direction = currentDirection(
             isCharging: snapshot.isCharging,
             externalConnected: snapshot.externalConnected
         )
-        return segment(caption: "电流") {
+        let word = direction.map {
+            switch $0 {
+            case .charging: return CellarL10n.s("direction.charging")
+            case .discharging: return CellarL10n.s("direction.discharging")
+            }
+        }
+        return segment(caption: CellarL10n.s("statusline.current")) {
             Text(word.map { "\($0) \(ampText)" } ?? ampText)
         }
     }
 
     /// 电压段：一位小数。
     private func voltageSegment(_ snapshot: BatterySnapshot) -> some View {
-        segment(caption: "电压") {
+        segment(caption: CellarL10n.s("statusline.voltage")) {
             Text(String(format: "%.1f V", Double(snapshot.voltageMV) / 1000))
         }
     }
@@ -129,7 +132,7 @@ public struct StatusLineView: View {
             nominal: snapshot.nominalChargeCapacityMAh ?? snapshot.rawMaxCapacityMAh,
             design: snapshot.designCapacityMAh
         )
-        return segment(caption: "循环") {
+        return segment(caption: CellarL10n.s("statusline.cycle")) {
             if let health {
                 Text("\(snapshot.cycleCount) · \(theme.word(.healthLabel)) \(health)%")
             } else {
@@ -142,7 +145,7 @@ public struct StatusLineView: View {
     /// 隐藏（调用处判定）。名称过长限宽自然换行——零截断，不复用原流式布局的
     /// 压缩截断手段。
     private func adapterSegment(_ adapter: AdapterInfo) -> some View {
-        segment(caption: "适配器") {
+        segment(caption: CellarL10n.s("statusline.adapter")) {
             Text(adapterParts(adapter).joined(separator: " · "))
                 .frame(maxWidth: 140, alignment: .leading)
         }

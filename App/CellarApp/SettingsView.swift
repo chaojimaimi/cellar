@@ -10,11 +10,11 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             AppearanceTab()
-                .tabItem { Label("外观", systemImage: "paintpalette") }
+                .tabItem { Label(CellarL10n.s("settings.appearance"), systemImage: "paintpalette") }
             GeneralTab()
-                .tabItem { Label("通用", systemImage: "gearshape") }
+                .tabItem { Label(CellarL10n.s("settings.general"), systemImage: "gearshape") }
             AboutTab()
-                .tabItem { Label("关于", systemImage: "info.circle") }
+                .tabItem { Label(CellarL10n.s("settings.about"), systemImage: "info.circle") }
         }
         .frame(width: 420, height: 300)
     }
@@ -32,25 +32,25 @@ private struct GeneralTab: View {
 
     var body: some View {
         Form {
-            Toggle("开机启动 Cellar", isOn: Binding(
+            Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
                 get: { loginItems.launchAtLogin },
                 set: { loginItems.toggle($0) }
             ))
             .disabled(loginItems.busy)
 
-            LabeledContent("登录项注册态") {
+            LabeledContent(CellarL10n.s("settings.registrationStatus")) {
                 HStack {
                     Text(registrationText)
                     // 修复路径落控制器（评审 P2-2）；已注册态按钮无意义，禁用。
-                    Button("重新注册") { loginItems.reregister() }
+                    Button(CellarL10n.s("settings.reregister")) { loginItems.reregister() }
                         .disabled(loginItems.busy || loginItems.registration == .enabled)
                 }
             }
 
-            LabeledContent("通知") {
+            LabeledContent(CellarL10n.s("settings.notifications")) {
                 HStack {
                     Text(notificationText)
-                    Button("打开系统设置") { openNotificationSettings() }
+                    Button(CellarL10n.s("settings.openSystemSettings")) { openNotificationSettings() }
                 }
             }
 
@@ -70,16 +70,16 @@ private struct GeneralTab: View {
 
     private var registrationText: String {
         switch loginItems.registration {
-        case .enabled: return "已注册"
-        case .requiresApproval: return "待批准（请在系统设置确认）"
-        case .notRegistered: return "未注册"
-        case .unknown: return "查询中…"
+        case .enabled: return CellarL10n.s("settings.regEnabled")
+        case .requiresApproval: return CellarL10n.s("settings.regApproval")
+        case .notRegistered: return CellarL10n.s("common.notRegistered")
+        case .unknown: return CellarL10n.s("common.querying")
         }
     }
 
     private var notificationText: String {
-        guard let authorized = notificationAuthorized else { return "查询中…" }
-        return authorized ? "已授权" : "未授权"
+        guard let authorized = notificationAuthorized else { return CellarL10n.s("common.querying") }
+        return authorized ? CellarL10n.s("settings.notifAuthorized") : CellarL10n.s("settings.notifDenied")
     }
 
     /// 通知授权态直查（异步回调回主线程刷新；拒授权属常态非错误，不上告警色）。
@@ -115,32 +115,35 @@ private struct AboutTab: View {
 
     var body: some View {
         Form {
-            LabeledContent("应用版本", value: appVersion)
+            LabeledContent(CellarL10n.s("settings.appVersion"), value: appVersion)
 
-            LabeledContent("守护进程版本", value: daemonVersionText)
+            LabeledContent(CellarL10n.s("settings.daemonVersion"), value: daemonVersionText)
 
             // 版本不匹配警示（既有 stale 语义复用：版本行 ≠ 期望值 → 提示重装）。
             if daemonMismatch {
-                Text("守护进程版本与应用期望不一致，请卸载后重新安装守护进程")
+                Text(CellarL10n.s("settings.versionMismatch"))
                     .font(.caption)
                     .foregroundStyle(theme.alert)
             }
 
-            LabeledContent("连接状态", value: connectionText)
-            // 用户可见行用中文展示名；原始存储值只进诊断摘要（排障需要）。
-            LabeledContent("面板风格", value: styleController.style == .amber ? "酒窖琥珀" : "原生")
+            LabeledContent(CellarL10n.s("settings.connectionStatus"), value: connectionText)
+            // 用户可见行用本地化展示名；原始存储值只进诊断摘要（排障需要）。
+            LabeledContent(CellarL10n.s("settings.panelStyle"),
+                           value: styleController.style == .amber
+                               ? CellarL10n.s("settings.styleAmber")
+                               : CellarL10n.s("settings.styleNative"))
 
-            Button(copied ? "已复制" : "复制诊断摘要") { copyDiagnostics() }
+            Button(copied ? CellarL10n.s("settings.copied") : CellarL10n.s("settings.copySummary")) { copyDiagnostics() }
         }
         .padding()
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? CellarL10n.s("common.unknown")
     }
 
     private var daemonVersionText: String {
-        statusController.daemonStatus?.version ?? "未知（未连接）"
+        statusController.daemonStatus?.version ?? CellarL10n.s("settings.unknownVersion")
     }
 
     /// daemon 版本与内嵌期望值不一致（首查前不判定，防初始化期误报）。
@@ -151,31 +154,34 @@ private struct AboutTab: View {
 
     private var connectionText: String {
         switch statusController.connection {
-        case .connected: return "已连接"
-        case .unreachable: return "失联"
-        case .unknown: return "未知"
+        case .connected: return CellarL10n.s("settings.connected")
+        case .unreachable: return CellarL10n.s("settings.unreachable")
+        case .unknown: return CellarL10n.s("common.unknown")
         }
     }
 
     /// 诊断摘要贴剪贴板（NSPasteboard；注册态经控制器投影，不走 SMAppService——
-    /// View 不直呼系统服务，评审 P2-2 同款纪律）。
+    /// View 不直呼系统服务，评审 P2-2 同款纪律）。摘要为排障用途，版本号等
+    /// 原始值保留（约等号语义），行文经 CellarL10n 本地化。
     private func copyDiagnostics() {
         let registration: String = {
             switch loginItems.registration {
-            case .enabled: return "已注册"
-            case .requiresApproval: return "待批准"
-            case .notRegistered: return "未注册"
-            case .unknown: return "未查询"
+            case .enabled: return CellarL10n.s("settings.regEnabled")
+            case .requiresApproval: return CellarL10n.s("about.regApproval")
+            case .notRegistered: return CellarL10n.s("common.notRegistered")
+            case .unknown: return CellarL10n.s("about.regUnknown")
             }
         }()
-        let daemonStatusText = daemonMismatch ? "不匹配（期望 \(DaemonXPC.daemonVersion)）" : "匹配"
-        let summary = """
-        App 版本：\(appVersion)
-        守护进程版本：\(daemonVersionText)（\(daemonStatusText)）
-        登录项注册态：\(registration)
-        连接状态：\(connectionText)
-        面板风格：\(styleController.style.rawValue)
-        """
+        let daemonStatusText = daemonMismatch
+            ? CellarL10n.s("about.mismatch", DaemonXPC.daemonVersion)
+            : CellarL10n.s("about.match")
+        let summary = [
+            CellarL10n.s("about.appVersionLine", appVersion),
+            CellarL10n.s("about.daemonLine", daemonVersionText, daemonStatusText),
+            CellarL10n.s("about.loginItemLine", registration),
+            CellarL10n.s("about.connectionLine", connectionText),
+            CellarL10n.s("about.styleLine", styleController.style.rawValue),
+        ].joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(summary, forType: .string)
         copied = true

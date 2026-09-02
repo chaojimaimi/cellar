@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import Combine
 import Foundation
 import ServiceManagement
@@ -31,6 +32,9 @@ final class LoginItemController: ObservableObject {
     @Published private(set) var launchAtLogin = false
     @Published private(set) var busy = false
     @Published private(set) var feedback: String?
+    /// 反馈成功/失败判别位（S3 配套：反馈文案已本地化，视图不得再按「已」中文
+    /// 前缀判定配色——以本判别位着色）。
+    @Published private(set) var feedbackIsSuccess = false
     /// 登录项注册态（通用 Tab 注册态行；refreshRegistration 后台查询回填）。
     @Published private(set) var registration: LoginItemRegistration = .unknown
 
@@ -91,14 +95,18 @@ final class LoginItemController: ObservableObject {
                     guard let self else { return }
                     self.busy = false
                     self.registration = folded
-                    self.feedback = on ? "已开启开机启动" : "已关闭开机启动"
+                    self.feedback = on
+                        ? CellarL10n.s("panel.login.enabledOn")
+                        : CellarL10n.s("panel.login.enabledOff")
+                    self.feedbackIsSuccess = true
                 }
             } catch {
                 await MainActor.run {
                     guard let self else { return }
                     self.busy = false
                     self.launchAtLogin = !on   // 回滚乐观态
-                    self.feedback = "切换开机启动失败：\(error.localizedDescription)"
+                    self.feedback = CellarL10n.s("panel.login.toggleFailed", error.localizedDescription)
+                    self.feedbackIsSuccess = false
                 }
             }
         }
@@ -121,13 +129,15 @@ final class LoginItemController: ObservableObject {
                     self.busy = false
                     self.launchAtLogin = true
                     self.registration = folded
-                    self.feedback = "已重新注册开机启动"
+                    self.feedback = CellarL10n.s("panel.login.reregistered")
+                    self.feedbackIsSuccess = true
                 }
             } catch {
                 await MainActor.run {
                     guard let self else { return }
                     self.busy = false
-                    self.feedback = "重新注册失败：\(error.localizedDescription)"
+                    self.feedback = CellarL10n.s("panel.login.reregisterFailed", error.localizedDescription)
+                    self.feedbackIsSuccess = false
                 }
             }
         }

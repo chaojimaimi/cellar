@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import Foundation
 import os
 
@@ -68,7 +69,7 @@ final class StyleController: ObservableObject {
                 // 回滚成 amber 会让 Picker 与磁盘背离）。
                 guard let self, self.style == newStyle else { return }
                 self.style = previous
-                self.saveFeedback = "风格保存失败：\(error.localizedDescription)"
+                self.saveFeedback = CellarL10n.s("settings.saveStyleFailed", error.localizedDescription)
             }
         }
     }

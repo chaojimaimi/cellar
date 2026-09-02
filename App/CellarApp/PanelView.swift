@@ -207,23 +207,24 @@ struct PanelView: View {
     private var gaugeAxLabel: String {
         var parts: [String] = []
         if let percent = statusController.batterySnapshot?.percent {
-            parts.append("当前电量 \(percent)%")
+            parts.append(CellarL10n.s("panel.gaugeAx.percent", percent))
         } else {
-            parts.append("电量遥测不可用")
+            parts.append(CellarL10n.s("panel.gaugeAx.unavailable"))
         }
         if let band = gaugeBand {
-            parts.append("充电上限 \(band.upperBound)%")
+            parts.append(CellarL10n.s("panel.gaugeAx.band", CellarL10n.s("vocabulary.native.limitLabel"), band.upperBound))
         }
         if let snapshot = statusController.batterySnapshot {
             if snapshot.isCharging {
-                parts.append("充电中")
+                parts.append(theme.word(.powerFlowCharging))
             } else if snapshot.externalConnected {
-                parts.append("已停充")
+                parts.append(theme.word(.powerFlowFloating))
             } else {
-                parts.append("电池供电")
+                parts.append(theme.word(.powerFlowOnBattery))
             }
         }
-        return parts.joined(separator: "，")
+        // 分隔符按语言本地化（zh 全角逗号 / en 半角逗号+空格）。
+        return parts.joined(separator: CellarL10n.s("common.joinSeparator"))
     }
 
     private var gaugeState: GaugeState {
@@ -254,7 +255,7 @@ struct PanelView: View {
                     .controlSize(.small)
                     .disabled(isModeDisabled || isActionActive)
                 }
-                Text("预设与滑杆改动后自动应用")
+                Text(CellarL10n.s("panel.automaticallyApplied"))
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
             }
@@ -280,7 +281,7 @@ struct PanelView: View {
             .disabled(isModeDisabled || isActionActive)
 
             HStack {
-                Text("滞回幅度")
+                Text(CellarL10n.s("panel.hysteresis"))
                 Spacer()
                 // §7.1：macOS Stepper 按钮点击的 onEditingChanged 触发不可靠，
                 // 用显式步进回调（点击即用户意图），步进后同走防抖排程。
@@ -302,12 +303,12 @@ struct PanelView: View {
                 if isModeDisabled {
                     // setLimits 会强制切回 active（DaemonCore 语义），隐式重新启用
                     // 反直觉——disabled 态禁用并提供提示（P1 定版，§7.1 保留）。
-                    Text("启用限充后可调整")
+                    Text(CellarL10n.s("panel.tuneDisabledHint"))
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
                 }
                 Spacer()
-                Button(isModeDisabled ? "启用限充" : "停用限充") {
+                Button(isModeDisabled ? CellarL10n.s("panel.enableLimit") : CellarL10n.s("panel.disableLimit")) {
                     statusController.toggleCharging(enabled: isModeDisabled)
                 }
                 // 模式未知（首查前/失联）时总开关无意义（不知当前是停用还是启用）；
@@ -315,7 +316,11 @@ struct PanelView: View {
                 .disabled(statusController.daemonStatus == nil || statusController.busy || isActionActive)
             }
 
-            Text("守护进程版本：\(statusController.daemonStatus?.version ?? "未知") · 期望 \(DaemonXPC.daemonVersion)")
+            Text(CellarL10n.s(
+                "panel.versionLine",
+                statusController.daemonStatus?.version ?? CellarL10n.s("common.unknown"),
+                DaemonXPC.daemonVersion
+            ))
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
         }
@@ -364,7 +369,7 @@ struct PanelView: View {
             _ = try LimitPolicy(upperLimit: upper, hysteresis: hysteresis)
         } catch {
             // 预检失败（红色 1 UI 层防线）不上 XPC，原样上屏（不静默）。
-            statusController.reportLocalRejection("参数无效：\(error)")
+            statusController.reportLocalRejection(CellarL10n.s("common.parameterInvalid", String(describing: error)))
             return
         }
         statusController.applyLimits(upperLimit: upper, hysteresis: hysteresis)

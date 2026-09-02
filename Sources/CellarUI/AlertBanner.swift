@@ -13,7 +13,8 @@ import SwiftUI
 /// **文案** `statusFailureMessage: String?`——StatusFailureKind 迁 CellarCore 时
 /// 按硬事实 3 判据剥离 `.message`（文案常量留 App/NotificationService，CellarUI
 /// 不持有 App 域文案）；App 调用面传 `statusFailure?.message`，分支判定与优先级
-/// （①② > ③ > ④）逐字保持，零行为变化。S3 时 ③ 分支文案经 CellarL10n 门面化。
+/// （①② > ③ > ④）逐字保持，零行为变化。S3 后横幅文案与重试/AX 串全部经
+/// CellarL10n（panel.banner.* / panel.ax.* / common.retry，与通知同 catalog）。
 public struct AlertBanner: View {
     let feedback: ControlFeedback?
     let connection: ConnectionState
@@ -50,7 +51,7 @@ public struct AlertBanner: View {
                 if let retryTitle = content.retryTitle {
                     Button(retryTitle, action: onRetry)
                         .controlSize(.small)
-                        .accessibilityLabel("重试：\(content.message)")
+                        .accessibilityLabel(CellarL10n.s("panel.ax.retry", content.message))
                 }
             }
             .padding(8)
@@ -60,18 +61,19 @@ public struct AlertBanner: View {
     }
 
     /// 分支判定（优先级：控制反馈分支 ①② > status 派生失败 ③ > 轮询失联 ④）。
+    /// ⚠️ 文案经 CellarL10n 解析（catalog 随组件库下沉；品牌名/数字排版不进串）。
     private var bannerContent: (message: String, retryTitle: String?)? {
         switch feedback {
         case .transferFailed:
             if let summary = lastAttemptSummary {
-                return ("上次动作未送达（\(summary)）：守护进程未运行或无响应", "重试")
+                return (CellarL10n.s("panel.banner.transferFailed", summary), CellarL10n.s("common.retry"))
             }
             // 理论不可达（runControl 入口必记 lastAttempt）；防 nil 直落分支 ④ 判定。
             return nil
         case .daemonRejected(let message):
             return (message, nil)
         case .staleDaemon:
-            return ("守护进程版本过旧，请卸载后重新安装。先点下方「卸载守护进程」，再点「安装守护进程」", nil)
+            return (CellarL10n.s("panel.banner.staleDaemon"), nil)
         case .success, .none:
             break
         }
@@ -79,7 +81,7 @@ public struct AlertBanner: View {
             return (statusFailureMessage, nil)
         }
         if connection == .unreachable {
-            return ("守护进程失联，无法获取策略状态", "重试")
+            return (CellarL10n.s("panel.banner.unreachable"), CellarL10n.s("common.retry"))
         }
         return nil
     }

@@ -469,6 +469,11 @@ func runDischargeDomainScenarios() throws {
               "放电-23", "active + ext + percent>目标 → 放行")
         let rejection = DischargeStartRejection.noExternalPower
         check(rejection.message.contains("外接电源"), "放电-23", "拒绝原文为中文可读文案（XPC errorReply 上屏）")
+        // S3 顺手修钉死：percent=0 为「电量未知」哨兵 → 上屏区分未知文案（防误导 0%）。
+        let unknownPercentRejection = DischargeStartRejection.notAboveTarget(percent: 0, target: 80)
+        check(unknownPercentRejection.message.contains("当前电量未知")
+                && !unknownPercentRejection.message.contains("当前 0%"),
+              "放电-23", "percent=0 → 「当前电量未知」（修「当前 0%」误导）")
     }
 
     // 放电-24：幂等（轨道在轨 → startIfIdle 拒绝，daemon 回当前状态——fullOnce 先例）。

@@ -16,7 +16,7 @@ struct DaemonSectionView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("守护进程：\(statusText) · 路线：\(routeText)")
+            Text(CellarL10n.s("panel.daemon.title", statusText, routeText))
                 .font(.callout)
                 .fontWeight(.medium)
 
@@ -28,7 +28,7 @@ struct DaemonSectionView: View {
             }
 
             if installer.anomaly {
-                Text("异常：守护进程可达，但本 app 内未找到嵌入配置（可能由另一副本注册）")
+                Text(CellarL10n.s("panel.daemon.anomaly"))
                     .font(.caption)
                     .foregroundStyle(theme.warning)
             }
@@ -40,7 +40,7 @@ struct DaemonSectionView: View {
             }
 
             // 位置提示（spike 局限 1.9）：注册跟随 .app 位置，移动/删除后需重新注册。
-            Text("提示：已注册的守护进程跟随 Cellar.app 位置；移动或删除应用后请重新安装。")
+            Text(CellarL10n.s("panel.daemon.tip"))
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
 
@@ -76,45 +76,46 @@ struct DaemonSectionView: View {
     }
 
     private var buttonTitle: String {
-        if installChecking { return "检查中…" }
+        if installChecking { return CellarL10n.s("common.checking") }
         switch installer.registration {
-        case .enabled: return "卸载守护进程"
-        case .pending: return "等待系统授权…"
-        case .notRegistered: return "安装守护进程"
+        case .enabled: return CellarL10n.s("panel.daemon.uninstall")
+        case .pending: return CellarL10n.s("common.waitingApproval")
+        case .notRegistered: return CellarL10n.s("common.installDaemon")
         }
     }
 
     private var statusText: String {
         // 诚实初始化态（验收事故回归）：refresh 挂起时 loaded 永假，
         // 不再以「未注册」初始值误导（用户实际不知道 daemon 是否在管）。
-        guard installer.loaded else { return "初始化中…" }
+        guard installer.loaded else { return CellarL10n.s("panel.daemon.initializing") }
         switch installer.registration {
-        case .notRegistered: return "未注册"
-        case .pending: return "等待系统授权…"
-        case .enabled: return "已启用"
+        case .notRegistered: return CellarL10n.s("common.notRegistered")
+        case .pending: return CellarL10n.s("common.waitingApproval")
+        case .enabled: return CellarL10n.s("panel.daemon.enabledStatus")
         }
     }
 
     private var routeText: String {
         switch installer.route {
-        case .appManaged: return "App 托管"
-        case .manual: return "手工路线"
-        case .unknown: return "未知"
+        case .appManaged: return CellarL10n.s("panel.daemon.appManaged")
+        case .manual: return CellarL10n.s("panel.daemon.manualRoute")
+        case .unknown: return CellarL10n.s("common.unknown")
         }
     }
 
-    /// 四象限文案（§2.2 表格逐行对应）。
+    /// 四象限文案（§2.2 表格逐行对应；全部经 CellarL10n——含「检测到手工安装
+    /// 残留与托管注册并存…」迁移守卫文案）。
     private var guidanceText: String {
         guard installer.loaded else { return "" }
         switch installer.guidance {
         case .normalInstall:
-            return "守护进程未安装。点击「安装守护进程」注册，首次需在系统设置中批准。"
+            return CellarL10n.s("panel.daemon.guidance.normal")
         case .running:
-            return "守护进程随系统托管运行中。"
+            return CellarL10n.s("panel.daemon.guidance.running")
         case .migrateFromLegacy:
-            return "检测到手工安装的守护进程。请先运行 sudo cellar uninstall，再点击「安装守护进程」。"
+            return CellarL10n.s("panel.daemon.guidance.migrate")
         case .cleanMixedState:
-            return "检测到手工安装残留与托管注册并存。请先在本面板卸载，再运行 sudo cellar uninstall 清理残留，最后重新安装。"
+            return CellarL10n.s("panel.daemon.guidance.cleanMixed")
         }
     }
 }

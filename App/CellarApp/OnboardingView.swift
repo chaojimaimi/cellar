@@ -28,7 +28,7 @@ struct OnboardingView: View {
             progressHeader
             stepContent
             Spacer(minLength: 4)
-            Button("退出 Cellar") { NSApplication.shared.terminate(nil) }
+            Button(theme.word(.quit)) { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
@@ -50,7 +50,7 @@ struct OnboardingView: View {
                     .frame(width: 8, height: 8)
             }
             Spacer()
-            Text("第 \(min(currentStepIndex + 1, Self.visibleSteps.count)) 步 / 共 \(Self.visibleSteps.count) 步")
+            Text(CellarL10n.s("onboarding.stepIndicator", min(currentStepIndex + 1, Self.visibleSteps.count), Self.visibleSteps.count))
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
         }
@@ -74,12 +74,12 @@ struct OnboardingView: View {
             Image(systemName: "wineglass.fill")
                 .font(.system(size: 40))
                 .accessibilityHidden(true)
-            Text("欢迎使用 Cellar").font(.title2).fontWeight(.semibold)
-            Text("Cellar 将安装一个 root 守护进程并接管限充：电量达到上限时停止充电，降至上限减滞回（恢复阈值）后恢复。上限最低 60%（60 地板）。")
+            Text(CellarL10n.s("onboarding.welcomeTitle")).font(.title2).fontWeight(.semibold)
+            Text(CellarL10n.s("onboarding.welcomeBody"))
                 .font(.callout)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("开始") {
+            Button(CellarL10n.s("onboarding.startButton")) {
                 onboarding.advance(gate: .clear, registration: installer.registration)
             }
             .buttonStyle(.borderedProminent)
@@ -93,7 +93,7 @@ struct OnboardingView: View {
             // gate == nil（首帧，扫描尚未启动）与扫描中同态：进度指示，防
             // 「未发现冲突」形态闪现。
             if onboarding.gate == nil || onboarding.scanning {
-                ProgressView("正在检查环境…")
+                ProgressView(CellarL10n.s("onboarding.checkingEnvironment"))
                     .padding(.vertical, 24)
             } else {
                 switch onboarding.gate ?? .clear {
@@ -117,11 +117,11 @@ struct OnboardingView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(theme.success)
                 .accessibilityHidden(true)
-            Text("未发现冲突工具").font(.headline)
-            Text("未检测到其他充电管理工具，可以安全安装 Cellar。")
+            Text(CellarL10n.s("onboarding.clearTitle")).font(.headline)
+            Text(CellarL10n.s("onboarding.clearBody"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
-            Button("继续") {
+            Button(CellarL10n.s("onboarding.continueButton")) {
                 onboarding.advance(gate: .clear, registration: installer.registration)
             }
             .buttonStyle(.borderedProminent)
@@ -134,15 +134,15 @@ struct OnboardingView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(theme.warning)
                 .accessibilityHidden(true)
-            Text("检测到疑似同类工具").font(.headline)
-            Text("以下名称疑似电池/充电管理工具，可能为误报（如办公软件名称含 power 词根）。如确有其他工具在管理充电，请先退出后再继续。")
+            Text(CellarL10n.s("onboarding.genericTitle")).font(.headline)
+            Text(CellarL10n.s("onboarding.genericBody"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             hitList(generic: true)
             HStack(spacing: 8) {
-                Button("重新检查") { onboarding.rescan() }
-                Button("仍要继续") {
+                Button(CellarL10n.s("common.recheck")) { onboarding.rescan() }
+                Button(CellarL10n.s("onboarding.proceedButton")) {
                     onboarding.confirmAndAdvance(registration: installer.registration)
                 }
                 .buttonStyle(.borderedProminent)
@@ -157,13 +157,13 @@ struct OnboardingView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(theme.alert)
                 .accessibilityHidden(true)
-            Text("检测到同类充电管理工具").font(.headline)
-            Text("两个管理器同时写充电控制键会互相打架，Cellar 拒绝安装。请先退出并卸载以下工具，然后重新检查。")
+            Text(CellarL10n.s("onboarding.blockedTitle")).font(.headline)
+            Text(CellarL10n.s("onboarding.blockedBody"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             hitList(generic: false)
-            Button("重新检查") { onboarding.rescan() }
+            Button(CellarL10n.s("common.recheck")) { onboarding.rescan() }
                 .buttonStyle(.borderedProminent)
         }
     }
@@ -196,15 +196,15 @@ struct OnboardingView: View {
             Image(systemName: "gearshape.2.fill")
                 .font(.system(size: 36))
                 .accessibilityHidden(true)
-            Text("安装守护进程").font(.headline)
-            Text("Cellar 的限充由一个 root 守护进程执行。安装后请在系统设置中批准授权，批准后 Cellar 开始工作。")
+            Text(CellarL10n.s("common.installDaemon")).font(.headline)
+            Text(CellarL10n.s("onboarding.installBody"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             if installer.guidance == .migrateFromLegacy {
                 // 迁移守卫（P1-2）：legacy 手工安装存在时不提供安装——防绕过迁移
                 // 直装制造手工+托管混合态。
-                Text("检测到手工安装的守护进程。请先运行 sudo cellar uninstall 清理，再回来继续安装。")
+                Text(CellarL10n.s("onboarding.migrateNotice"))
                     .font(.caption)
                     .foregroundStyle(theme.warning)
                     .fixedSize(horizontal: false, vertical: true)
@@ -214,7 +214,7 @@ struct OnboardingView: View {
                     .disabled(installer.busy || installChecking || installer.registration == .pending)
             }
             if installer.registration == .enabled {
-                Text("守护进程已启用，即将进入上限设置。")
+                Text(CellarL10n.s("onboarding.enabledNotice"))
                     .font(.caption)
                     .foregroundStyle(theme.success)
             }
@@ -227,11 +227,11 @@ struct OnboardingView: View {
     }
 
     private var installButtonTitle: String {
-        if installChecking { return "检查中…" }
+        if installChecking { return CellarL10n.s("common.checking") }
         switch installer.registration {
-        case .enabled: return "已启用，继续"
-        case .pending: return "等待系统授权…"
-        case .notRegistered: return "安装守护进程"
+        case .enabled: return CellarL10n.s("onboarding.continueEnabled")
+        case .pending: return CellarL10n.s("common.waitingApproval")
+        case .notRegistered: return CellarL10n.s("common.installDaemon")
         }
     }
 
@@ -262,8 +262,8 @@ struct OnboardingView: View {
 
     private var limitStep: some View {
         VStack(spacing: 10) {
-            Text("设定充电上限").font(.headline)
-            Text("达到上限停止充电，降至（上限 − 滞回）后恢复。最低 60%（60 地板）。")
+            Text(CellarL10n.s("onboarding.limitTitle")).font(.headline)
+            Text(CellarL10n.s("onboarding.limitBody"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
             HStack(spacing: 8) {
@@ -275,10 +275,10 @@ struct OnboardingView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-                Text("改动后自动应用").font(.caption2).foregroundStyle(theme.tertiaryText)
+                Text(CellarL10n.s("onboarding.autoApplyHint")).font(.caption2).foregroundStyle(theme.tertiaryText)
             }
             HStack {
-                Text("充电上限").font(.callout)
+                Text(CellarL10n.s("vocabulary.native.limitLabel")).font(.callout)
                 Spacer()
                 Text("\(Int(upperLimit))%").monospacedDigit()
             }
@@ -291,7 +291,7 @@ struct OnboardingView: View {
                 }
             )
             HStack {
-                Text("滞回幅度").font(.callout)
+                Text(CellarL10n.s("panel.hysteresis")).font(.callout)
                 Spacer()
                 Stepper("\(hysteresis)") {
                     if hysteresis < 20 {
@@ -314,7 +314,7 @@ struct OnboardingView: View {
                     ? { statusController.refreshNow() }
                     : { statusController.retryLastAttempt() }
             )
-            Button("完成") { finishOnboarding() }
+            Button(CellarL10n.s("onboarding.doneButton")) { finishOnboarding() }
                 .buttonStyle(.borderedProminent)
         }
     }
@@ -342,7 +342,7 @@ struct OnboardingView: View {
         do {
             _ = try LimitPolicy(upperLimit: upper, hysteresis: hysteresis)
         } catch {
-            statusController.reportLocalRejection("参数无效：\(error)")
+            statusController.reportLocalRejection(CellarL10n.s("common.parameterInvalid", String(describing: error)))
             return
         }
         statusController.applyLimits(upperLimit: upper, hysteresis: hysteresis)

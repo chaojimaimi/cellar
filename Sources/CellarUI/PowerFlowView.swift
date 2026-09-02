@@ -121,9 +121,9 @@ public struct PowerFlowView: View {
 
     private func axLabel(for flow: PowerFlow) -> String {
         switch flow {
-        case .charging: return "功率流向：充电中"
-        case .floating: return "功率流向：外接已停充"
-        case .onBattery: return "功率流向：电池供电"
+        case .charging: return CellarL10n.s("powerflow.axCharging")
+        case .floating: return CellarL10n.s("powerflow.axFloating")
+        case .onBattery: return CellarL10n.s("powerflow.axOnBattery")
         }
     }
 }

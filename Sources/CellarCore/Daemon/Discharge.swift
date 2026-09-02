@@ -119,6 +119,11 @@ public enum DischargeStartRejection: Error, Equatable, Sendable, CustomStringCon
         case .modeNotActive: return "「放电到上限」需要限充处于启用状态（当前已停用）"
         case .noExternalPower: return "「放电到上限」需要连接外接电源"
         case .notAboveTarget(let percent, let target):
+            // percent == 0 是 startPrecondition 的「未知电量」哨兵（real 0% 在
+            // 60% 地板下不可能出现）——上屏区分「当前电量未知」，防误导性 0%。
+            if percent == 0 {
+                return "「放电到上限」需要当前电量高于目标上限（当前电量未知，目标 \(target)%）"
+            }
             return "「放电到上限」需要当前电量高于目标上限（当前 \(percent)%，目标 \(target)%）"
         case .persistenceFailed: return "「放电到上限」启动失败：无法写入动作文件"
         case .capabilityUnavailable: return "当前机型不支持放电功能"

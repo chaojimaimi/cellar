@@ -39,10 +39,10 @@ struct MenuBarIconLabel: View {
             Image(systemName: resolvedSymbol(for: controller.iconState))
                 .renderingMode(.original)
                 .foregroundStyle(theme.alert)
-                .accessibilityLabel("Cellar 电池状态")
+                .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
         } else {
             Image(systemName: resolvedSymbol(for: controller.iconState))
-                .accessibilityLabel("Cellar 电池状态")
+                .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
         }
     }
 }

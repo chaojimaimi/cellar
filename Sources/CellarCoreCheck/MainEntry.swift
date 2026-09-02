@@ -1877,6 +1877,19 @@ struct Main {
                   "用例92", "外接 + 停充 → nil（方向词隐藏，修「停充显放电 0.00 A」）")
         }
 
+        // 用例 108：CurrentDirection 枚举判定（WP4 §4.3 下沉——判定逻辑唯一真相，
+        // 与用例 92 的薄包装中文 token 钉死互为镜像；StatusLineView 消费本枚举）。
+        do {
+            check(currentDirection(isCharging: true, externalConnected: true) == .charging,
+                  "用例108", "充电中（外接）→ .charging")
+            check(currentDirection(isCharging: true, externalConnected: false) == .charging,
+                  "用例108", "边界：isCharging 优先 → .charging")
+            check(currentDirection(isCharging: false, externalConnected: false) == .discharging,
+                  "用例108", "电池供电（未外接）→ .discharging")
+            check(currentDirection(isCharging: false, externalConnected: true) == nil,
+                  "用例108", "外接 + 停充 → nil（方向词隐藏）")
+        }
+
         // MARK: - 场景（Phase 2 WP5 首启引导 + 冲突门 + 通知中心，用例 93+）
 
         // 用例 93：引导转移矩阵（§2.1 定版）——显式规则逐条钉死 + 全组合穷举
