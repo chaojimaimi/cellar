@@ -19,6 +19,9 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     public var lastPercent: Int?
     public var lastExternalConnected: Bool?
     public var lastChargingEnabled: Bool?
+    /// 活跃的一次性动作（WP2「充满一次」；nil = 无动作）。可选字段 + 合成 Codable 的
+    /// decodeIfPresent——旧 daemon 回包/旧客户端解码天然兼容（缺席 → nil）。
+    public var action: OneShotAction?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -31,6 +34,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         lastPercent: Int? = nil,
         lastExternalConnected: Bool? = nil,
         lastChargingEnabled: Bool? = nil,
+        action: OneShotAction? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -41,6 +45,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.lastPercent = lastPercent
         self.lastExternalConnected = lastExternalConnected
         self.lastChargingEnabled = lastChargingEnabled
+        self.action = action
         self.timestamp = timestamp
     }
 }
@@ -62,9 +67,9 @@ public enum DaemonClientError: Error, Equatable, Sendable {
 public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
     // install 后与 getStatus 的 version 核对（评审 F-3）；与 App/CLI 版本串一致
-    // （0.2.0-alpha）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更），
-    // 防 stale daemon 诊断混淆。
-    public static let daemonVersion = "0.2.0-alpha"
+    // （0.3.0-alpha-dev）——daemon 行为有变更必须 bump（§0 授权放宽即行为变更、
+    // WP2 扩 XPC 协议 fullOnce/cancelAction），防 stale daemon 诊断混淆。
+    public static let daemonVersion = "0.3.0-alpha-dev"
 
     // MARK: - 线格式键与常量
 
@@ -178,6 +183,17 @@ public struct DaemonXPCClient: Sendable {
 
     public func enable() throws -> DaemonStatus {
         try exchange(cmd: "enable")
+    }
+
+    /// 一次性动作：充满一次（WP2）。前置（外接 && mode=active）不满足 → daemonError
+    /// 原文；动作已在轨 → 幂等回当前状态。
+    public func fullOnce() throws -> DaemonStatus {
+        try exchange(cmd: "fullOnce")
+    }
+
+    /// 取消当前一次性动作（无动作时幂等成功，回当前状态）。
+    public func cancelAction() throws -> DaemonStatus {
+        try exchange(cmd: "cancelAction")
     }
 
     // MARK: - 内部

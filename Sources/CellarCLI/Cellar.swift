@@ -9,7 +9,7 @@ struct Cellar: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cellar",
         abstract: "macOS 电池管理工具（限充管理 + 诊断；App 菜单栏面板见项目主页）",
-        version: "0.2.0-alpha",
+        version: "0.3.0-alpha-dev",
         subcommands: [
             StatusCommand.self,
             DoctorCommand.self,

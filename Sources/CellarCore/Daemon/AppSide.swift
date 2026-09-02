@@ -3,12 +3,11 @@ import os
 
 // MARK: - 刷新调度（纯函数，规格 §2.2）
 
-/// 轮询间隔（秒）。nil = 不轮询（P2 改型采纳：0 哨兵废弃）。
-/// 面板可见 1s（控制操作即时反馈）、面板关闭 60s（菜单栏图标仍要新鲜度）、
-/// 未注册 nil（registration 门控：未注册不呈现任何运行态）。
-public func refreshInterval(panelVisible: Bool, daemonRegistered: Bool) -> TimeInterval? {
-    if !daemonRegistered { return nil }
-    return panelVisible ? 1 : 60
+/// 状态轮询间隔（秒）。面板可见 **1s**、面板关闭 **60s**（保持图标新鲜度与失联
+/// 检测）。**双路线解耦定版（WP2）**：轮询与注册态无关——手工路线（CLI 安装）的
+/// daemon 同样经 XPC 服务于面板与图标；XPC 无应答时快速失败，开销可忽略。
+public func refreshInterval(panelVisible: Bool) -> TimeInterval {
+    panelVisible ? 1 : 60
 }
 
 // MARK: - 连接态与图标映射（规格 §2.1/§2.5）

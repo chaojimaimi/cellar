@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -1291,7 +1291,7 @@ struct Main {
                 snapshot: base, snapshotError: nil,
                 conflict: ConflictScanResult(exact: [], generic: []),
                 daemonStatus: DaemonStatus(
-                    version: "0.2.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
+                    version: "0.3.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
                     lastAction: "enforce:disableCharging", lastPercent: 80,
                     lastExternalConnected: true, lastChargingEnabled: false,
                     timestamp: Date(timeIntervalSince1970: 1234)
@@ -1331,7 +1331,7 @@ struct Main {
         // 用例 70：DaemonStatus JSON round-trip（含 version 与全部可选字段；全 nil 形态同测）。
         do {
             let full = DaemonStatus(
-                version: "0.2.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
+                version: "0.3.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
                 lastAction: "enforce:disableCharging", lastPercent: 80,
                 lastExternalConnected: true, lastChargingEnabled: false,
                 timestamp: Date(timeIntervalSince1970: 1234)
@@ -1340,7 +1340,7 @@ struct Main {
             let decoded = json.flatMap { try? DaemonXPC.decodeStatus($0) }
             check(decoded == full, "用例70", "编码→解码 == 原值（含 version 与可选字段）")
 
-            let bare = DaemonStatus(version: "0.2.0-alpha", mode: "disabled", upperLimit: 60, hysteresis: 20)
+            let bare = DaemonStatus(version: "0.3.0-alpha-dev", mode: "disabled", upperLimit: 60, hysteresis: 20)
             let bareRound = DaemonXPC.encodeStatus(bare).flatMap { try? DaemonXPC.decodeStatus($0) }
             check(bareRound == bare, "用例70", "可选字段全 nil 形态 round-trip")
         }
@@ -1620,17 +1620,13 @@ struct Main {
         // 图标映射全序、偏好持久化（注入 URL）。StatusController 本体在 App target
         // （依赖 ObservableObject/SMAppService，本工具不 import App——与用例 77 同模式）。
 
-        // 用例 84：refreshInterval 刷新矩阵（规格 §2.2）——面板可见 1s / 关闭 60s /
-        // 未注册 nil（4 组合全覆盖）。
+        // 用例 84：refreshInterval 刷新矩阵（双路线解耦定版）——面板可见 1s /
+        // 关闭 60s；轮询与注册态无关（手工路线 daemon 同样服务于面板与图标）。
         do {
-            check(refreshInterval(panelVisible: true, daemonRegistered: true) == 1,
-                  "用例84", "可见 + 已注册 → 1s")
-            check(refreshInterval(panelVisible: false, daemonRegistered: true) == 60,
-                  "用例84", "关闭 + 已注册 → 60s")
-            check(refreshInterval(panelVisible: true, daemonRegistered: false) == nil,
-                  "用例84", "可见 + 未注册 → nil（不轮询）")
-            check(refreshInterval(panelVisible: false, daemonRegistered: false) == nil,
-                  "用例84", "关闭 + 未注册 → nil")
+            check(refreshInterval(panelVisible: true) == 1,
+                  "用例84", "可见 → 1s")
+            check(refreshInterval(panelVisible: false) == 60,
+                  "用例84", "关闭 → 60s")
         }
 
         // 用例 85：菜单栏图标映射全序矩阵（规格 §2.5 五条）+ nil 字段矩阵逐行钉死。
@@ -1828,7 +1824,7 @@ struct Main {
                   "用例91", "面板可见 → 1s")
             check(telemetrySampleInterval(panelVisible: false) == nil,
                   "用例91", "面板关闭 → nil（停止采样）")
-            check(refreshInterval(panelVisible: false, daemonRegistered: true) == 60,
+            check(refreshInterval(panelVisible: false) == 60,
                   "用例91", "对照：status 图标档关闭后仍 60s（遥测档不复用同一循环，互不干扰）")
         }
 
@@ -1915,7 +1911,7 @@ struct Main {
         do {
             func status(_ lastAction: String?, upper: Int = 90) -> DaemonStatus {
                 DaemonStatus(
-                    version: "0.2.0-alpha", mode: "active", upperLimit: upper,
+                    version: "0.3.0-alpha-dev", mode: "active", upperLimit: upper,
                     hysteresis: 2, lastAction: lastAction, lastPercent: 90,
                     lastExternalConnected: true, lastChargingEnabled: false
                 )
@@ -1985,6 +1981,258 @@ struct Main {
             // 默认值。
             check(AppConfig.default.onboardingCompleted == false && AppConfig.default.launchAtLogin == false,
                   "用例95", "AppConfig.default：completed 默认 false")
+        }
+
+        // MARK: - 场景（Phase 3 WP2 一次性动作「充满一次」，用例 96–104）
+        // 纯函数/纯值验证：OneShot 判据、轨道六路径门控（规格 §1.1 表格的语义决策）、
+        // 字面量与通知分类（P1-3/P1-4）、DaemonStatus 兼容（合成 Codable decodeIfPresent）、
+        // ActionStore（临时目录）。daemon 目标不可 import——六路径的 IO 副作用（写 CHTE/
+        // 删文件）在 daemon 调用点依轨道返回值执行（对照规格 §1.1 行）；轨道转移全部钉死。
+
+        // 用例 96：OneShotAction Codable round-trip + kind 承载。
+        do {
+            let action = OneShotAction(
+                kind: "fullOnce", startedAt: timeZero,
+                deadline: timeZero.addingTimeInterval(4 * 3600)
+            )
+            let data = try JSONEncoder().encode(action)
+            let decoded = try JSONDecoder().decode(OneShotAction.self, from: data)
+            check(decoded == action, "用例96", "OneShotAction round-trip（kind/startedAt/deadline 全字段）")
+            let defaulted = OneShotAction(startedAt: timeZero, deadline: timeZero)
+            check(defaulted.kind == "fullOnce", "用例96", "kind 默认值 == fullOnce（契约字面量）")
+        } catch {
+            check(false, "用例96", "OneShotAction 编解码抛错：\(error)")
+        }
+
+        // 用例 97：fullOnce 启动前置矩阵（规格 §1.1/§1.3）——start 前置拒绝 ×3 + 放行。
+        do {
+            expectEqual(fullOnceStartPrecondition(mode: "disabled", externalConnected: true), .modeNotActive,
+                        "用例97", "mode=disabled → 拒绝（modeNotActive）")
+            expectEqual(fullOnceStartPrecondition(mode: "active", externalConnected: false), .noExternalPower,
+                        "用例97", "未外接 → 拒绝（noExternalPower）")
+            expectEqual(fullOnceStartPrecondition(mode: "active", externalConnected: nil), .noExternalPower,
+                        "用例97", "外接未知（快照失败且无上次已知值）→ 拒绝（noExternalPower）")
+            check(fullOnceStartPrecondition(mode: "active", externalConnected: true) == nil,
+                  "用例97", "active + 已外接 → 放行")
+            let rejection = OneShotStartRejection.noExternalPower
+            check(rejection.message.contains("外接电源"), "用例97", "拒绝原文为中文可读文案（XPC errorReply 上屏）")
+        }
+
+        // 用例 98：完成判定矩阵（规格 §1.3）——主判据 / 降级 / false 恒不成立。
+        do {
+            check(OneShot.isFullOnceComplete(fullyCharged: true, isCharging: false, percent: 80),
+                  "用例98", "主判据：fullyCharged=true + !isCharging → 完成（percent 不参与）")
+            check(!OneShot.isFullOnceComplete(fullyCharged: true, isCharging: true, percent: 100),
+                  "用例98", "主判据：isCharging=true → 未完成")
+            check(OneShot.isFullOnceComplete(fullyCharged: nil, isCharging: false, percent: 99),
+                  "用例98", "降级：fullyCharged=nil + percent=99 + !isCharging → 完成")
+            check(OneShot.isFullOnceComplete(fullyCharged: nil, isCharging: false, percent: 100),
+                  "用例98", "降级：percent=100 → 完成（边界含 99）")
+            check(!OneShot.isFullOnceComplete(fullyCharged: nil, isCharging: false, percent: 98),
+                  "用例98", "降级：percent=98（<99）→ 未完成")
+            check(!OneShot.isFullOnceComplete(fullyCharged: nil, isCharging: true, percent: 100),
+                  "用例98", "降级：充电中 + percent=100 → 未完成")
+            check(!OneShot.isFullOnceComplete(fullyCharged: false, isCharging: false, percent: 100),
+                  "用例98", "fullyCharged=false（键在位且为 No）→ 恒未完成（主判据/降级都不适用）")
+        }
+
+        // 用例 99：去抖推进（连续 2 tick 同条件；中断归零——计数由调用方持有传入）。
+        do {
+            var step = OneShot.debounceTick(conditionSatisfied: true, counter: 0)
+            check(!step.satisfied && step.counter == 1, "用例99", "第 1 个满足 tick → 未达标、计数 1")
+            step = OneShot.debounceTick(conditionSatisfied: true, counter: step.counter)
+            check(step.satisfied && step.counter == 2, "用例99", "第 2 个连续满足 tick → 达标")
+            step = OneShot.debounceTick(conditionSatisfied: false, counter: 1)
+            check(!step.satisfied && step.counter == 0, "用例99", "中断（条件不满足）→ 计数归零")
+            step = OneShot.debounceTick(conditionSatisfied: false, counter: 0)
+            check(step.counter == 0, "用例99", "起始不满足 → 计数保持 0")
+        }
+
+        // 用例 100：轨道维护 tick 决策（规格 §1.1 performTickLocked 行）——两 tick 去抖、
+        // 超时、完成优先于超时（长睡唤醒场景报 done 而非 timeout）、中断归零。
+        do {
+            let t0 = Date(timeIntervalSince1970: 0)
+            var track = OneShotTrack()
+            check(track.startIfIdle(now: t0), "用例100", "空轨 startIfIdle → 启动成功")
+            let first = track.tick(now: t0.addingTimeInterval(30), fullyCharged: true, isCharging: false, percent: 100)
+            check(first == .keepAlive && track.latchedLiteral == nil && track.debounceTicks == 1,
+                  "用例100", "第 1 个完成 tick → keepAlive + 去抖计数 1（未锁存）")
+            let second = track.tick(now: t0.addingTimeInterval(60), fullyCharged: true, isCharging: false, percent: 100)
+            check(second == .completed && track.action == nil && track.latchedLiteral == OneShotLiteral.done(),
+                  "用例100", "第 2 个连续完成 tick → completed + done 锁存 + 动作清空")
+            let third = track.tick(now: t0.addingTimeInterval(90), fullyCharged: true, isCharging: false, percent: 100)
+            check(third == .idle && track.latchedLiteral == OneShotLiteral.done(),
+                  "用例100", "终态后 tick（空轨）→ idle、done 锁存保持（P0-2 常规 tick 不覆盖）")
+            check(track.effectiveLastAction("enforce:noop") == OneShotLiteral.done(),
+                  "用例100", "锁存生效：构造值 enforce:noop 被 done 覆盖")
+
+            var timed = OneShotTrack()
+            _ = timed.startIfIdle(now: t0)
+            let out = timed.tick(now: t0.addingTimeInterval(4 * 3600 + 60), fullyCharged: false, isCharging: true, percent: 50)
+            check(out == .timedOut && timed.latchedLiteral == OneShotLiteral.timeout() && timed.action == nil,
+                  "用例100", "未完成 + now >= deadline → timedOut + timeout 锁存")
+
+            var priority = OneShotTrack()
+            _ = priority.startIfIdle(now: t0)
+            let late = priority.tick(now: t0.addingTimeInterval(4 * 3600 + 60), fullyCharged: true, isCharging: false, percent: 100)
+            check(late == .keepAlive && priority.debounceTicks == 1 && priority.action != nil,
+                  "用例100", "同 tick 完成成立 + 已过 deadline → 完成优先（不超时、去抖推进）")
+
+            var inter = OneShotTrack()
+            _ = inter.startIfIdle(now: t0)
+            _ = inter.tick(now: t0.addingTimeInterval(30), fullyCharged: true, isCharging: false, percent: 100)
+            _ = inter.tick(now: t0.addingTimeInterval(60), fullyCharged: false, isCharging: true, percent: 99)
+            let re = inter.tick(now: t0.addingTimeInterval(90), fullyCharged: true, isCharging: false, percent: 100)
+            check(re == .keepAlive && inter.debounceTicks == 1,
+                  "用例100", "去抖中断归零：完成→中断→完成 → 重新从 1 累计")
+
+            var degraded = OneShotTrack()
+            _ = degraded.startIfIdle(now: t0)
+            _ = degraded.tick(now: t0.addingTimeInterval(30), fullyCharged: nil, isCharging: false, percent: 99)
+            let deg = degraded.tick(now: t0.addingTimeInterval(60), fullyCharged: nil, isCharging: false, percent: 99)
+            check(deg == .completed && degraded.latchedLiteral == OneShotLiteral.done(),
+                  "用例100", "降级判据经两 tick 去抖 → completed（done 锁存）")
+
+            let started = OneShot.onshotStart(now: t0)
+            check(started.kind == OneShot.fullOnceKind && started.deadline == t0.addingTimeInterval(OneShot.fullOnceTimeout),
+                  "用例100", "onshotStart：deadline = now + 4h（绝对 Date，SIGHUP 不重算）")
+        }
+
+        // 用例 101：六路径门控轨道语义（规格 §1.1 表格）——幂等三分支、用户动作清锁存、
+        // SIGHUP 两分支（deadline 不重算）、崩溃恢复两态。
+        do {
+            let t0 = Date(timeIntervalSince1970: 0)
+            var track = OneShotTrack()
+            check(track.startIfIdle(now: t0), "用例101", "空轨启动成功")
+            check(!track.startIfIdle(now: t0.addingTimeInterval(10)), "用例101", "已活跃时再次启动 → 拒绝（幂等一：回当前状态）")
+            let cancelLiteral = track.cancel()
+            check(cancelLiteral == OneShotLiteral.cancel() && track.action == nil && track.latchedLiteral == nil,
+                  "用例101", "用户取消 → cancel 字面量（不锁存）+ 动作清空 + 清锁存")
+            check(track.cancel() == nil, "用例101", "无动作取消 → nil（幂等二：XPC 幂等成功）")
+
+            var latch = OneShotTrack()
+            _ = latch.startIfIdle(now: t0)
+            _ = latch.tick(now: t0.addingTimeInterval(30), fullyCharged: true, isCharging: false, percent: 100)
+            _ = latch.tick(now: t0.addingTimeInterval(60), fullyCharged: true, isCharging: false, percent: 100)
+            check(latch.latchedLiteral == OneShotLiteral.done(), "用例101", "完成 → done 锁存就位")
+            _ = latch.startIfIdle(now: t0.addingTimeInterval(120))
+            check(latch.latchedLiteral == nil && latch.isActive, "用例101", "新动作启动（用户动作）→ 清除终态锁存")
+
+            var reload = OneShotTrack()
+            _ = reload.startIfIdle(now: t0)
+            let deadlineBefore = reload.action?.deadline
+            check(reload.reload(cancelled: false) == nil && reload.isActive && reload.action?.deadline == deadlineBefore,
+                  "用例101", "SIGHUP 重载（未 disabled）→ 动作存活、deadline 不重算")
+            check(reload.reload(cancelled: true) == OneShotLiteral.cancel() && !reload.isActive,
+                  "用例101", "SIGHUP 重载（disabled）→ 取消动作（cancel 字面量）")
+
+            var crash = OneShotTrack()
+            _ = crash.startIfIdle(now: t0)
+            let crashLiteral = crash.cancelForCrashRecovery()
+            check(crashLiteral == OneShotLiteral.cancelCrashRecovery()
+                    && crash.action == nil && crash.latchedLiteral == OneShotLiteral.cancelCrashRecovery(),
+                  "用例101", "崩溃恢复 → 一律取消 + crash-recovery 字面量锁存（P0-2 首 tick 不覆盖）")
+            var emptyTrack = OneShotTrack()
+            check(emptyTrack.cancelForCrashRecovery() == nil, "用例101", "崩溃恢复（无动作文件语义）→ nil（无动作启动）")
+            check(track.effectiveLastAction("enforce:noop") == "enforce:noop",
+                  "用例101", "无锁存时生效值 = 构造值（常规 tick 原样）")
+        }
+
+        // 用例 102：fullOnce 字面量与通知分类（P1-3/P1-4）——start 首样本无事件、
+        // 终态三映射、cancel 无事件、P1-4 抑制（终态后恢复停充不误报 limitReached）、
+        // 锁存期重复样本无重复、既有字面量回归。
+        do {
+            func status(_ lastAction: String?, upper: Int = 90) -> DaemonStatus {
+                DaemonStatus(
+                    version: "fixture", mode: "active", upperLimit: upper,
+                    hysteresis: 2, lastAction: lastAction, lastPercent: 90,
+                    lastExternalConnected: true, lastChargingEnabled: false
+                )
+            }
+            check(notificationEvents(previous: nil, current: status("fullOnce:start")) == [],
+                  "用例102", "首样本 fullOnce:start → 无事件（previous==nil 既有语义）")
+            check(notificationEvents(previous: status("fullOnce:start"), current: status("fullOnce:done")) == [.actionCompleted(kind: "fullOnce")],
+                  "用例102", "start→done 转移 → actionCompleted(kind: fullOnce)")
+            check(notificationEvents(previous: status("fullOnce:start"), current: status("fullOnce:timeout")) == [.actionTimeout(kind: "fullOnce")],
+                  "用例102", "start→timeout 转移 → actionTimeout")
+            check(notificationEvents(previous: status("fullOnce:start"), current: status("fullOnce:cancel(crash-recovery)")) == [.actionInterrupted(kind: "fullOnce")],
+                  "用例102", "start→cancel(crash-recovery) 转移 → actionInterrupted")
+            check(notificationEvents(previous: status("fullOnce:start"), current: status("fullOnce:cancel")) == [],
+                  "用例102", "start→cancel 转移 → 无事件（用户/隐式取消不打扰）")
+            check(notificationEvents(previous: status("fullOnce:done"), current: status("fullOnce:done")) == [],
+                  "用例102", "锁存期重复样本（done→done）→ 无重复事件")
+            check(notificationEvents(previous: status("fullOnce:timeout"), current: status("fullOnce:timeout")) == [],
+                  "用例102", "锁存期重复样本（timeout→timeout）→ 无重复事件")
+            check(notificationEvents(previous: status("fullOnce:done"), current: status("enforce:disableCharging")) == [],
+                  "用例102", "P1-4：done 终态后恢复停充 → 不产 limitReached")
+            check(notificationEvents(previous: status("fullOnce:cancel(crash-recovery)"), current: status("enforce:disableCharging")) == [],
+                  "用例102", "P1-4：crash-recovery 终态后恢复停充 → 不产 limitReached")
+            check(notificationEvents(previous: status("enforce:noop"), current: status("enforce:disableCharging")) == [.limitReached(upperLimit: 90)],
+                  "用例102", "回归：普通 enforce 转移 → limitReached 照旧（P1-4 仅抑制 fullOnce 前缀）")
+            check(notificationEvents(previous: status("fullOnce:done"), current: status("enforce:error")) == [.writeFailed],
+                  "用例102", "回归：终态后写失败 → writeFailed 照旧（失败类不受 P1-4 抑制）")
+            check(notificationEvents(previous: status("fullOnce:done"), current: status("disable")) == [],
+                  "用例102", "回归：终态后用户 disable → 无事件（用户动作语义不变）")
+        }
+
+        // 用例 103：DaemonStatus.action 兼容（合成 Codable decodeIfPresent）——
+        // 旧 JSON 无 action 键 → 解码 nil + 既有字段照常；新 JSON 往返含 action。
+        do {
+            let legacyJSON = #"{"version":"legacy-version","mode":"active","upperLimit":80,"hysteresis":2,"lastAction":"enforce:disableCharging","lastPercent":80,"lastExternalConnected":true,"lastChargingEnabled":false,"timestamp":123.0}"#
+            let legacy = try? JSONDecoder().decode(DaemonStatus.self, from: Data(legacyJSON.utf8))
+            check(legacy?.action == nil && legacy?.mode == "active" && legacy?.upperLimit == 80 && legacy?.lastAction == "enforce:disableCharging",
+                  "用例103", "旧 JSON（无 action 键）解码 → action=nil 且既有字段照常（升级窗口兼容）")
+
+            let newStatus = DaemonStatus(
+                version: "0.3.0-alpha-dev", mode: "active", upperLimit: 80, hysteresis: 2,
+                lastAction: "fullOnce:start", lastPercent: 96,
+                lastExternalConnected: true, lastChargingEnabled: true,
+                action: OneShotAction(
+                    kind: "fullOnce",
+                    startedAt: Date(timeIntervalSince1970: 100),
+                    deadline: Date(timeIntervalSince1970: 100 + 4 * 3600)
+                ),
+                timestamp: Date(timeIntervalSince1970: 120)
+            )
+            let round = DaemonXPC.encodeStatus(newStatus).flatMap { try? DaemonXPC.decodeStatus($0) }
+            check(round == newStatus, "用例103", "新 JSON 往返（action 非 nil 全字段保留）")
+        }
+
+        // 用例 104：ActionStore 原子写/读/删（临时目录；独立于 policy.json 格式红线）。
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cellar-actionstore-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = ActionStore(url: directory.appendingPathComponent("action.json"))
+
+            check(store.load() == nil && !store.fileExists, "用例104", "文件缺失 → nil（无动作启动语义）")
+
+            let action = OneShotAction(
+                kind: "fullOnce", startedAt: timeZero,
+                deadline: timeZero.addingTimeInterval(4 * 3600)
+            )
+            try store.save(action)
+            check(store.load() == action, "用例104", "save → load 回环 == 原值")
+            let perms = (try? FileManager.default.attributesOfItem(atPath: store.url.path))?[.posixPermissions] as? Int
+            check(perms == 0o644, "用例104", "文件权限 0644")
+            let tempURL = directory.appendingPathComponent(".action.json.tmp")
+            check(!FileManager.default.fileExists(atPath: tempURL.path), "用例104", "临时文件已清理（rename 原子替换）")
+
+            try "not json".write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load() == nil && store.fileExists, "用例104", "损坏文件 → nil + 文件仍在（启动按损坏处置：删 + 无动作）")
+            try store.delete()
+            check(!store.fileExists && store.load() == nil, "用例104", "delete → 文件消失 + load nil")
+            try store.delete()
+            check(!store.fileExists, "用例104", "幂等删除（缺失视为成功，双删不抛）")
+
+            try store.save(action)
+            let unknownKind = OneShotAction(
+                kind: "discharge", startedAt: timeZero,
+                deadline: timeZero.addingTimeInterval(3600)
+            )
+            try JSONEncoder().encode(unknownKind).write(to: store.url)
+            check(store.load() == nil && store.fileExists, "用例104", "kind != fullOnce → nil（未知动作 treat-as-absent）")
         }
     }
 

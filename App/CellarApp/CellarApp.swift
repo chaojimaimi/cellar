@@ -26,6 +26,9 @@ struct CellarApp: App {
         }
         onboarding.loadCompletedFlag()
         installer.refresh()
+        // §2.8 启动即入 60s 图标新鲜度档（双路线解耦定版：轮询恒在、与注册态无关
+        // ——不依赖面板首开；XPC 无应答快速失败，开销可忽略）。
+        statusController.setPolling(panelVisible: false)
     }
 
     var body: some Scene {
@@ -39,10 +42,8 @@ struct CellarApp: App {
             MenuBarIconLabel(controller: statusController)
         }
         .menuBarExtraStyle(.window)
-        // §2.8 启动接线：registration → StatusController——enabled 即进 60s 图标
-        // 新鲜度档；离开 .enabled → 停轮询 + 清空运行态（防残留 .unreachable
-        // 图标永久 .alert）。面板内另有同款 onChange（就近处理，幂等双触发无害）。
-        // WP5：同一入口同步 OnboardingController（收尾规则/安装接续，幂等）。
+        // §2.8 启动接线：registration → StatusController（连接态语义判定依据）+
+        // OnboardingController（收尾规则/安装接续，幂等）。
         .onChange(of: installer.registration) {
             statusController.registrationChanged(installer.registration)
             onboarding.registrationChanged(installer.registration)

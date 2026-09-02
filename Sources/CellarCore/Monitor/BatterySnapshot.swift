@@ -25,6 +25,9 @@ public struct BatterySnapshot: Equatable, Sendable {
     public let designCapacityMAh: Int
     /// 当前最大容量 %（MaxCapacity；语义随系统版本漂移，缺席/类型不符 → nil 容错）。
     public let maxCapacityPercent: Int?
+    /// 是否已充满（FullyCharged；WP2 fullOnce 完成判定主判据。缺键/类型不符 → nil
+    /// 容错——调用方按降级判据处理。本机 2026-09-02 实测：91% 时 = No，语义正确）。
+    public let fullyCharged: Bool?
     /// 原始最大容量 mAh（AppleRawMaxCapacity，缺席 → nil）。
     public let rawMaxCapacityMAh: Int?
     /// 原始当前容量 mAh（AppleRawCurrentCapacity，缺席 → nil）。

@@ -63,7 +63,8 @@ public func onboardingNext(
 
 // MARK: - 通知分类（WP5 §2.3 定版）
 
-/// 通知事件（三类；App 侧 NotificationService 投递，10 分钟同类型冷却）。
+/// 通知事件（三类；App 侧 NotificationService 投递，10 分钟同类型冷却；
+/// WP2 动作终态三事件独立 identifier + 豁免冷却——一次性命中，不重复打扰）。
 public enum CellarNotificationEvent: Hashable, Sendable {
     /// 已达充电上限（lastAction 转移 enforce:disableCharging 触发）。
     case limitReached(upperLimit: Int)
@@ -71,12 +72,18 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     case writeFailed
     /// 检测到外部写者在写充电状态（enforce:verifyFailed——外部写者冲突显式化）。
     case conflictSuspected
+    /// 一次性动作完成（lastAction 转移 fullOnce:done；kind = 动作类型字面量）。
+    case actionCompleted(kind: String)
+    /// 一次性动作超时（lastAction 转移 fullOnce:timeout）。
+    case actionTimeout(kind: String)
+    /// 一次性动作中断（lastAction 转移 fullOnce:cancel(crash-recovery)）。
+    case actionInterrupted(kind: String)
 }
 
 /// 通知分类纯函数（§2.3 定版）。
 ///
 /// ⚠️ **lastAction 字面量契约**：与 daemon 侧动作串是隐式契约——本函数与
-/// Sources/cellar-daemon/DaemonCore.swift:409-431 的 actionName 赋值互为镜像；
+/// Sources/cellar-daemon/DaemonCore.swift:512-533 的 actionName 赋值互为镜像；
 /// daemon 侧任何动作串变更会被 CellarCoreCheck 的字面量钉死场景两侧同步暴露。
 ///
 /// 规则：
@@ -89,7 +96,14 @@ public enum CellarNotificationEvent: Hashable, Sendable {
 ///   `enforce:disableCharging` → `.limitReached(upperLimit:)`；
 ///   `enforce:error` → `.writeFailed`；`enforce:verifyFailed` → `.conflictSuspected`。
 /// - `sleep:*`、`disable`、`enable`、`noop` → 不通知（睡眠停充/用户动作语义；
-///   睡眠路径 verifyFailed 也不写 lastAction，DaemonCore.swift:180-184 只记日志）。
+///   睡眠路径 verifyFailed 也不写 lastAction，DaemonCore.swift:229-233 只记日志）。
+/// - **WP2 动作字面量（P1-3 + P1-4）**：
+///   `fullOnce:done` 转移 → `.actionCompleted`；`fullOnce:timeout` 转移 →
+///   `.actionTimeout`；`fullOnce:cancel(crash-recovery)` 转移 →
+///   `.actionInterrupted`；`fullOnce:cancel`（用户/隐式取消）→ 无事件；
+///   首样本（previous == nil）→ 空数组（既有语义；终态锁存保证 App 重启前转移可见）。
+///   **P1-4**：previous.lastAction 带 `fullOnce:` 前缀（终态锁存）→ 本次不产
+///   `.limitReached`——防「充满完成→恢复停充」被误报为达到 80% 上限。
 public func notificationEvents(
     previous: DaemonStatus?,
     current: DaemonStatus
@@ -107,11 +121,22 @@ public func notificationEvents(
     guard current.lastAction != previous.lastAction else { return [] }
     switch current.lastAction {
     case "enforce:disableCharging":
+        // P1-4：previous 为 fullOnce:*（终态锁存）→ 恢复停充是动作的期望收尾，
+        // 不误报 limitReached（前缀含 start——该转移不可达，防御覆盖无害）。
+        if previous.lastAction?.hasPrefix("fullOnce:") == true { return [] }
         return [.limitReached(upperLimit: current.upperLimit)]
     case "enforce:error":
         return [.writeFailed]
     case "enforce:verifyFailed":
         return [.conflictSuspected]
+    case OneShotLiteral.done():
+        return [.actionCompleted(kind: OneShot.fullOnceKind)]
+    case OneShotLiteral.timeout():
+        return [.actionTimeout(kind: OneShot.fullOnceKind)]
+    case OneShotLiteral.cancelCrashRecovery():
+        return [.actionInterrupted(kind: OneShot.fullOnceKind)]
+    case OneShotLiteral.cancel():
+        return []
     default:
         return []
     }

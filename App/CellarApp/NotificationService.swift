@@ -21,6 +21,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let writeFailedMessage = "充电控制写入失败，限充可能未生效——请打开面板查看"
     /// 外部写者冲突告警。
     nonisolated static let conflictSuspectedMessage = "检测到其他工具在改动充电状态，可能与 Cellar 冲突"
+    /// WP2 一次性动作终态文案（§1.1 终态事件；与失败横幅通道同源）。
+    nonisolated static let actionCompletedMessage = "「充满一次」已完成：已恢复限充"
+    nonisolated static let actionTimeoutMessage = "「充满一次」超时（4 小时未充满）：已恢复限充"
+    nonisolated static let actionInterruptedMessage = "「充满一次」已中断（守护进程重启）：已恢复限充"
 
     /// 同事件类型投递冷却（秒；内存级，App 重启清零）。
     private static let cooldownSeconds: TimeInterval = 600
@@ -45,9 +49,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// 投递事件（StatusController 事件出口）。同类型冷却内静默跳过（不重发）。
     /// 冷却键 = 事件类型字符串（评审 P2）：非 Hashable 整体——limitReached(80) 与
     /// limitReached(90) 共享同类型冷却，对齐规格「同事件类型 10 分钟」口径。
+    /// WP2 动作终态事件**豁免冷却**：identifier 内嵌投递时刻 epoch（全局唯一），
+    /// 冷却表永不命中——一次性动作终态命中即达，不重复打扰。
     func deliver(_ event: CellarNotificationEvent) {
         let now = Date()
-        let cooldownKey = Self.identifier(for: event)
+        let cooldownKey = Self.identifier(for: event, now: now)
         if let last = lastDelivered[cooldownKey], now.timeIntervalSince(last) < Self.cooldownSeconds {
             return
         }
@@ -56,7 +62,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Cellar"
         content.body = Self.message(for: event)
         let request = UNNotificationRequest(
-            identifier: Self.identifier(for: event),
+            identifier: Self.identifier(for: event, now: now),
             content: content,
             trigger: nil
         )
@@ -76,15 +82,26 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             return writeFailedMessage
         case .conflictSuspected:
             return conflictSuspectedMessage
+        case .actionCompleted:
+            return actionCompletedMessage
+        case .actionTimeout:
+            return actionTimeoutMessage
+        case .actionInterrupted:
+            return actionInterruptedMessage
         }
     }
 
     /// 通知 identifier（同类型复用，冷却范围内重复投递被跳过）。
-    private nonisolated static func identifier(for event: CellarNotificationEvent) -> String {
+    /// WP2 动作终态：`action.<kind>.<终态>.<epoch>`（epoch = 投递时刻，
+    /// identifier 全局唯一 + 豁免冷却；§1.7 定版）。
+    private nonisolated static func identifier(for event: CellarNotificationEvent, now: Date) -> String {
         switch event {
         case .limitReached: return "cellar.limit-reached"
         case .writeFailed: return "cellar.write-failed"
         case .conflictSuspected: return "cellar.conflict-suspected"
+        case .actionCompleted(let kind): return "action.\(kind).done.\(Int(now.timeIntervalSince1970))"
+        case .actionTimeout(let kind): return "action.\(kind).timeout.\(Int(now.timeIntervalSince1970))"
+        case .actionInterrupted(let kind): return "action.\(kind).interrupted.\(Int(now.timeIntervalSince1970))"
         }
     }
 

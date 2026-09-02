@@ -60,10 +60,9 @@ struct PanelView: View {
         .frame(width: 340)
         .onAppear(perform: panelAppeared)
         .onDisappear(perform: panelDisappeared)
-        // 单向接线（规格 §2.1）：registration → StatusController 与 OnboardingController
-        // （面板打开期间的注册变化就近处理；两者幂等，双触发无害）。
+        // 单向接线：registration → OnboardingController（引导门/收尾规则）。
+        // StatusController 的轮询已与注册态解耦（双路线定版），无需在此接线。
         .onChange(of: installer.registration) {
-            statusController.registrationChanged(installer.registration)
             onboarding.registrationChanged(installer.registration)
         }
         // P1-3 守卫解锁：loaded 置位时补一次判定（首回包与注册同值不触发上面 onChange）。
@@ -91,9 +90,15 @@ struct PanelView: View {
 
             StatusLineView(snapshot: statusController.batterySnapshot)
 
-            if installer.registration == .enabled {
+            // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
+            // 手工路线（CLI 安装）的 daemon 同样可控制；mode=="disabled" 时区内
+            // 控件自带禁用 + 启用按钮（既有 isModeDisabled 设计）。SMAppService
+            // 注册态仅驱动安装区。轮询与注册态解耦见 StatusController/AppSide。
+            if statusController.daemonStatus != nil {
                 Divider()
                 controlSection
+                Divider()
+                actionSection
             }
 
             Divider()
@@ -132,7 +137,7 @@ struct PanelView: View {
         // sudo cellar uninstall）后重开面板必须重查，否则呈现误导性失联态。
         installer.refresh()
         panelActive = true
-        statusController.setPolling(panelVisible: true, daemonRegistered: installer.registration == .enabled)
+        statusController.setPolling(panelVisible: true)
         statusController.setTelemetry(panelVisible: true)
         // 引导判定就近触发（收尾规则/安装接续，幂等；组合根 onChange 双触发无害）。
         onboarding.registrationChanged(installer.registration)
@@ -161,7 +166,7 @@ struct PanelView: View {
         applyTask = nil
         isEditing = false
         installer.stopPolling()
-        statusController.setPolling(panelVisible: false, daemonRegistered: installer.registration == .enabled)
+        statusController.setPolling(panelVisible: false)
         statusController.setTelemetry(panelVisible: false)
     }
 
@@ -222,7 +227,7 @@ struct PanelView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(isModeDisabled)
+                    .disabled(isModeDisabled || isActionActive)
                 }
                 Text("预设与滑杆改动后自动应用")
                     .font(.caption2)
@@ -247,7 +252,7 @@ struct PanelView: View {
                     if !editing { scheduleApplyLimits() }
                 }
             )
-            .disabled(isModeDisabled)
+            .disabled(isModeDisabled || isActionActive)
 
             HStack {
                 Text("滞回幅度")
@@ -265,7 +270,7 @@ struct PanelView: View {
                         scheduleApplyLimits()
                     }
                 }
-                .disabled(isModeDisabled)
+                .disabled(isModeDisabled || isActionActive)
             }
 
             HStack(spacing: 8) {
@@ -280,14 +285,50 @@ struct PanelView: View {
                 Button(isModeDisabled ? "启用限充" : "停用限充") {
                     statusController.toggleCharging(enabled: isModeDisabled)
                 }
-                // 模式未知（首查前/失联）时总开关无意义（不知当前是停用还是启用）。
-                .disabled(statusController.daemonStatus == nil || statusController.busy)
+                // 模式未知（首查前/失联）时总开关无意义（不知当前是停用还是启用）；
+                // 动作活跃期禁用（隐式取消只经滑杆/取消按钮，不误触总开关）。
+                .disabled(statusController.daemonStatus == nil || statusController.busy || isActionActive)
             }
 
             Text("守护进程版本：\(statusController.daemonStatus?.version ?? "未知") · 期望 \(DaemonXPC.daemonVersion)")
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
         }
+    }
+
+    // MARK: - 一次性动作区（WP2 §1.1 交付面）：动作活跃 → 状态行 + 取消按钮、
+    // 滑杆/预设/总开关禁用；无动作且 mode==active → 「充满一次」按钮。
+    /// 动作活跃判定（滑杆/预设/总开关的禁用依据）。
+    private var isActionActive: Bool {
+        statusController.action != nil
+    }
+
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isActionActive {
+                HStack(spacing: 8) {
+                    Image(systemName: "bolt.fill")
+                        .foregroundStyle(theme.success)
+                    Text("充满中…预计 100% 后自动恢复")
+                        .font(.caption)
+                    Spacer(minLength: 4)
+                    Button("取消") {
+                        statusController.cancelFullOnce()
+                    }
+                    .controlSize(.small)
+                    .disabled(statusController.busy)
+                }
+            } else if statusController.daemonStatus?.mode == "active" {
+                Button {
+                    statusController.fullOnce()
+                } label: {
+                    Label("充满一次：充电到 100% 后自动恢复限充", systemImage: "bolt.fill")
+                }
+                .controlSize(.small)
+                .disabled(statusController.busy)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// 登录项开关（规格 §2.4 接线：SMAppService.loginItem + AppConfigStore 持久化）。

@@ -116,6 +116,13 @@ final class XPCServer: @unchecked Sendable {
         case "enable":
             respondChange(peer: peer, operation: "enable", body: { try core.enable() })
 
+        case "fullOnce":
+            // WP2 一次性动作（鉴权门同变更命令：root / admin 组）。
+            respondChange(peer: peer, operation: "fullOnce", body: { try core.fullOnce() })
+
+        case "cancelAction":
+            respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
+
         default:
             send(errorReply("未知命令：\(request.cmd)"), to: peer.connection)
         }

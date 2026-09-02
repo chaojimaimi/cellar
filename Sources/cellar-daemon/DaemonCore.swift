@@ -16,13 +16,16 @@ import CellarCore
 final class DaemonCore: @unchecked Sendable {
     /// 日志事件（锁内收集、锁外发出）。OSLogType 无 warn 级，自定义三档
     /// （warn 映射 Logger.warning，统一日志中为 error 级，语义等价规格的 warn）。
-    private enum LogCategory { case lifecycle, control }
+    /// ⚠️ 可见性：WP2 起放宽为 internal——一次性动作实现（DaemonCore+OneShot.swift
+    /// 扩展文件）需要本类型；cellar-daemon 为 executable target，internal 即模块私有，
+    /// 单一属主/锁纪律不变量不受影响。
+    enum LogCategory { case lifecycle, control }
 
-    private enum LogLevel {
+    enum LogLevel {
         case info, warn, error
     }
 
-    private struct LogEvent {
+    struct LogEvent {
         let category: LogCategory
         let level: LogLevel
         let message: String
@@ -30,31 +33,40 @@ final class DaemonCore: @unchecked Sendable {
 
     // MARK: - 锁内状态
 
-    private let lock = NSLock()
+    /// ⚠️ 可见性：WP2 起部分成员为 internal——一次性动作实现在
+    /// DaemonCore+OneShot.swift 扩展文件（DaemonCore.swift 触及 800 行硬上限拆分）；
+    /// cellar-daemon 为 executable target，internal 符号模块外不可达，单一属主
+    /// 不变量（锁内唯一归属）不受影响。
+    let lock = NSLock()
     private let policyStore: PolicyStore
-    private let monitor: BatteryMonitor
+    let monitor: BatteryMonitor
     /// 锁内统一写、锁外统一发（category lifecycle/control 各一）。
     private let lifecycleLogger: os.Logger
     private let controlLogger: os.Logger
 
     /// 当前策略（经 `applyPolicyLocked` 写入——validated 已保证语义合法）。
-    private var policy: DaemonPolicy = .default
-    private var controller = LimitController(policy: try! LimitPolicy(upperLimit: 80, hysteresis: 2))
+    var policy: DaemonPolicy = .default
+    var controller = LimitController(policy: try! LimitPolicy(upperLimit: 80, hysteresis: 2))
     /// IOKit 传输持有方（重建 SMCClient 即换新 transport）。
     private var smcClient: SMCClient?
     /// 探测得到的后端；nil = 尚未探测成功（心跳驱动重试/自愈）。
-    private var backend: (any ChargingBackend)?
+    var backend: (any ChargingBackend)?
     /// 最近一次成功采样的状态快照（tick 失败保留上次）。
-    private var lastStatus: DaemonStatus?
+    var lastStatus: DaemonStatus?
     /// 上次成功采样的电量（百分点变化事件判定，评审 A-1）。
     private var lastPercent: Int?
     /// 控制路径连续失败计数（≥3 重建 SMCClient，评审 C-3）。
     private var consecutiveControlFailures = 0
+    /// 一次性动作轨道（WP2 §1.1 六路径门控；activeAction/终态锁存/去抖计数单一事实源）。
+    var actionTrack = OneShotTrack()
+    /// 动作持久化（action.json；独立于 policy.json，格式红线不动）。
+    let actionStore: ActionStore
 
     // MARK: - 生命周期
 
-    init(policyStore: PolicyStore, log: os.Logger) {
+    init(policyStore: PolicyStore, log: os.Logger, actionStore: ActionStore = ActionStore(url: ActionStore.defaultURL)) {
         self.policyStore = policyStore
+        self.actionStore = actionStore
         self.monitor = BatteryMonitor.makeDefault()
         self.lifecycleLogger = log
         self.controlLogger = Logger(subsystem: "com.cellar.daemon", category: "control")
@@ -91,6 +103,24 @@ final class DaemonCore: @unchecked Sendable {
                 message: "后端探测失败：\(error)（重试由心跳驱动）"
             ))
         }
+        // WP2 崩溃恢复（规格 §1.1 startup 行；P0-2）：发现 action.json → 一律 cancelled、
+        // 不恢复执行、删文件 → 终态字面量锁存（App 首查必见）→ 后续按当前策略 enforce
+        // （KeepAlive 崩溃即重拉，此路径只有一次机会写对）。
+        if let pending = actionStore.load() {
+            try? actionStore.delete()
+            _ = actionTrack.cancelForCrashRecovery()
+            events.append(LogEvent(
+                category: .lifecycle, level: .info,
+                message: "崩溃恢复：取消未完成的动作（kind=\(pending.kind)），按当前策略恢复限充"
+            ))
+        } else if actionStore.fileExists {
+            // 损坏 / 动作类型未知：删文件 + 无动作启动（字面量无从构造，不设锁存）。
+            try? actionStore.delete()
+            events.append(LogEvent(
+                category: .lifecycle, level: .error,
+                message: "崩溃恢复：action.json 损坏或动作类型未知，已删除并无动作启动"
+            ))
+        }
         let shouldEnforce = policy.mode == "active"
         lock.unlock()
         emit(events)
@@ -122,6 +152,30 @@ final class DaemonCore: @unchecked Sendable {
         defer {
             lock.unlock()
             emit(events)
+        }
+
+        // WP2 P0-1 门控：动作活跃 → 跳过睡前停充（充电即目标，无上限可守；否则用户
+        // 睡前点充满 → 夜间停充 → 超时取消，最高频场景失效）。lastAction 保持动作字面量。
+        if actionTrack.isActive {
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "睡眠策略跳过停充：一次性动作进行中（充电即目标，规格 P0-1）"
+            ))
+            lastStatus = DaemonStatus(
+                version: DaemonXPC.daemonVersion,
+                mode: policy.mode,
+                upperLimit: policy.upperLimit,
+                hysteresis: policy.hysteresis,
+                lastAction: actionTrack.effectiveLastAction(
+                    OneShotLiteral.start(kind: actionTrack.action?.kind ?? OneShot.fullOnceKind)
+                ),
+                lastPercent: lastStatus?.lastPercent,
+                lastExternalConnected: lastStatus?.lastExternalConnected,
+                lastChargingEnabled: lastStatus?.lastChargingEnabled,
+                action: actionTrack.action,
+                timestamp: Date()
+            )
+            return
         }
 
         guard let backend else {
@@ -175,6 +229,7 @@ final class DaemonCore: @unchecked Sendable {
                 lastChargingEnabled: performed == .enableCharging
                     ? true
                     : (performed == .disableCharging ? false : enabled),
+                action: actionTrack.action,
                 timestamp: Date()
             )
         } catch BackendError.verifyFailed(let key, let desired, let actual) {
@@ -198,6 +253,13 @@ final class DaemonCore: @unchecked Sendable {
         _ = try LimitPolicy(upperLimit: upper, hysteresis: hys)
         var events: [LogEvent] = []
         lock.lock()
+        // WP2 门控：动作活跃 → 隐式取消（恢复限充语义）→ 再设新限并立即 enforce。
+        if actionTrack.isActive {
+            cancelActionLocked(events: &events)
+        } else {
+            // 用户动作清除终态锁存（P0-2：setLimits/enable/disable/fullOnce 重启）。
+            actionTrack.clearUserActionLatch()
+        }
         applyPolicyLocked(DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys), events: &events)
         persistPolicyLocked(events: &events)
         performTickLocked(events: &events)
@@ -215,6 +277,14 @@ final class DaemonCore: @unchecked Sendable {
         defer {
             lock.unlock()
             emit(events)
+        }
+
+        // WP2 门控：动作活跃 → 先走统一 cancel（落终态 + 恢复限充语义）再执行 disable 原义。
+        if actionTrack.isActive {
+            cancelActionLocked(events: &events)
+        } else {
+            // 用户动作清除终态锁存（P0-2）。
+            actionTrack.clearUserActionLatch()
         }
 
         if let backend {
@@ -252,6 +322,7 @@ final class DaemonCore: @unchecked Sendable {
             lastPercent: lastStatus?.lastPercent,
             lastExternalConnected: lastStatus?.lastExternalConnected,
             lastChargingEnabled: true,
+            action: actionTrack.action,
             timestamp: Date()
         )
         return buildStatusLocked()
@@ -261,6 +332,8 @@ final class DaemonCore: @unchecked Sendable {
     func enable() throws -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
+        // 用户动作清除终态锁存（P0-2：enable 是锁存终止事件之一）。
+        actionTrack.clearUserActionLatch()
         applyPolicyLocked(
             DaemonPolicy(mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis),
             events: &events
@@ -286,6 +359,10 @@ final class DaemonCore: @unchecked Sendable {
     func restoreAndExit() -> Never {
         var events: [LogEvent] = []
         lock.lock()
+        // WP2 门控：动作活跃 → 先走统一 cancel（落终态 + 恢复限充语义）再恢复默认充电。
+        if actionTrack.isActive {
+            cancelActionLocked(events: &events)
+        }
         if let backend {
             do {
                 try backend.setChargingEnabled(true)
@@ -334,6 +411,20 @@ final class DaemonCore: @unchecked Sendable {
             message: "SIGHUP：已重读策略（mode=\(loaded.mode) upper=\(loaded.upperLimit) hys=\(loaded.hysteresis)）"
         ))
 
+        // WP2 门控（规格 §1.1 SIGHUP 行；P1-1）：重载后 mode == "disabled" → 取消动作；
+        // 否则动作存活——deadline（start 时绝对 Date）与完成判定不重算（轨道未触碰）。
+        if loaded.mode == "disabled" && actionTrack.isActive {
+            cancelActionLocked(events: &events)
+        } else if loaded.mode == "active" {
+            // 动作存活分支：仅记日志（状态照旧），不重算 deadline。
+            if actionTrack.isActive {
+                events.append(LogEvent(
+                    category: .lifecycle, level: .info,
+                    message: "SIGHUP：一次性动作存活（deadline 不重算）"
+                ))
+            }
+        }
+
         if oldMode == "active" && loaded.mode == "disabled" {
             if let backend {
                 do {
@@ -364,9 +455,10 @@ final class DaemonCore: @unchecked Sendable {
         emit(events)
     }
 
-    /// 锁内 tick（调用方负责解锁与 emit）：
+    /// 锁内 tick（调用方负责解锁与 emit；WP2 起 internal——DaemonCore+OneShot.swift 的
+    /// fullOnce 启动后调用）：
     /// backend 保证 → 采样 → 控制键读取 → 电量变化事件 → active 模式 enforce → lastStatus。
-    private func performTickLocked(events: inout [LogEvent]) {
+    func performTickLocked(events: inout [LogEvent]) {
         // 1) 控制后端（探测失败 → 计数自愈；无后端不能构建上下文，保留上次状态）。
         guard let backend = ensureBackendLocked(events: &events) else { return }
 
@@ -400,14 +492,24 @@ final class DaemonCore: @unchecked Sendable {
             lastPercent = snapshot.percent
         }
 
-        // 5) active 模式 enforce；disabled 不执行策略（控制键已恢复使能态，规格 §0.4）。
+        // 5) 策略执行：动作活跃 → 维护分支（规格 §1.1 tick 行——采样/控制键读取/percent
+        // 事件（步骤 2/3/4）保留，仅「enforce」替换为完成判定 + 保活）；其余原样。
         let context = ChargingContext(
             percent: snapshot.percent,
             externalConnected: snapshot.externalConnected,
             chargingEnabled: chargingEnabled
         )
         var actionName = "enforce:noop"
-        if policy.mode == "active" {
+        if actionTrack.isActive {
+            actionName = maintainActionLocked(
+                now: Date(),
+                fullyCharged: snapshot.fullyCharged,
+                isCharging: snapshot.isCharging,
+                percent: snapshot.percent,
+                backend: backend,
+                events: &events
+            )
+        } else if policy.mode == "active" {
             do {
                 let action = try controller.enforce(context: context, backend: backend)
                 switch action {
@@ -431,15 +533,17 @@ final class DaemonCore: @unchecked Sendable {
         }
 
         // 6) 更新快照（保留上次状态 = lastStatus 不被失败 tick 覆盖）。
+        // lastAction 经终态锁存生效值（P0-2：fullOnce:* 终态不被常规 tick 覆盖）。
         lastStatus = DaemonStatus(
             version: DaemonXPC.daemonVersion,
             mode: policy.mode,
             upperLimit: policy.upperLimit,
             hysteresis: policy.hysteresis,
-            lastAction: actionName,
+            lastAction: actionTrack.effectiveLastAction(actionName),
             lastPercent: snapshot.percent,
             lastExternalConnected: snapshot.externalConnected,
             lastChargingEnabled: chargingEnabled,
+            action: actionTrack.action,
             timestamp: snapshot.timestamp
         )
     }
@@ -485,8 +589,8 @@ final class DaemonCore: @unchecked Sendable {
 
     /// 控制路径失败计数（评审 C-3 统一口径：探测失败/控制键读取失败/enforce 传输类失败；
     /// verifyFailed 由调用方单独处理，不计数——冲突显式化，非连接问题）。
-    /// 计数达 3 → 丢弃后端，下 tick 重建。
-    private func noteControlFailureLocked(_ error: Error, events: inout [LogEvent], context: String) {
+    /// 计数达 3 → 丢弃后端，下 tick 重建。WP2 起 internal（保活重写走本计数）。
+    func noteControlFailureLocked(_ error: Error, events: inout [LogEvent], context: String) {
         consecutiveControlFailures += 1
         events.append(LogEvent(
             category: .control, level: .error,
@@ -535,7 +639,10 @@ final class DaemonCore: @unchecked Sendable {
     }
 
     /// 组装当前状态快照（模式/策略取当前值；采样字段取 lastStatus，未采样过为 nil）。
-    private func buildStatusLocked() -> DaemonStatus {
+    /// lastAction 经终态锁存生效值；action 取轨道当前值（动作活跃但 tick 未成功的
+    /// 空窗期仍向 App 呈现动作——轮询不冻结，P1-2）。WP2 起 internal（XPC 动作命令
+    /// 经 fullOnce/cancelAction 调用本方法）。
+    func buildStatusLocked() -> DaemonStatus {
         var status = lastStatus ?? DaemonStatus(
             version: DaemonXPC.daemonVersion,
             mode: policy.mode,
@@ -547,13 +654,16 @@ final class DaemonCore: @unchecked Sendable {
         status.mode = policy.mode
         status.upperLimit = policy.upperLimit
         status.hysteresis = policy.hysteresis
+        status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
+        status.action = actionTrack.action
         return status
     }
 
     // MARK: - 锁外日志
 
-    /// 锁外统一发出（锁内只组装，规格 §0.3）。
-    private func emit(_ events: [LogEvent]) {
+    /// 锁外统一发出（锁内只组装，规格 §0.3）。WP2 起 internal（扩展方法在 lock 内组装、
+    /// 解锁后经本方法发出）。
+    func emit(_ events: [LogEvent]) {
         for event in events {
             let logger = event.category == .lifecycle ? lifecycleLogger : controlLogger
             let message = event.message

@@ -28,6 +28,7 @@ public enum BatterySnapshotParser {
             cycleCount: try requiredInt(props, "CycleCount"),
             designCapacityMAh: try requiredInt(props, "DesignCapacity"),
             maxCapacityPercent: intValue(props["MaxCapacity"]),
+            fullyCharged: boolValue(props["FullyCharged"]),
             rawMaxCapacityMAh: intValue(props["AppleRawMaxCapacity"]),
             rawCurrentCapacityMAh: intValue(props["AppleRawCurrentCapacity"]),
             cellVoltagesMV: batteryData.flatMap { cellVoltages(from: $0) },

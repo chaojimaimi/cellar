@@ -24,12 +24,21 @@ enum StatusFailureKind: Equatable {
     case writeFailed
     /// 外部写者冲突显式化（enforce:verifyFailed）。
     case conflictSuspected
+    /// WP2 一次性动作终态（既有横幅通道新分支，P2-4 接线）：
+    /// fullOnce:done / timeout / cancel(crash-recovery)——锁存期持续呈现，
+    /// 下一次用户动作（新动作/取消/改限）自然清除。
+    case actionCompleted
+    case actionTimedOut
+    case actionInterrupted
 
     /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
     var message: String {
         switch self {
         case .writeFailed: return NotificationService.writeFailedMessage
         case .conflictSuspected: return NotificationService.conflictSuspectedMessage
+        case .actionCompleted: return NotificationService.actionCompletedMessage
+        case .actionTimedOut: return NotificationService.actionTimeoutMessage
+        case .actionInterrupted: return NotificationService.actionInterruptedMessage
         }
     }
 
@@ -39,6 +48,9 @@ enum StatusFailureKind: Equatable {
         switch status.lastAction {
         case "enforce:error": self = .writeFailed
         case "enforce:verifyFailed": self = .conflictSuspected
+        case "fullOnce:done": self = .actionCompleted
+        case "fullOnce:timeout": self = .actionTimedOut
+        case "fullOnce:cancel(crash-recovery)": self = .actionInterrupted
         default: return nil
         }
     }
@@ -49,6 +61,9 @@ enum StatusFailureKind: Equatable {
 enum ControlAttempt: Equatable {
     case setLimits(upperLimit: Int, hysteresis: Int)
     case setChargingEnabled(Bool)
+    /// WP2 一次性动作（重试 = 重新发送动作命令；cancelAction 幂等，重试无害）。
+    case fullOnce
+    case cancelFullOnce
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -59,6 +74,10 @@ enum ControlAttempt: Equatable {
             return "启用限充"
         case .setChargingEnabled(false):
             return "停用限充"
+        case .fullOnce:
+            return "开始「充满一次」"
+        case .cancelFullOnce:
+            return "取消「充满一次」"
         }
     }
 }
@@ -81,7 +100,10 @@ final class StatusController: ObservableObject {
     @Published private(set) var lastAttempt: ControlAttempt?
     /// status 派生失败横幅（WP5 §2.3 P1-1 配套）：enforce:error / enforce:verifyFailed
     /// 时呈现（不进 controlFeedback 通道；首次样本即呈现——失败类无需转移守卫）。
+    /// WP2 扩充：fullOnce 终态字面量（done/timeout/crash-recovery）同通道呈现。
     @Published private(set) var statusFailure: StatusFailureKind?
+    /// 活跃一次性动作（daemonStatus.action 派生；WP2 P2-4 接线——动作区/禁用态依据）。
+    @Published private(set) var action: OneShotAction?
     /// 遥测快照（App 进程内 IOKit 只读，规格 §2.1 语义分源）。采样失败 → nil
     /// （不进横幅、不触发图标 .alert——失联才有 alert 的不变量不破）。
     @Published private(set) var batterySnapshot: BatterySnapshot?
@@ -101,9 +123,11 @@ final class StatusController: ObservableObject {
     /// 同步时机 = 面板打开 + 应用成功）。
     var onLimitsApplied: ((Int, Int) -> Void)?
 
-    /// 当前面板可见性（registrationChanged 入 .enabled 时按此档位接棒轮询；
-    /// 组合根提升后轮询不依赖面板首开，规格 §2.8）。
+    /// 当前面板可见性（轮询换档依据：面板开 1s / 关 60s，轮询恒在与注册态无关）。
     private var panelVisible = false
+    /// 最近已知注册态（registrationChanged 维护）：连接失败按其判定语义——已注册
+    /// 失联 = 故障告警；未注册失联 = 「未安装」常态（不告警、图标不 .alert）。
+    private var lastKnownRegistration: RegistrationStatus = .notRegistered
     private let batteryMonitor = BatteryMonitor.makeDefault()
 
     /// ⚠️ nonisolated(unsafe)：deinit（非隔离）需取消两个轮询 Task；属性仅在主 actor
@@ -121,18 +145,13 @@ final class StatusController: ObservableObject {
     // MARK: - 轮询调度（规格 §2.2）
 
     /// 换档：cancel 旧 Task + 立即单次刷新 + 以新间隔重启（cancel+restart 定版）。
-    /// nil 间隔 = 不轮询（未注册）。循环体内串行（await 完成再 sleep），天然防
-    /// 5s 超时下的请求堆积；尾部 busy 门控跳过本轮（控制在途时轮询静默）。
-    ///
-    /// 与 installer 授权轮询的叠加：pending 期间本控制器不轮询（daemonRegistered
-    /// 门控）；授权完成 installer 轮询自退、本控制器接棒——勿自行「优化」此推演。
-    func setPolling(panelVisible: Bool, daemonRegistered: Bool) {
+    /// 轮询恒在（双路线解耦定版）：面板开 1s / 关 60s；循环体内串行（await 完成
+    /// 再 sleep），尾部 busy 门控跳过本轮（控制在途时轮询静默）。
+    func setPolling(panelVisible: Bool) {
         self.panelVisible = panelVisible
         pollTask?.cancel()
         pollTask = nil
-        guard let interval = refreshInterval(panelVisible: panelVisible, daemonRegistered: daemonRegistered) else {
-            return
-        }
+        let interval = refreshInterval(panelVisible: panelVisible)
         // 换档即立即补一次刷新：防「面板打开后最长 60s 空窗」；控制在途时跳过
         // 立即刷新（控制结果回包即最新，无需轮询抢占），但轮询循环照常重启。
         if !busy {
@@ -148,26 +167,16 @@ final class StatusController: ObservableObject {
         }
     }
 
-    /// registration 单向入口（规格 §2.1）：离开 .enabled → 停轮询 + 清空状态
-    /// （daemonStatus=nil、connection=.unknown、lastAttempt=nil）——防残留
-    /// .unreachable 让图标永久 .alert（用户主动卸载 ≠ 故障）；回到 .enabled →
-    /// 按当前面板可见档位接棒轮询（组合根提升：App 启动注册即入 60s 图标档，
-    /// 规格 §2.8）。遥测与 registration 无关（门控只有 panelVisible），不清快照。
+    /// registration 单向入口（双路线解耦定版）：维护 lastKnownRegistration（连接
+    /// 失败的告警语义判定依据）+ 复位通知基线/失败横幅。**不清 daemonStatus、不停
+    /// 轮询**——XPC 应答即真相：手工路线 daemon 运行中就如实显示运行中；daemon 真
+    /// 消失时 refreshOnce 失败自行驱动 connection/.unreachable 或 .unknown。
     func registrationChanged(_ registration: RegistrationStatus) {
-        guard registration == .enabled else {
-            pollTask?.cancel()
-            pollTask = nil
-            daemonStatus = nil
-            connection = .unknown
-            controlFeedback = nil
-            lastAttempt = nil
-            // 基线复位：重注册后首样本按「首样本」语义分类（limitReached 抑制、
-            // 失败类破例），失败横幅派生自 daemonStatus（nil 即清除）。
-            notificationBaseline = nil
-            statusFailure = nil
-            return
-        }
-        setPolling(panelVisible: panelVisible, daemonRegistered: true)
+        lastKnownRegistration = registration
+        guard registration != .enabled else { return }
+        // 离开 .enabled：通知基线/失败横幅复位（重注册后首样本语义；防残留误导）。
+        notificationBaseline = nil
+        statusFailure = nil
     }
 
     // MARK: - 统一状态收口（WP5 §2.3 单一入口）
@@ -184,8 +193,14 @@ final class StatusController: ObservableObject {
             }
         }
         daemonStatus = status
-        connection = status == nil ? .unreachable : .connected
+        // 连接态语义（双路线解耦定版）：已注册（enabled）失联 = 故障告警（pending
+        // 期 daemon 尚未运行，落 .unknown 不告警）；
+        // 未注册失联 = 「未安装」常态（.unknown，不告警）。
+        connection = status == nil
+            ? (lastKnownRegistration == .enabled ? .unreachable : .unknown)
+            : .connected
         statusFailure = status.flatMap(StatusFailureKind.init)
+        action = status?.action
     }
 
     /// 面板打开时同步滑杆值的来源（仅本地态初始化用，非轮询回写）。
@@ -258,6 +273,25 @@ final class StatusController: ObservableObject {
         }
     }
 
+    /// 「充满一次」：充电到 100% 后自动恢复限充（WP2）。前置拒绝 → daemonError 原文
+    /// 上屏（stale 版本比对照走）；动作已在轨 → daemon 幂等回当前状态（按钮随状态消失）。
+    func fullOnce() {
+        runControl(
+            attempt: .fullOnce,
+            operation: { try DaemonXPCClient().fullOnce() },
+            successFeedback: "「充满一次」已开始：充满后自动恢复限充"
+        )
+    }
+
+    /// 取消当前一次性动作（幂等：无动作时亦成功，daemon 回当前状态）。
+    func cancelFullOnce() {
+        runControl(
+            attempt: .cancelFullOnce,
+            operation: { try DaemonXPCClient().cancelAction() },
+            successFeedback: "已取消「充满一次」，恢复限充"
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -266,6 +300,10 @@ final class StatusController: ObservableObject {
             applyLimits(upperLimit: upperLimit, hysteresis: hysteresis)
         case .setChargingEnabled(let enabled):
             toggleCharging(enabled: enabled)
+        case .fullOnce:
+            fullOnce()
+        case .cancelFullOnce:
+            cancelFullOnce()
         }
     }
 
