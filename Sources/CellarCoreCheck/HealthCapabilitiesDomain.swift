@@ -93,3 +93,33 @@ func runHealthCapabilitiesDomainScenarios() throws {
         check(decodedEmpty?.capabilities == [], "能力-2", "显式空数组解码 → []（与缺席 nil 语义区分——App 两态文案）")
     }
 }
+// MARK: - StatusFailureKind 横幅通道映射（WP2' 验收修正钉死：done 不进失败通道）
+
+/// 映射矩阵：安全/失败终态入通道、done 与用户取消不入（成功走 success 反馈 +
+/// 自动消退——真机验收修正：done 曾被渲染为红色告警横幅且锁存常驻）。
+func scenarioStatusFailureKindMapping() {
+    // 全局 check 助手（MainEntry.swift，跨文件 internal；场景计数自动统计）
+    func status(_ action: String) -> DaemonStatus {
+        DaemonStatus(version: "t", mode: "active", upperLimit: 80, hysteresis: 2, lastAction: action)
+    }
+    check(StatusFailureKind(status: status("enforce:error")) == .writeFailed,
+          "横幅-1", "enforce:error → writeFailed")
+    check(StatusFailureKind(status: status("enforce:verifyFailed")) == .conflictSuspected,
+          "横幅-2", "enforce:verifyFailed → conflictSuspected")
+    check(StatusFailureKind(status: status("fullOnce:timeout")) == .actionTimedOut,
+          "横幅-3", "fullOnce:timeout → actionTimedOut")
+    check(StatusFailureKind(status: status("dischargeToLimit:timeout")) == .actionTimedOut,
+          "横幅-4", "dischargeToLimit:timeout → actionTimedOut")
+    check(StatusFailureKind(status: status("fullOnce:cancel(crash-recovery)")) == .actionInterrupted,
+          "横幅-5", "fullOnce:cancel(crash-recovery) → actionInterrupted")
+    check(StatusFailureKind(status: status("dischargeToLimit:safety")) == .actionSafetyTerminated,
+          "横幅-6", "dischargeToLimit:safety → actionSafetyTerminated")
+    check(StatusFailureKind(status: status("fullOnce:done")) == nil,
+          "横幅-7", "fullOnce:done → nil（成功走 success 反馈 + 自动消退）")
+    check(StatusFailureKind(status: status("dischargeToLimit:done")) == nil,
+          "横幅-8", "dischargeToLimit:done → nil（同上）")
+    check(StatusFailureKind(status: status("dischargeToLimit:cancel")) == nil,
+          "横幅-9", "用户取消不入通道")
+    check(StatusFailureKind(status: status("enforce:noop")) == nil,
+          "横幅-10", "常规 enforce 不入通道")
+}

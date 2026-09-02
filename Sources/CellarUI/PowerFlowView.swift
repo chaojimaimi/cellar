@@ -46,11 +46,13 @@ public struct PowerFlowView: View {
                 // 插头供电路径恒指向 Mac（右向）。
                 arrow(active: flow == .charging || flow == .floating, symbol: "arrow.right")
                 symbol(name: "laptopcomputer", fallback: "desktopcomputer")
-                // 电池路径方向随功率流翻转：充电流 Mac→电池（右向）；电池供电
-                // 电池→Mac（左向）——真机验收修正（2026-09-02：恒右向把放电画成
-                // 「Mac 给电池充电」，用户目视报告）。
+                // 电池路径：方向只在有流动时呈现——charging 充电流入电池（右向）、
+                // onBattery 电池→Mac（左向）、**floating 停充无流动 → 中性 minus**
+                // （真机验收修正 2026-09-02：停充态画右向灰箭头被读成「在往电池
+                // 充」，与已停充语义矛盾）。
                 arrow(active: flow == .charging || flow == .onBattery,
-                      symbol: flow == .onBattery ? "arrow.left" : "arrow.right")
+                      symbol: flow == .charging ? "arrow.right"
+                          : flow == .onBattery ? "arrow.left" : "minus")
                 symbol(name: "battery.100", fallback: "battery.75")
                 Text(word(for: flow))
                     .font(.caption2)

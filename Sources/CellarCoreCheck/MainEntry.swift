@@ -306,6 +306,9 @@ struct Main {
         // 健康度/能力域；与 runScenarios 共用 FailureCounter 与断言助手。
         try runDischargeDomainScenarios()
         try runHealthCapabilitiesDomainScenarios()
+        // WP2' 验收修正：StatusFailureKind 横幅通道映射（done 剥离失败通道，
+        // 改走 success 反馈 + 5s 自动消退——StatusController 侧）
+        scenarioStatusFailureKindMapping()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

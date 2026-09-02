@@ -16,7 +16,6 @@ extension StatusFailureKind {
         switch self {
         case .writeFailed: return NotificationService.writeFailedMessage
         case .conflictSuspected: return NotificationService.conflictSuspectedMessage
-        case .actionCompleted: return NotificationService.actionCompletedMessage
         case .actionTimedOut: return NotificationService.actionTimeoutMessage
         case .actionInterrupted: return NotificationService.actionInterruptedMessage
         case .actionSafetyTerminated: return NotificationService.actionSafetyTerminatedMessage
@@ -72,6 +71,10 @@ final class StatusController: ObservableObject {
     @Published private(set) var connection: ConnectionState = .unknown
     @Published private(set) var busy = false
     @Published private(set) var controlFeedback: ControlFeedback?
+    /// 动作完成上升沿检测（ingest 用；lastAction 锁存语义下的 prev 值）。
+    private var lastActionLiteral: String?
+    /// success 反馈自动消退任务（新 success 重置计时；失败/告警类常驻不清）。
+    private var successFeedbackClearTask: Task<Void, Never>?
     @Published private(set) var lastAttempt: ControlAttempt?
     /// status 派生失败横幅（WP5 §2.3 P1-1 配套）：enforce:error / enforce:verifyFailed
     /// 时呈现（不进 controlFeedback 通道；首次样本即呈现——失败类无需转移守卫）。
@@ -160,6 +163,9 @@ final class StatusController: ObservableObject {
         // 离开 .enabled：通知基线/失败横幅复位（重注册后首样本语义；防残留误导）。
         notificationBaseline = nil
         statusFailure = nil
+        lastActionLiteral = nil
+        successFeedbackClearTask?.cancel()
+        controlFeedback = nil
     }
 
     // MARK: - 统一状态收口（WP5 §2.3 单一入口）
@@ -174,6 +180,18 @@ final class StatusController: ObservableObject {
             for event in events {
                 onNotificationEvent?(event, status.lastPercent)
             }
+            // 动作完成上升沿（真机验收修正 2026-09-02）：done 已剥离失败横幅
+            // 通道（红色告警 + 锁存常驻——成功终态语义错位），改走 success 反馈
+            // + 5s 自动消退；lastAction 锁存期上升沿只触发一次（prev==done 不重报）。
+            let isDone = status.lastAction == "fullOnce:done"
+                || status.lastAction == "dischargeToLimit:done"
+            let wasDone = lastActionLiteral == "fullOnce:done"
+                || lastActionLiteral == "dischargeToLimit:done"
+            if isDone && !wasDone {
+                let kindWord = status.lastAction == "fullOnce:done" ? "「充满一次」" : "放电到上限"
+                setSuccessFeedback("\(kindWord)已完成：已恢复限充")
+            }
+            lastActionLiteral = status.lastAction
         }
         daemonStatus = status
         // 连接态语义（双路线解耦定版）：已注册（enabled）失联 = 故障告警（pending
@@ -184,6 +202,20 @@ final class StatusController: ObservableObject {
             : .connected
         statusFailure = status.flatMap(StatusFailureKind.init)
         action = status?.action
+    }
+
+    /// success 反馈设置 + 5s 自动消退（真机验收修正 2026-09-02：成功类横幅
+    /// 常驻面板——成功无需用户处理，展示即撤离；失败/告警类常驻不清）。
+    /// 新 success 重置计时；失败反馈到达时取消计时（常驻语义）。
+    private func setSuccessFeedback(_ message: String) {
+        successFeedbackClearTask?.cancel()
+        controlFeedback = .success(message)
+        successFeedbackClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            guard let self, case .success = self.controlFeedback else { return }
+            self.controlFeedback = nil
+        }
     }
 
     /// 面板打开时同步滑杆值的来源（仅本地态初始化用，非轮询回写）。
@@ -360,7 +392,7 @@ final class StatusController: ObservableObject {
         switch result {
         case .success(let status):
             ingest(status: status)
-            controlFeedback = .success(successFeedback)
+            setSuccessFeedback(successFeedback)
             lastAttempt = nil
             onSuccess?(status)
         case .failure(.daemonError(let message)):
