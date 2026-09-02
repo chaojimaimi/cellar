@@ -51,3 +51,69 @@ jobs:
         with:
           name: Cellar.app
           path: App/.ci-build/Build/Products/Release/Cellar.app
+
+  # 快照矩阵门禁（WP4 §3.2 定版）：macos-26 单一权威渲染环境（与 app-build 同
+  # 镜像假设）。golden 已提交（Snapshots/Goldens/，48 张），本 job 为对比模式
+  # 全绿门禁；渲染确定性依赖 pin Xcode + AppleLanguages=en（golden=en 定版）。
+  snapshot:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        run: |
+          if [ -d /Applications/Xcode_26.6.app ]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          else
+            echo "::warning::/Applications/Xcode_26.6.app 不存在，回退 xcrun 路径解析工具链"
+          fi
+          xcodebuild -version
+
+      - name: Build CellarUICheck
+        run: swift build --product CellarUICheck
+
+      - name: Snapshot comparison (48 goldens)
+        env:
+          AppleLanguages: en
+          AppleLocale: en_US
+        run: swift run CellarUICheck --snapshot
+
+      - name: Upload diff artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-diff
+          path: Snapshots/
+          if-no-files-found: ignore
+
+  # golden 重生成（WP4 §3.2：CI 是唯一权威渲染源——SwiftUI 运行时随工具链/镜像
+  # 升级变化时，本机 regen 不算数；手动触发本 job → 目视 artifact → 提交新 golden）。
+  snapshot-regen:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        run: |
+          if [ -d /Applications/Xcode_26.6.app ]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          else
+            echo "::warning::/Applications/Xcode_26.6.app 不存在，回退 xcrun 路径解析工具链"
+          fi
+          xcodebuild -version
+
+      - name: Build CellarUICheck
+        run: swift build --product CellarUICheck
+
+      - name: Regenerate goldens
+        env:
+          AppleLanguages: en
+          AppleLocale: en_US
+        run: swift run CellarUICheck --snapshot --regen
+
+      - name: Upload regenerated goldens
+        uses: actions/upload-artifact@v4
+        with:
+          name: goldens-regen
+          path: Snapshots/Goldens/

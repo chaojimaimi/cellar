@@ -45,7 +45,7 @@ let package = Package(
             name: "CellarUICheck",
             dependencies: ["CellarUI"]
         ),
-        // CLT-only 环境的本地验证工具（无 XCTest 依赖）：76 个场景 + 真机诊断。
+        // CLT-only 环境的本地验证工具（无 XCTest 依赖）：106 个场景 + 真机诊断。
         // CellarCoreCheck 是唯一测试栈（公开仓库无 Tests/，本地 XCTest 已移除）。
         .executableTarget(
             name: "CellarCoreCheck",
