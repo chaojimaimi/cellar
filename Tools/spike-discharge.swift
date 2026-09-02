@@ -1,10 +1,21 @@
 #!/usr/bin/env swift
-// Cellar 放电键调研 spike（Phase 3 WP1）— 规格 docs/plans/phase3-wp1-discharge-spike.md v1.1；唯一事实源 docs/SMC-NOTES.md
+// Cellar 放电重调 spike（Phase 3 WP1.5，CHIE 0x8 修正假设 + 功率遥测键标定）— 规格 docs/plans/phase3-wp15-discharge-respike.md v1.1；唯一事实源 docs/SMC-NOTES.md
 // SMC 封装照抄 Tools/m0-charge-test.swift（selector 2 + data8、80B 封包、key 小端 uint32、两阶段读、回复不回填 dataSize）
-// 用法: --enumerate(阶段0+1只读预检,无需sudo) / --do-it(全流程写实验,root) / --restore [KEY=HEX](逐键还原/手动兜底)
-// 安全(§4): P0-1 状态文件先于首次写原子落盘,还原双验证通过后删; P0-2 双验证+重试阶梯(3次→等5s→再3轮)+runbook 值级/行为级分列+现场记录(重启清除键状态=unknown 不断言);
-// 同值回写探针先行; 放电-on≤60s看门狗(全局队列,独立主流程)+单键≤2min预算; 温度≥40℃或电量出[35,85]→全量还原; 信号→全量还原; NoIdleSleep断言全程持有;
-// 日志逐行flush+每次写记kr; 结论 key=value; 零品牌词。
+// 用法(canonical，root 只执行不构建。本脚本不在 SPM target 内——swift build 不产出该二进制，用 swiftc 单文件构建，产物路径对齐方案 §1.8):
+//   swiftc -O Tools/spike-discharge.swift -o .build/debug/spike-discharge   # user 侧构建
+//   sudo .build/debug/spike-discharge --do-it              # E0–E6 全流程写实验(root;状态文件门禁)
+//   sudo .build/debug/spike-discharge --restore            # 按状态文件逐键还原
+//   sudo .build/debug/spike-discharge --restore CHIE=0x00  # 手动兜底(KEY=HEX)
+//   .build/debug/spike-discharge --calibrate-power         # 功率键标定(只读,无需 root)
+//   swift Tools/spike-discharge.swift --enumerate          # 只读预检(无需 sudo,免构建)
+//   .build/debug/spike-discharge --help
+// 实验矩阵(v1.1 §2): E0 基线60s(嵌P1标定) / E1 CHIE 写0x8+判读表(回读必须恰为0x8,实际读回值必录;kr≠0→回写原值判no-go不对0x8重试) /
+//   E2 观察窗(cycle1 保守30s、cycle2 放满50s;三分支判读,幅值阈值有意弃用) / E3 写0x0恢复+60s三要素窗(还原互斥;未齐+30s重验一次) /
+//   E4 第二循环 / E5 CHTE 同值回写+pmset 复核+CHIE 终值==0x0 复核 / E6 仅 0x8 成立:CHTE×CHIE 两格+双恢复序各验一次 / P1–P2 功率标定。
+// 安全(母本全量沿用,不得收窄): P0-1 状态文件先于首次写原子落盘,还原双验证通过后删; 同值回写探针先行; 每次写 5s 倒计时;
+//   放电-on≤60s 看门狗硬界(每段不变)+CHIE 单键预算≤240s(E6 计入,P1-1 放宽); 温度≥40℃或电量出[35,85]每采样点同查→全量还原;
+//   预检电量收紧[40,75](P2-1); 信号→全量还原; NoIdleSleep 断言全程; 还原双验证+重试阶梯(3次→等5s→再3轮)+runbook 值级/行为级分列;
+//   残留状态文件拒绝启动; 手动兜底 --restore CHIE=0x00; 日志逐行 flush+每次写记 kr; 结论 key=value; 零品牌词。
 
 import Foundation
 import IOKit
@@ -131,8 +142,11 @@ private struct TelemetrySample {
     let isCharging: Bool
     let externalConnected: Bool
     let amperageMA: Int
+    let voltageMV: Int?
     let temperatureCentiC: Int
     let watts: Int?
+    let adapterAmpsMA: Int?
+    let adapterVoltsMV: Int?
     let timestamp: Date
     var temperatureC: Double { Double(temperatureCentiC) / 100 }
 }
@@ -161,15 +175,42 @@ private final class Telemetry: @unchecked Sendable {
               let amperage = Self.intVal(dict["Amperage"]),
               let temp = Self.intVal(dict["Temperature"]) else { return nil }
         var watts: Int?
-        if let adapter = dict["AdapterDetails"] as? [String: Any] { watts = Self.intVal(adapter["Watts"]) }
+        var adapterAmpsMA: Int?
+        var adapterVoltsMV: Int?
+        if let adapter = dict["AdapterDetails"] as? [String: Any] {
+            watts = Self.intVal(adapter["Watts"])
+            adapterAmpsMA = Self.intVal(adapter["Amperage"])
+            adapterVoltsMV = Self.intVal(adapter["Voltage"])
+        }
         return TelemetrySample(percent: percent, isCharging: isCharging, externalConnected: external,
-                               amperageMA: amperage, temperatureCentiC: temp, watts: watts, timestamp: Date())
+                               amperageMA: amperage, voltageMV: Self.intVal(dict["Voltage"]),
+                               temperatureCentiC: temp, watts: watts,
+                               adapterAmpsMA: adapterAmpsMA, adapterVoltsMV: adapterVoltsMV, timestamp: Date())
     }
 }
 
 // MARK: - 小工具
 private func hex(_ bytes: [UInt8]) -> String { bytes.map { String(format: "%02X", $0) }.joined() }
 private func tempS(_ c: Double) -> String { String(format: "%.1f", c) }
+private func fmtFlt(_ v: Double?) -> String { v.map { String(format: "%.2f", $0) } ?? "-" }
+private func fmtInt(_ v: Int?) -> String { v.map(String.init) ?? "-" }
+private func mean(_ xs: [Double]) -> Double? { xs.isEmpty ? nil : xs.reduce(0, +) / Double(xs.count) }
+/// SMC 'flt' 4B = IEEE754 单精度、大端字节序（SMC-NOTES §2 已录：PDTR/ID0R/VD0R/PPBR=flt/4B）。
+private func decodeFltBE(_ b: [UInt8]) -> Double? {
+    guard b.count == 4 else { return nil }
+    let bits = UInt32(b[0]) << 24 | UInt32(b[1]) << 16 | UInt32(b[2]) << 8 | UInt32(b[3])
+    return Double(Float(bitPattern: bits))
+}
+/// SMC 'si16' 2B 大端有符号（B0AC，SMC-NOTES §2 实测修正）。
+private func decodeSi16BE(_ b: [UInt8]) -> Int? {
+    guard b.count >= 2 else { return nil }
+    return Int(Int16(bitPattern: UInt16(b[0]) << 8 | UInt16(b[1])))
+}
+/// SMC 'ui16' 2B 大端无符号（B0AV，SMC-NOTES §2 实测修正）。
+private func decodeUi16BE(_ b: [UInt8]) -> Int? {
+    guard b.count >= 2 else { return nil }
+    return Int(UInt16(b[0]) << 8 | UInt16(b[1]))
+}
 /// 运行外部只读工具并返回 stdout（失败返回空串）。
 private func runTool(_ path: String, _ args: [String]) -> String {
     let p = Process()
@@ -294,8 +335,6 @@ private final class Session: @unchecked Sendable {
     var keys: [String: KeyStateEntry] = [:]
     var originals: [String: [UInt8]] = [:]
     private var stateFileCreatedAt = ""
-    var thresholdMA = 300
-    var noiseMA = 0
     var baselineIsCharging: Bool?
     var baselineAmperageMA: Int?
     private var dischargeOnSince: Date?
@@ -310,7 +349,6 @@ private final class Session: @unchecked Sendable {
     var candidatePresent: [String: (size: UInt32, type: String, origHex: String)] = [:]
     var establishedKeys: [String: [UInt8]] = [:]
     var restoreOutcomes: [String] = []
-    var chteStopWithin10 = false
     var matrixNotes: [String] = []
     var runbookEntered = false
     init(logger: Logger, machine: MachineInfo) {
@@ -323,10 +361,10 @@ private final class Session: @unchecked Sendable {
         originals[key] = bytes
         keys[key] = KeyStateEntry(key: key, size: Int(size), type: type, originalHex: hex(bytes), writtenAt: "")
     }
-    func setCalibration(noise: Int, threshold: Int, baselineIsCharging: Bool?, baselineAmperage: Int?) {
-        noiseMA = noise; thresholdMA = threshold
-        self.baselineIsCharging = baselineIsCharging
-        baselineAmperageMA = baselineAmperage
+    /// 基线充电态锚定（E0 产出；behaviorExpectation 与恢复验证期望值来源）。
+    func setBaseline(isCharging: Bool?, amperage: Int?) {
+        baselineIsCharging = isCharging
+        baselineAmperageMA = amperage
     }
     /// 首次任何 SMC 写入前调用：原子写（.atomic = 临时文件+rename）。
     func writeStateFile() -> Bool {
@@ -400,7 +438,11 @@ private final class Session: @unchecked Sendable {
     func endRestore() { lock.lock(); defer { lock.unlock() }; restoring = false }
     func requestAbort(_ reason: String) { lock.lock(); defer { lock.unlock() }; if abortReason == nil { abortReason = reason } }
     func takeAbortReason() -> String? { lock.lock(); defer { lock.unlock() }; let r = abortReason; abortReason = nil; return r }
-    func budgetExceeded(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return (perKeyOnTime[key] ?? 0) >= 120 }
+    /// 单键累计预算（WP1.5：CHIE ≤240s，E6 计入——评审 P1-1；每段 on 仍受 60s 看门狗硬界）。
+    func budgetExceeded(_ key: String, limitS: Double = 240) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return (perKeyOnTime[key] ?? 0) >= limitS
+    }
     func recentBudgetSnapshot() -> [String: Double] { lock.lock(); defer { lock.unlock() }; return perKeyOnTime }
     func sessionOnTimeTotal() -> Double { lock.lock(); defer { lock.unlock() }; return sessionOnTime }
     func recordWrite(key: String, bytes: [UInt8], ok: Bool, kr: Int32, result: UInt8) {
@@ -436,7 +478,7 @@ private final class Session: @unchecked Sendable {
         let perKey = Int(perKeyOnTime[key] ?? 0)
         let session = Int(sessionOnTime)
         lock.unlock()
-        logger.log("预算：单键累计 \(key)=\(perKey)s / 上限120s；会话累计 \(session)s")
+        logger.log("预算：单键累计 \(key)=\(perKey)s / 上限240s（WP1.5 P1-1 放宽；每段 on 仍受 60s 看门狗硬界）；会话累计 \(session)s")
     }
 }
 
@@ -502,6 +544,10 @@ private final class RestoreEngine: @unchecked Sendable {
         }
         return true
     }
+    /// 单键阶梯还原，不做行为验证（E3 专用）：E3 自带 60s 三要素观察窗 = 判据③「恢复语义
+    /// 完整」的测量窗；behaviorVerified 的 30s 宽限 = 还原后的安全验证窗——两者语义不同、
+    /// 可共存、互不替代（评审观察 2）。nil = 值级成功。
+    func restoreKeyLadder(_ key: String) -> String? { restoreKeyWithLadder(key) }
     /// 重试阶梯：3 次 → 等 5s → 再 3 轮（共 9 轮）。nil = 成功。
     private func restoreKeyWithLadder(_ key: String) -> String? {
         guard let original = session.originals[key] else { return "无 \(key) 原始值记录" }
@@ -538,11 +584,11 @@ private final class RestoreEngine: @unchecked Sendable {
         return false
     }
     private func runbookValue(valueFail: [String: String]) {
-        logger.log("[runbook] 终态处置：形态=值级失败（回写报错/回读不一致）\n[runbook] 引导：保持适配器连接、不要合盖、勿重启（重启是否清除键状态属未知）\n[runbook] 引导：手动兜底 sudo swift Tools/spike-discharge.swift --restore\n[runbook] 引导：仍失败则保留状态文件与日志交工程师分析\n[runbook] 键明细：\(valueFail)")
+        logger.log("[runbook] 终态处置：形态=值级失败（回写报错/回读不一致）\n[runbook] 引导：保持适配器连接、不要合盖、勿重启（重启是否清除键状态属未知）\n[runbook] 引导：手动兜底 sudo .build/debug/spike-discharge --restore\n[runbook] 引导：仍失败则保留状态文件与日志交工程师分析\n[runbook] 键明细：\(valueFail)")
         dumpScene()
     }
     private func runbookBehavior() {
-        logger.log("[runbook] 终态处置：形态=行为级失败（值回读一致但行为滞留）\n[runbook] 引导 1：物理重插适配器（闩锁语义候选处置）\n[runbook] 引导 2：重插后重跑 sudo swift Tools/spike-discharge.swift --restore\n[runbook] 引导 3：仍不恢复则保留状态文件与日志交工程师分析")
+        logger.log("[runbook] 终态处置：形态=行为级失败（值回读一致但行为滞留）\n[runbook] 引导 1：物理重插适配器（闩锁语义候选处置）\n[runbook] 引导 2：重插后重跑 sudo .build/debug/spike-discharge --restore\n[runbook] 引导 3：仍不恢复则保留状态文件与日志交工程师分析")
         dumpScene()
     }
     private func dumpScene() {
@@ -559,27 +605,41 @@ private final class RestoreEngine: @unchecked Sendable {
     }
 }
 
-// MARK: - 候选与值域（规格 §2）：有佐证（CH0I，内核注释+外部参考）1B {0x02,0x00,0x01}（0x02=外部
-// 参考旧代停充值佐证最强优先）；无佐证 1B {0x01,0x00}（翻转当前态优先）；4B CHTE 同构
-// {01000000,00000000}（命令态先试）。候选集 = 值集 − 原值，按佐证强度排序逐试。
-private let candidateKeys = ["CHIE", "CH0I", "CH0C", "BFCL", "BF0B"]
-private let evidenceKeys: Set<String> = ["CH0I"]
-private func candidateValues(size: UInt32, hasEvidence: Bool, original: [UInt8]) -> [[UInt8]] {
-    switch size {
-    case 1:
-        let domain: [UInt8] = hasEvidence ? [0x02, 0x00, 0x01] : [0x01, 0x00]
-        return domain.map { [$0] }.filter { $0 != original }
-    case 4:
-        return [[0x01, 0, 0, 0], [0, 0, 0, 0]].filter { $0 != original }
-    default:
-        return []
+// MARK: - WP1.5 放电重调 spike 常量（方案 v1.1 定版）
+// CHIE 值集固定 {0x8}（Tahoe 代 disable 语义，batt adapter.go/consts_arm64.go 佐证；0x1 属旧代
+// 键语义、WP1 已实测无效）。禁用旧值扫描与 CH0I/CH0C 重枚举——两键 WP1 已录 getKeyInfo 132
+// 已删除（§7.1），getKeyInfo 不可读自动跳过逻辑保留。恢复值 0x0（=基线原值）。
+private let spikeKeys = ["CHIE", "CHTE"]
+private let chieDisable: [UInt8] = [0x08]
+
+// MARK: - 功率键读值（P1 标定；类型以 SMC-NOTES §2 已录为准——评审 P1-6，getKeyInfo 为复核而非发现）
+private struct PowerSMC {
+    let pdtr: Double?    // W（flt 4B）
+    let id0r: Double?    // 输入电流 mA（flt 4B）
+    let vd0r: Double?    // 电压 mV（flt 4B）
+    let ppbr: Double?    // 电池功率 W（flt 4B）
+    let b0ac: Int?       // 电池电流（si16 2B BE）
+    let b0av: Int?       // 电池电压 mV（ui16 2B BE）
+    static func read(smc: SMCConnection) -> PowerSMC {
+        PowerSMC(pdtr: smc.read("PDTR").flatMap { decodeFltBE($0.bytes) },
+                 id0r: smc.read("ID0R").flatMap { decodeFltBE($0.bytes) },
+                 vd0r: smc.read("VD0R").flatMap { decodeFltBE($0.bytes) },
+                 ppbr: smc.read("PPBR").flatMap { decodeFltBE($0.bytes) },
+                 b0ac: smc.read("B0AC").flatMap { decodeSi16BE($0.bytes) },
+                 b0av: smc.read("B0AV").flatMap { decodeUi16BE($0.bytes) })
     }
 }
-private enum Paradigm { case adapter, battery }
-private struct AttemptResult { let established: Bool; let maxDischargeMA: Int; let extFlipped: Bool }
-private enum KeyOutcome { case established(value: [UInt8]), notEstablished, unconfirmed, skipped(reason: String), probeFailed, aborted }
+/// 一组背靠背配对样本（SMC 功率键 + ioreg 遥测同循环）。
+private struct PowerPair {
+    let smc: PowerSMC
+    let ioregAmpMA: Int
+    let ioregVoltMV: Int?
+    let adapterWatts: Int?
+    let adapterAmpsMA: Int?
+    let adapterVoltsMV: Int?
+}
 
-// MARK: - Runner（三模式）
+// MARK: - Runner（四模式：--enumerate / --do-it / --restore / --calibrate-power）
 private final class Runner: @unchecked Sendable {
     private let logger: Logger
     private let machine: MachineInfo
@@ -590,6 +650,9 @@ private final class Runner: @unchecked Sendable {
     private let guardian = SleepGuardian()
     private var watchdog: Watchdog?
     private var signalSources: [DispatchSourceSignal] = []
+    private let sampleDF = DateFormatter()
+    /// 判据④预注册判读表逐条记录（步骤:写入值→实际读回值）。
+    private var readbackTable: [String] = []
     init?() {
         logger = Logger()
         machine = MachineInfo.gather()
@@ -597,10 +660,13 @@ private final class Runner: @unchecked Sendable {
         self.smc = smc
         session = Session(logger: logger, machine: machine)
         engine = RestoreEngine(smc: smc, telemetry: telemetry, session: session, logger: logger)
+        sampleDF.dateFormat = "HH:mm:ss.SSS"
     }
     func run(_ args: [String]) -> Int32 {
-        logger.log("=== 放电键调研 spike 会话 uid=\(getuid()) 机型=\(machine.model) 固件=\(machine.firmware) macOS=\(machine.macOS) 日志=\(logger.path) ===")
+        logger.log("=== 放电重调 spike 会话 uid=\(getuid()) 机型=\(machine.model) 固件=\(machine.firmware) macOS=\(machine.macOS) 日志=\(logger.path) ===")
+        if args.contains("--help") || args.contains("-h") { printUsage(); return 0 }
         if args.contains("--enumerate") { return enumerate() }
+        if args.contains("--calibrate-power") { return calibratePowerMode() }
         if args.contains("--do-it") { return doIt() }
         if args.contains("--restore") {
             var manuals: [(key: String, bytes: [UInt8])] = []
@@ -614,29 +680,27 @@ private final class Runner: @unchecked Sendable {
             guard manuals.count <= 1 else { logger.log("--restore 手动兜底一次仅接受一个 KEY=HEX"); return 2 }
             return restore(manual: manuals.first)
         }
-        logger.log("用法：\n  swift Tools/spike-discharge.swift --enumerate             # 阶段0+1只读预检(无需sudo)\n  sudo swift Tools/spike-discharge.swift --do-it            # 全流程(写实验;状态文件门禁)\n  sudo swift Tools/spike-discharge.swift --restore          # 按状态文件逐键还原\n  sudo swift Tools/spike-discharge.swift --restore CHIE=0x00  # 手动兜底(KEY=HEX)")
+        printUsage()
         return 2
+    }
+    private func printUsage() {
+        logger.log("""
+        用法（canonical：user 侧构建 → sudo 只执行不构建，方案 §1.8。本脚本不在 SPM target 内，
+        swift build 不产出该二进制——用 swiftc 单文件构建）:
+          swiftc -O Tools/spike-discharge.swift -o .build/debug/spike-discharge   # user 侧构建
+          sudo .build/debug/spike-discharge --do-it              # E0–E6 全流程写实验(root;状态文件门禁)
+          sudo .build/debug/spike-discharge --restore            # 按状态文件逐键还原
+          sudo .build/debug/spike-discharge --restore CHIE=0x00  # 手动兜底(KEY=HEX)
+          .build/debug/spike-discharge --calibrate-power         # 功率键标定(只读,无需 root)
+          swift Tools/spike-discharge.swift --enumerate          # 只读预检(无需 sudo,免构建)
+          .build/debug/spike-discharge --help                    # 本帮助
+        """)
     }
     private func countdown(_ seconds: Int, summary: String) {
         for i in stride(from: seconds, through: 1, by: -1) {
             logger.log("[倒计时] \(i)s 后执行：\(summary)（Ctrl-C 立即全量还原）")
             Thread.sleep(forTimeInterval: 1)
         }
-    }
-    private func calibrate(samples: Int, intervalS: Int) -> (noise: Int, threshold: Int, isCharging: Bool?, amperage: Int?) {
-        var maxAmp = 0
-        var charging: Bool?
-        var amp: Int?
-        for i in 0..<samples {
-            Thread.sleep(forTimeInterval: TimeInterval(intervalS))
-            if let s = telemetry.sample() {
-                maxAmp = max(maxAmp, abs(s.amperageMA))
-                charging = s.isCharging
-                amp = s.amperageMA
-                logger.log("[标定] 样本 \(i + 1)/\(samples)：amp=\(s.amperageMA)mA isCharging=\(s.isCharging)")
-            } else { logger.log("[标定] 样本 \(i + 1)/\(samples)：遥测不可用") }
-        }
-        return (maxAmp, max(300, maxAmp * 2), charging, amp)
     }
     /// 同值回写探针（P1-4：写通路验证；失败整键退出）。
     private func probeWrite(key: String) -> Bool {
@@ -651,9 +715,10 @@ private final class Runner: @unchecked Sendable {
         logger.log("[探针] \(key) 同值回写一致 value=\(hex(cur.bytes))（写通路可靠）")
         return true
     }
-    /// 写期望值：已是目标态跳过；否则 5s 倒计时 + 写 + kr 记录 + 回读验证（判据 4）。
+    /// 写期望值：已是目标态跳过；否则 5s 倒计时 + 写 + kr 记录 + 回读验证（判据④；任何
+    /// 不一致必须记录实际读回值——补 WP1 §7.1 未记 0x1 实际读回值的缺憾）。
     @discardableResult
-    private func writeExpect(key: String, value: [UInt8], expected: [UInt8], skipCountdown: Bool = false) -> Bool {
+    private func writeExpect(key: String, value: [UInt8], expected: [UInt8], skipCountdown: Bool = false, step: String = "-") -> Bool {
         guard let cur = smc.read(key) else { return false }
         if cur.bytes == value { logger.log("[写] \(key) 已是目标态 \(hex(value))——无需写"); return true }
         logger.log("[写] \(key)：\(hex(cur.bytes)) → \(hex(value))")
@@ -661,15 +726,22 @@ private final class Runner: @unchecked Sendable {
         let (ok, kr, result) = smc.writeDetailed(key, bytes: value)
         session.recordWrite(key: key, bytes: value, ok: ok, kr: kr, result: result)
         Thread.sleep(forTimeInterval: 0.5)
-        guard ok, let back = smc.read(key), back.bytes == expected else {
-            session.recordReadbackViolation("\(key) 写 \(hex(value)) 后回读不一致（判据 4 违反）")
-            logger.log("[写] \(key)=\(hex(value)) 回读不一致——判据 4 违反")
+        guard ok, let back = smc.read(key) else {
+            session.recordReadbackViolation("\(key) 写 \(hex(value)) 写入失败(kr=\(String(format: "0x%08X", kr)))或回读失败（判据④违反）")
+            logger.log("[写] \(key)=\(hex(value)) 写入/回读失败——判据④违反")
             return false
         }
-        logger.log("[写] \(key)=\(hex(value)) 回读一致（判据 4 ✓）")
+        if back.bytes != expected {
+            session.recordReadbackViolation("\(key) 写 \(hex(value)) 后回读=\(hex(back.bytes))≠期望 \(hex(expected))（判据④违反，实际读回值=\(hex(back.bytes))）")
+            logger.log("[写] \(key)=\(hex(value)) 回读=\(hex(back.bytes)) ≠期望——判据④违反（实际读回值已记录）")
+            return false
+        }
+        readbackTable.append("\(step):\(hex(value))→\(hex(back.bytes))")
+        logger.log("[写] \(key)=\(hex(value)) 回读一致（判据④ ✓）")
         return true
     }
-    /// 安全阈值（§4）：温度 ≥40°C 或电量出 [35,85] → 全量还原并中止。
+    /// 安全阈值（§1.5 母本定版）：温度 ≥40°C 或电量出 [35,85] → 全量还原并中止。
+    /// 每个采样点与温度同查（checkSafety 语义不变）。
     private func checkSafety(_ s: TelemetrySample) -> Bool {
         var trip = ""
         if s.temperatureCentiC >= 4000 { trip = "温度 \(s.temperatureC)℃ 达 40℃ 阈值" }
@@ -696,14 +768,6 @@ private final class Runner: @unchecked Sendable {
         case .failedBehavior: session.concl("restore.last", "failed-behavior"); logger.log("[还原] 行为级失败（值回读一致但行为滞留）")
         }
     }
-    private func waitPmsetNotCharging(_ seconds: Int) -> Bool {
-        for _ in 0..<seconds {
-            Thread.sleep(forTimeInterval: 1)
-            let pm = runPmset()
-            if pm.contains("not charging") || pm.contains("discharging") { return true }
-        }
-        return false
-    }
     // MARK: 信号安全网 + 看门狗（m0 DispatchSourceSignal 模式；采样循环不被阻塞）
     private func installSignalHandlers() {
         for sig in [SIGINT, SIGTERM, SIGHUP] {
@@ -727,7 +791,8 @@ private final class Runner: @unchecked Sendable {
         reportRestoreOutcome(o)
         finalExit(130, note: reason)
     }
-    /// 看门狗 tick（全局队列，独立于主流程）：放电-on 超 60s 硬上限 → 全量还原。
+    /// 看门狗 tick（全局队列，独立于主流程）：放电-on 每段超 60s 硬上限 → 全量还原。
+    /// WP1.5 预算放宽只作用于单键累计（240s），每段 60s 硬界不变（评审 P1-1）。
     private func watchdogTick() {
         let on = session.onTimeNow()
         guard on > 60 else { return }
@@ -741,16 +806,24 @@ private final class Runner: @unchecked Sendable {
         reportRestoreOutcome(o)
         finalExit(131, note: "看门狗 60s 硬上限")
     }
-    // MARK: 阶段 0 只读预检（enumerate 宽松报告 / do-it 严格门禁共用）
+    // MARK: 只读预检（enumerate 宽松报告 / do-it 严格门禁共用）
     private func runPreflight(strict: Bool) -> Bool {
         var ok = true
         let fail = { (check: String) in self.logger.log("[检查] \(check)=失败"); ok = false }
         if let s = telemetry.sample() {
             if s.externalConnected { logger.log("[检查] 外接电源=通过") } else { fail("外接电源"); logger.log("[检查]     请插电后重试") }
-            if (40...80).contains(s.percent) { logger.log("[检查] 电量 40-80%=通过 (\(s.percent)%)") } else { fail("电量 40-80%"); logger.log("[检查]     电量 \(s.percent)% 请调整后重试") }
+            // P2-1：预检电量收紧 [40,80]→[40,75]（daemon 卸载后 CHTE=0 自由充电 ~+0.6%/min，
+            // E0–E6 约 8–10 min，从 80% 起跑可能上穿 85% 触发中止、实验作废）。
+            if (40...75).contains(s.percent) {
+                logger.log("[检查] 电量 40-75%=通过 (\(s.percent)%)")
+            } else {
+                fail("电量 40-75%")
+                logger.log("[检查]     电量 \(s.percent)% 请调整后重试（P2-1：防卸载后自由充电上穿 85%）")
+            }
             if s.temperatureC < 35 { logger.log("[检查] 温度<35℃=通过 (\(tempS(s.temperatureC))℃)") } else { fail("温度<35℃"); logger.log("[检查]     温度 \(tempS(s.temperatureC))℃") }
         } else { fail("电池遥测"); logger.log("[检查]     遥测服务不可用") }
         if smc.read("CHTE") != nil { logger.log("[检查] CHTE 可读=通过") } else { fail("CHTE 可读") }
+        if smc.read("CHIE") != nil { logger.log("[检查] CHIE 可读=通过") } else { fail("CHIE 可读") }
         // 仅检查 root 写入者（cellar-daemon 精确名）。⚠️ 不检查菜单栏 App（"Cellar"）：
         // App 是用户态面板，不写 SMC，spike 期间本就该运行（用户还要用它卸载/重装）——
         // 把它算作冲突是真机验收事故（2026-09-02：App 常驻导致预检永远失败）。
@@ -760,107 +833,485 @@ private final class Runner: @unchecked Sendable {
         } else { logger.log("[检查] daemon 未运行=通过") }
         if Session.stateExists() {
             fail("状态文件门禁")
-            logger.log("[检查]     存在未清理状态文件 \(stateFilePath)——请先 sudo swift Tools/spike-discharge.swift --restore")
+            logger.log("[检查]     存在未清理状态文件 \(stateFilePath)——请先 sudo .build/debug/spike-discharge --restore")
         } else { logger.log("[检查] 状态文件门禁=通过（无残留）") }
         if strict && !ok { logger.log("[检查] 前置检查未通过，拒绝进入写实验") }
         return ok
     }
-    /// 候选键枚举（enumerate 只读 / doIt 记基线共用）。
+    /// 键元数据扫描（WP1.5 键集 = CHIE/CHTE；旧代键重枚举禁用，getKeyInfo 不可读自动跳过保留）。
     private func scanKeys(recordBaseline: Bool) {
-        for k in candidateKeys {
+        for k in spikeKeys {
             if let info = smc.keyInfo(k), let r = smc.read(k) {
                 session.candidatePresent[k] = (info.size, info.type, hex(r.bytes))
                 if recordBaseline { session.addBaseline(key: k, size: info.size, type: info.type, bytes: r.bytes) }
                 logger.log("enumerate.\(k)=存在 type=\(info.type) size=\(info.size) 原值=\(hex(r.bytes))")
-            } else { logger.log("enumerate.\(k)=不存在（getKeyInfo 不可读）") }
+            } else { logger.log("enumerate.\(k)=不存在（getKeyInfo 132 自动跳过）") }
         }
     }
     // MARK: --enumerate（只读预检）
     private func enumerate() -> Int32 {
         logger.log("模式：--enumerate（只读预检）")
-        logger.log("--- 阶段 1 键元数据（getKeyInfo）---")
+        logger.log("--- 键元数据（getKeyInfo；WP1.5 键集=CHIE/CHTE，旧代键重枚举已禁用）---")
         scanKeys(recordBaseline: false)
-        let chte = smc.read("CHTE")
-        logger.log("enumerate.CHTE=\(chte.map { "存在 type=\($0.type) size=\($0.size) 原值=\(hex($0.bytes))" } ?? "不可读")")
-        logger.log("--- 阶段 0 只读预检 ---")
+        logger.log("--- 只读预检 ---")
         let ready = runPreflight(strict: false)
-        let cal = calibrate(samples: 5, intervalS: 2)
-        logger.log("[标定] 基线噪声 max|Amperage|=\(cal.noise)mA；幅值阈值=max(300, 噪声×2)=\(cal.threshold)mA；锚定 isCharging=\(cal.isCharging ?? false) amp=\(cal.amperage ?? 0)mA")
+        p1KeyInfoCheck()
         if let s = telemetry.sample() {
-            logger.log("telemetry.baseline=amperageMA=\(s.amperageMA) isCharging=\(s.isCharging) externalConnected=\(s.externalConnected) temperatureC=\(tempS(s.temperatureC)) percent=\(s.percent)%\(s.watts.map { " watts=\($0)" } ?? "")")
+            logger.log("telemetry.baseline=amperageMA=\(s.amperageMA) voltageMV=\(fmtInt(s.voltageMV)) isCharging=\(s.isCharging) externalConnected=\(s.externalConnected) temperatureC=\(tempS(s.temperatureC)) percent=\(s.percent)%\(s.watts.map { " watts=\($0)" } ?? "")")
         }
         logger.log(ready ? "预检结论：就绪（可执行 --do-it）" : "预检结论：未就绪（--enumerate 为只读，键清单已输出）")
+        logger.log("提示：功率键标定可运行 --calibrate-power（只读，无需 root）")
         return 0
     }
-    // MARK: --do-it（全流程）
+    // MARK: P1 功率键标定（只读；--calibrate-power 与 E0 窗共用）
+    /// P1 前半：功率键 getKeyInfo 复核 ×6（类型/尺寸对照 §2 已录；复核而非发现——P1-6）。
+    private func p1KeyInfoCheck() {
+        let expect: [String: (String, UInt32)] = ["PDTR": ("flt", 4), "ID0R": ("flt", 4), "VD0R": ("flt", 4),
+                                                  "PPBR": ("flt", 4), "B0AC": ("si16", 2), "B0AV": ("ui16", 2)]
+        for (k, e) in expect.sorted(by: { $0.key < $1.key }) {
+            if let info = smc.keyInfo(k) {
+                let match = info.type == e.0 && info.size == e.1
+                logger.log("P1.keyInfo.\(k)=\(info.type)/\(info.size)B 期望 \(e.0)/\(e.1)B \(match ? "一致" : "不符(以实测为准记录)")")
+            } else { logger.log("P1.keyInfo.\(k)=不可读（getKeyInfo 132 自动跳过语义保留）") }
+        }
+    }
+    /// 背靠背配对采样（P1）：SMC 功率键读与 ioreg 遥测读同一循环紧邻完成。
+    private func pairedOnce() -> PowerPair? {
+        let s = PowerSMC.read(smc: smc)
+        guard let t = telemetry.sample() else { return nil }
+        return PowerPair(smc: s, ioregAmpMA: t.amperageMA, ioregVoltMV: t.voltageMV,
+                         adapterWatts: t.watts, adapterAmpsMA: t.adapterAmpsMA, adapterVoltsMV: t.adapterVoltsMV)
+    }
+    private func pairedSamples(count: Int, intervalS: Double) -> [PowerPair] {
+        var out: [PowerPair] = []
+        for i in 0..<count {
+            if i > 0 { Thread.sleep(forTimeInterval: intervalS) }
+            if let p = pairedOnce() {
+                out.append(p)
+                logger.log("[P1] #\(i + 1)/\(count) \(pairLine(p))")
+            } else { logger.log("[P1] #\(i + 1)/\(count) 遥测不可用——跳过") }
+        }
+        return out
+    }
+    private func pairLine(_ p: PowerPair) -> String {
+        "smc{PDTR=\(fmtFlt(p.smc.pdtr))W ID0R=\(fmtFlt(p.smc.id0r))mA VD0R=\(fmtFlt(p.smc.vd0r))mV PPBR=\(fmtFlt(p.smc.ppbr))W B0AC=\(fmtInt(p.smc.b0ac)) B0AV=\(fmtInt(p.smc.b0av))} ioreg{amp=\(p.ioregAmpMA)mA volt=\(fmtInt(p.ioregVoltMV))mV adapter=\(fmtInt(p.adapterWatts))W}"
+    }
+    /// 界检查（方案 §3）：0 < 值 ≤ 同量纲适配器能力上界；无上界记录时只查正值。
+    private func boundOK(_ v: Double?, _ cap: Int?) -> Bool {
+        guard let v, v > 0 else { return false }
+        guard let cap, cap > 0 else { return true }
+        return v <= Double(cap)
+    }
+    /// P1 标定产出（锚点表，方案 §3）：B0AC↔Amperage(mA)、B0AV↔Voltage(mV)、
+    /// PPBR↔Amperage×Voltage 换算功率 W（容差 ±10%）；PDTR/ID0R/VD0R 只做界检查——
+    /// AdapterDetails 是协商档位（65W/3250mA），禁止等值对照。
+    private func emitCalibration(_ pairs: [PowerPair]) {
+        func stat(_ xs: [Double]) -> String {
+            guard let m = mean(xs) else { return "n/a" }
+            return String(format: "%.3f(n=%d)", m, xs.count)
+        }
+        let pdtrVals = pairs.compactMap { $0.smc.pdtr }
+        let id0rVals = pairs.compactMap { $0.smc.id0r }
+        let vd0rVals = pairs.compactMap { $0.smc.vd0r }
+        session.concl("calibration.pdtr", "smc=\(stat(pdtrVals))W bounds=0<v≤adapterWatts \(pairs.allSatisfy { boundOK($0.smc.pdtr, $0.adapterWatts) } ? "pass" : "fail")")
+        session.concl("calibration.id0r", "smc=\(stat(id0rVals))mA bounds=0<v≤adapterAmps \(pairs.allSatisfy { boundOK($0.smc.id0r, $0.adapterAmpsMA) } ? "pass" : "fail")")
+        session.concl("calibration.vd0r", "smc=\(stat(vd0rVals))mV bounds=0<v≤adapterVolts \(pairs.allSatisfy { boundOK($0.smc.vd0r, $0.adapterVoltsMV) } ? "pass" : "fail")")
+        emitCalibrationAnchors(pairs, stat: stat)
+    }
+    private func emitCalibrationAnchors(_ pairs: [PowerPair], stat: ([Double]) -> String) {
+        var deltas = [Double]()
+        for p in pairs {
+            guard let ppbr = p.smc.ppbr, p.ioregAmpMA > 0, let v = p.ioregVoltMV, v > 0 else { continue }
+            let w = Double(p.ioregAmpMA) * Double(v) / 1_000_000
+            if w > 0 { deltas.append((ppbr - w) / w * 100) }
+        }
+        if let md = mean(deltas) {
+            let ok = deltas.allSatisfy { abs($0) <= 10 }
+            session.concl("calibration.ppbr", "smc=\(stat(pairs.compactMap { $0.smc.ppbr }))W vs ioreg-amp×volt meanDelta=\(String(format: "%+.1f", md))% 容差±10% \(ok ? "pass" : "fail")")
+        } else {
+            session.concl("calibration.ppbr", "smc=\(stat(pairs.compactMap { $0.smc.ppbr }))W vs ioreg-amp×volt 无有效配对（P2 退化为充电态标定可接受）")
+        }
+        // B0AC/B0AV：无既定单位断言，raw + ioreg 配对 + 比例入表（S4 判读刻度）。
+        let acRatios = pairs.compactMap { p -> Double? in
+            guard let raw = p.smc.b0ac, p.ioregAmpMA != 0 else { return nil }
+            return Double(raw) / Double(p.ioregAmpMA)
+        }
+        let avRatios = pairs.compactMap { p -> Double? in
+            guard let raw = p.smc.b0av, let v = p.ioregVoltMV, v != 0 else { return nil }
+            return Double(raw) / Double(v)
+        }
+        session.concl("calibration.b0ac", "raw=[\(pairs.compactMap { $0.smc.b0ac }.map(String.init).joined(separator: "/"))] ioregAmp=[\(pairs.map { String($0.ioregAmpMA) }.joined(separator: "/"))] ratio=\(stat(acRatios))")
+        session.concl("calibration.b0av", "raw=[\(pairs.compactMap { $0.smc.b0av }.map(String.init).joined(separator: "/"))] ioregVolt=[\(pairs.compactMap { $0.ioregVoltMV }.map(String.init).joined(separator: "/"))] ratio=\(stat(avRatios))")
+    }
+    // MARK: --calibrate-power（只读标定，不写任何 SMC 键）
+    private func calibratePowerMode() -> Int32 {
+        logger.log("模式：--calibrate-power（只读标定；无需 root；不写任何 SMC 键、无状态文件）")
+        guard let s0 = telemetry.sample() else { logger.log("电池遥测不可用——中止"); return 1 }
+        logger.log("telemetry=amp=\(s0.amperageMA)mA volt=\(fmtInt(s0.voltageMV))mV percent=\(s0.percent)% ext=\(s0.externalConnected) isCharging=\(s0.isCharging) adapter=\(fmtInt(s0.watts))W")
+        p1KeyInfoCheck()
+        let pairs = pairedSamples(count: 10, intervalS: 2)
+        guard !pairs.isEmpty else { logger.log("无有效配对样本——中止"); return 1 }
+        emitCalibration(pairs)
+        logger.log("标定完成：锚点表与 calibration.* 结论见上方（AdapterDetails=协商档位，禁止等值对照；建议充电态大幅值窗口运行以定刻度——P2）")
+        return 0
+    }
+    // MARK: --do-it（E0–E6 + P1/P2 全流程）
+    /// 全量落盘字段行（任务 ⑦）：时间戳/电量/电流/电压/温度/CHTE 回读/CHIE 回读/
+    /// ExternalConnected/isCharging/功率键读值/ioreg 配对值。
+    private func fullSampleLine(tag: String, s: TelemetrySample) -> String {
+        let p = PowerSMC.read(smc: smc)
+        let chte = smc.read("CHTE").map { hex($0.bytes) } ?? "读失败"
+        let chie = smc.read("CHIE").map { hex($0.bytes) } ?? "读失败"
+        return "[\(tag)] ts=\(sampleDF.string(from: s.timestamp)) amp=\(s.amperageMA)mA volt=\(fmtInt(s.voltageMV))mV percent=\(s.percent)% temp=\(tempS(s.temperatureC))℃ ext=\(s.externalConnected) isCharging=\(s.isCharging) CHTE=\(chte) CHIE=\(chie) PDTR=\(fmtFlt(p.pdtr))W ID0R=\(fmtFlt(p.id0r))mA VD0R=\(fmtFlt(p.vd0r))mV PPBR=\(fmtFlt(p.ppbr))W B0AC=\(fmtInt(p.b0ac)) B0AV=\(fmtInt(p.b0av)) adapter=\(fmtInt(s.watts))W"
+    }
+    /// E0 基线 60s（插电、daemon 已卸载、CHTE=0、CHIE=0）；嵌 P1 标定主采样（P2：充电态窗为主）。
+    private func e0Baseline() -> Bool {
+        logger.log("=== E0：基线采集 60s（嵌 P1 功率键标定，充电态窗）===")
+        p1KeyInfoCheck()
+        var pairs: [PowerPair] = []
+        var last: TelemetrySample?
+        for i in 0..<30 {   // 2s × 30 = 60s
+            if i > 0 { Thread.sleep(forTimeInterval: 2) }
+            if pairs.count < 10, let p = pairedOnce() {
+                pairs.append(p)
+                logger.log("[P1] #\(pairs.count)/10 \(pairLine(p))")
+            }
+            guard let s = telemetry.sample() else { logger.log("[E0] #\(i + 1)/30 遥测不可用——不计"); continue }
+            if !checkSafety(s) { return false }
+            last = s
+            logger.log(fullSampleLine(tag: "E0 #\(i + 1)/30", s: s))
+        }
+        guard let base = last else { logger.log("[E0] 基线遥测全程不可用——中止"); return false }
+        session.setBaseline(isCharging: base.isCharging, amperage: base.amperageMA)
+        session.concl("e0.baseline", "amp=\(base.amperageMA)mA volt=\(fmtInt(base.voltageMV))mV percent=\(base.percent)% temp=\(tempS(base.temperatureC))℃ ext=\(base.externalConnected) isCharging=\(base.isCharging)")
+        emitCalibration(pairs)
+        for k in spikeKeys {
+            let cur = smc.read(k).map { hex($0.bytes) } ?? "读失败"
+            logger.log("[E0] \(k)=\(cur)（基线，原值 \(session.originals[k].map(hex) ?? "?")）")
+        }
+        return true
+    }
+    // MARK: E1–E3 单循环（E4 = 第二次调用）
+    private struct CycleResult { let cycle: Int; let branch: String; let branchDetail: String; let recoveryOK: Bool }
+    private enum CycleVerdict { case done(CycleResult); case writeNoGo; case readbackViolated(actual: String); case aborted }
+    private func runCycle(cycle: Int) -> CycleVerdict {
+        let samples = cycle == 1 ? 15 : 25   // 2s/采样：cycle1 保守 30s，cycle2 放满 50s（P2-4；50s 为 60s 看门狗留 ≥10s 余量）
+        logger.log("=== E1–E3 cycle\(cycle)/2：CHIE 写 08 → 观察 \(samples * 2)s → 恢复 00 ===")
+        // E1 前置：getKeyInfo 复核（§2 已录 hex_/1B；复核而非发现）
+        guard let info = smc.keyInfo("CHIE") else { logger.log("[E1] CHIE getKeyInfo 不可读——中止循环"); return .aborted }
+        logger.log("[E1] keyInfo 复核：type=\(info.type) size=\(info.size)（期望 hex_/1B）")
+        guard info.size == 1 else { logger.log("[E1] CHIE 尺寸 \(info.size)B 与 §2 记录不符——拒绝写入"); return .aborted }
+        guard let cur = smc.read("CHIE") else { logger.log("[E1] CHIE 当前值读取失败——中止循环"); return .aborted }
+        logger.log("[E1] 当前=\(hex(cur.bytes))（期望基线 00）")
+        // 同值回写探针先行（失败整键退出——还原保证）
+        countdown(5, summary: "CHIE 同值回写探针（写 \(hex(cur.bytes)) → 回读验证）")
+        guard probeWrite(key: "CHIE") else { return .aborted }
+        // 写 0x8：kr≠0 → 回写原值验证后判 no-go；不对 0x8 重试，重试仅限还原方向（P2-3）
+        countdown(5, summary: "CHIE 写 08（适配器禁用，Tahoe 代语义）")
+        let (ok, kr, result) = smc.writeDetailed("CHIE", bytes: chieDisable)
+        session.recordWrite(key: "CHIE", bytes: chieDisable, ok: ok, kr: kr, result: result)
+        Thread.sleep(forTimeInterval: 0.5)
+        if !ok {
+            logger.log("[E1] 写 08 kr=\(String(format: "0x%08X", kr)) result=\(result)≠0——按 P2-3 不对 0x8 重试；回写原值验证后判 no-go")
+            readbackTable.append("E1.c\(cycle):08→write-kr-nonzero")
+            guard engine.restoreOneKeyVerified("CHIE") else { return .aborted }
+            session.appendRestoreOutcome("CHIE.cycle\(cycle)=restored-after-kr-nonzero")
+            return .writeNoGo
+        }
+        guard let back = smc.read("CHIE") else {
+            session.recordReadbackViolation("CHIE 写 08 后回读失败（判据④违反，实际读回值=读失败）")
+            readbackTable.append("E1.c\(cycle):08→read-fail")
+            logger.log("[E1] 回读失败——判据④违反（终止条件），立即还原并结束")
+            guard engine.restoreOneKeyVerified("CHIE") else { return .aborted }
+            session.appendRestoreOutcome("CHIE.cycle\(cycle)=restored-after-readback-violation")
+            return .readbackViolated(actual: "读失败")
+        }
+        if back.bytes != chieDisable {
+            session.recordReadbackViolation("CHIE 写 08 后回读=\(hex(back.bytes))（判据④违反，实际读回值=\(hex(back.bytes))）")
+            readbackTable.append("E1.c\(cycle):08→\(hex(back.bytes))(violated)")
+            logger.log("[E1] 回读=\(hex(back.bytes)) ≠08——判据④违反（终止条件），立即还原并结束")
+            guard engine.restoreOneKeyVerified("CHIE") else { return .aborted }
+            session.appendRestoreOutcome("CHIE.cycle\(cycle)=restored-after-readback-violation")
+            return .readbackViolated(actual: hex(back.bytes))
+        }
+        readbackTable.append("E1.c\(cycle):08→08")
+        logger.log("[E1] 回读恰为 08——判读表 0x8→0x8 ✓")
+        session.beginDischarge("CHIE")
+        // E2 观察窗 + 三分支判读（幅值阈值有意弃用——§1.4，实现不得自行恢复幅值判定）
+        let st = observeWindow(samples: samples, tag: "E2 c\(cycle)")
+        let onTime = session.endDischarge()
+        session.logBudget(key: "CHIE")
+        logger.log("[E2] cycle\(cycle) 判读=\(st.branch)（\(st.detail)）；本次 on-time=\(Int(onTime))s")
+        session.concl("criterion.2.cycle\(cycle)", "\(st.branch) \(st.detail)")
+        // E3：写 0x0 恢复（还原互斥内）+ 60s 三要素窗
+        let recovery = e3Restore(cycle: cycle)
+        if session.isRunbookEntered { return .aborted }
+        return .done(CycleResult(cycle: cycle, branch: st.branch, branchDetail: st.detail, recoveryOK: recovery))
+    }
+    /// E2 观察窗逐点统计（三分支判读原料）。
+    private struct WindowStats {
+        var samples = 0
+        var consec3 = 0, maxConsec3 = 0        // 分支(a)：!ext ∧ amp<0 ∧ !isCharging 连续计数
+        var consecNeg = 0, maxConsecNeg = 0    // 分支(c)原料：amp<0 ∧ !isCharging 连续计数
+        var extFalseCount = 0
+        var ampPositiveAll = true
+        var chargingFalseCount = 0
+        var branch = "mixed(未归类)"
+        var detail = ""
+    }
+    /// E2 观察窗：2s 采样 ×N，逐点全量落盘 + checkSafety；不早退（窗口时长即规格定版）。
+    private func observeWindow(samples: Int, tag: String) -> WindowStats {
+        var st = WindowStats()
+        for i in 0..<samples {
+            Thread.sleep(forTimeInterval: 2)
+            guard let s = telemetry.sample() else { logger.log("[\(tag)] #\(i + 1)/\(samples) 遥测不可用——不计"); continue }
+            guard checkSafety(s) else { break }   // 超限内部已全量还原并退出，不会正常到达
+            st.samples += 1
+            logger.log(fullSampleLine(tag: "\(tag) #\(i + 1)/\(samples)", s: s))
+            let cond3 = !s.externalConnected && s.amperageMA < 0 && !s.isCharging
+            let condNeg = s.amperageMA < 0 && !s.isCharging
+            st.consec3 = cond3 ? st.consec3 + 1 : 0
+            st.consecNeg = condNeg ? st.consecNeg + 1 : 0
+            st.maxConsec3 = max(st.maxConsec3, st.consec3)
+            st.maxConsecNeg = max(st.maxConsecNeg, st.consecNeg)
+            if !s.externalConnected { st.extFalseCount += 1 }
+            if s.amperageMA <= 0 { st.ampPositiveAll = false }
+            if !s.isCharging { st.chargingFalseCount += 1 }
+        }
+        classify(&st)
+        return st
+    }
+    /// 三分支判读（§1.4 定版）：(a) 连续 ≥5 个 2s 采样点逐点三条件成立=持续放电；
+    /// (b) Amperage 恒正 + 仅 isCharging 短暂 false=停充漂浮/瞬态（WP1 26s 型）；
+    /// (c) Amperage 持续负 + isCharging=false 而 ext 恒 true=电池侧放电签名/待解释态——
+    /// 单独记录并入判据⑤评估。幅值阈值不恢复（无幅值判定代码）。
+    private func classify(_ st: inout WindowStats) {
+        if st.maxConsec3 >= 5 {
+            st.branch = "a(持续放电)"
+            st.detail = "连续 \(st.maxConsec3) 点逐点三条件成立（ext=false ∧ amp<0 ∧ isCharging=false）"
+        } else if st.maxConsecNeg >= 5 && st.extFalseCount == 0 {
+            st.branch = "c(电池侧放电签名/待解释)"
+            st.detail = "amp 持续负 \(st.maxConsecNeg) 点 + isCharging=false 而 ext 恒 true——单独记录，并入判据⑤评估"
+        } else if st.ampPositiveAll && st.chargingFalseCount > 0 {
+            st.branch = "b(停充漂浮/瞬态)"
+            st.detail = "amp 恒正 + 仅 isCharging 短暂 false \(st.chargingFalseCount)/\(st.samples) 点（WP1 26s 型）"
+        } else {
+            st.branch = "mixed(未归类)"
+            st.detail = "maxConsec3=\(st.maxConsec3) maxConsecNeg=\(st.maxConsecNeg) extFalse=\(st.extFalseCount) chargingFalse=\(st.chargingFalseCount) ampPositiveAll=\(st.ampPositiveAll)（原始数据已落盘）"
+        }
+    }
+    /// 三要素窗：ext=true ∧ Amperage>0 ∧ isCharging=true 在同一样本齐备（判据③测量窗）。
+    private func threeElementWindow(_ seconds: Int) -> Bool {
+        let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 2)
+            guard let s = telemetry.sample() else { continue }
+            guard checkSafety(s) else { return false }
+            logger.log("[E3窗] amp=\(s.amperageMA)mA ext=\(s.externalConnected) isCharging=\(s.isCharging) temp=\(tempS(s.temperatureC))℃ percent=\(s.percent)%")
+            if s.externalConnected && s.amperageMA > 0 && s.isCharging { return true }
+        }
+        return false
+    }
+    /// E3：CHIE 写 0x0 恢复（纳入还原互斥——评审 P1-1）+ 60s 三要素观察窗
+    /// （60s 未齐 → +30s 重验一次再判负——P2-2）。
+    /// 注记（评审观察 2）：本函数 60s 观察窗 = 判据③「恢复语义完整」的测量窗（三要素需在
+    /// 同一样本齐备）；RestoreEngine.behaviorVerified 的 30s 宽限 = 还原后的安全验证窗——
+    /// 两者语义不同、可共存，互不替代。
+    private func e3Restore(cycle: Int) -> Bool {
+        logger.log("=== E3 cycle\(cycle)：CHIE 写 00 恢复 + 60s 三要素观察窗（还原互斥内）===")
+        guard session.beginRestore() else { logger.log("[E3] 还原互斥被占——异常，中止"); return false }
+        defer { session.endRestore() }
+        guard let orig = session.originals["CHIE"] else { logger.log("[E3] 缺 CHIE 原值——中止"); return false }
+        logger.log("[E3] 恢复值=0x0（状态文件原值 \(hex(orig))）")
+        if let fail = engine.restoreKeyLadder("CHIE") {
+            session.markRunbook()
+            logger.log("[E3] CHIE 恢复阶梯失败：\(fail)")
+            return false
+        }
+        let expectHex = hex(orig)
+        let rb = smc.read("CHIE").map { hex($0.bytes) } ?? "读失败"
+        if rb == expectHex {
+            readbackTable.append("E3.c\(cycle):\(expectHex)→\(rb)")
+            logger.log("[E3] 恢复回读恰为 \(rb)——判读表 0x0→0x0 ✓")
+        } else {
+            session.recordReadbackViolation("CHIE 恢复写 \(expectHex) 后回读=\(rb)（判据④违反，实际读回值=\(rb)）")
+            readbackTable.append("E3.c\(cycle):\(expectHex)→\(rb)(violated)")
+        }
+        var ok = threeElementWindow(60)
+        if !ok {
+            logger.log("[E3] 60s 三要素未齐——+30s 重验一次（P2-2）")
+            ok = threeElementWindow(30)
+        }
+        logger.log("[E3] cycle\(cycle) 三要素窗判定：\(ok ? "成立（恢复语义完整，判据③ ✓）" : "未成立（判负——不可解释态，终止后续实验）")；pmset: \(runPmset().replacingOccurrences(of: "\n", with: " | "))")
+        session.appendRestoreOutcome("CHIE.cycle\(cycle)=\(ok ? "e3-verified" : "recovery-failed")")
+        session.concl("criterion.3.cycle\(cycle)", ok ? "pass" : "fail")
+        return ok
+    }
+    /// E5：CHTE 同值回写对照 + pmset 充电状态复核 + CHIE 终值==0x0 复核（判据⑤无残留态）。
+    private func e5FinalCheck() {
+        logger.log("=== E5：CHTE 同值回写对照 + pmset 复核 + CHIE 终值复核 ===")
+        guard session.originals["CHTE"] != nil else { session.noteMatrix("e5.chte-original-missing(unexplainable)"); return }
+        countdown(5, summary: "E5 CHTE 同值回写对照（写原值）")
+        guard probeWrite(key: "CHTE") else { session.noteMatrix("e5.chte-probe-fail(unexplainable)"); return }
+        logger.log("[E5] pmset 复核: \(runPmset().replacingOccurrences(of: "\n", with: " | "))")
+        let chie = smc.read("CHIE").map { hex($0.bytes) } ?? "读失败"
+        let finalOK = chie == "00"
+        logger.log("[E5] CHIE 终值=\(chie)（期望 00）——\(finalOK ? "无残留态（判据⑤ ✓）" : "残留异常（判据⑤ 记录）")")
+        session.noteMatrix("e5.chieFinal=\(chie) \(finalOK ? "clean" : "residue(unexplainable)")")
+        if !finalOK { session.recordReadbackViolation("E5 CHIE 终值=\(chie)≠00（实际读回值=\(chie)）") }
+    }
+    // MARK: E6 交互最小集（仅当 0x8 成立——评审 P1-4）
+    private func e6Gate(_ cycles: [CycleResult]) -> (ok: Bool, reason: String) {
+        guard cycles.count == 2 else { return (false, "双循环未完整执行") }
+        guard cycles.allSatisfy({ $0.branch.hasPrefix("a") }) else { return (false, "0x8 未在双循环建立持续放电（仅 0x8 成立时执行）") }
+        guard session.readbackViolations.isEmpty else { return (false, "判据④存在违反记录") }
+        return (true, "")
+    }
+    private func e6Interaction() {
+        logger.log("=== E6：CHTE×CHIE 交互两格 + 双恢复序各验一次 ===")
+        guard let chieOrig = session.originals["CHIE"], let chteOrig = session.originals["CHTE"] else {
+            session.concl("criterion.e6", "skipped(缺基线原值)")
+            return
+        }
+        countdown(5, summary: "E6 前置 CHTE 同值回写探针")
+        guard probeWrite(key: "CHTE") else { session.concl("criterion.e6", "aborted(CHTE 探针失败)"); return }
+        var results: [String] = []
+        // 格 1：CHTE=01000000（停充）× CHIE=0x8 → 恢复序 A（先 CHIE 后 CHTE）
+        let r1 = e6Cell(label: "cell1", chteValue: [1, 0, 0, 0], chieOrig: chieOrig, chteOrig: chteOrig,
+                        orderFirst: ("CHIE", chieOrig), orderSecond: ("CHTE", chteOrig))
+        results.append(r1)
+        if r1.hasSuffix("restore-fail") {
+            results.append("cell2=skipped(cell1 恢复未验证通过，不做下一刀)")
+            session.concl("criterion.e6", results.joined(separator: ";"))
+            return
+        }
+        if session.budgetExceeded("CHIE") {
+            logger.log("[E6] CHIE 单键预算 ≥240s——格 2 跳过（预算放宽边界，P1-1）")
+            results.append("cell2=skipped-budget")
+            session.concl("criterion.e6", results.joined(separator: ";"))
+            return
+        }
+        // 格 2：CHTE=00000000（使能）× CHIE=0x8 → 恢复序 B（先 CHTE 后 CHIE）
+        let r2 = e6Cell(label: "cell2", chteValue: [0, 0, 0, 0], chieOrig: chieOrig, chteOrig: chteOrig,
+                        orderFirst: ("CHTE", chteOrig), orderSecond: ("CHIE", chieOrig))
+        results.append(r2)
+        session.concl("criterion.e6", results.joined(separator: ";"))
+    }
+    /// 单格：写 CHTE 目标值 → CHIE=0x8（放电-on）→ 2s×5 记电流方向/pmset/双键回读 →
+    /// 按指定恢复序还原 + 行为验证。
+    private func e6Cell(label: String, chteValue: [UInt8], chieOrig: [UInt8], chteOrig: [UInt8],
+                        orderFirst: (key: String, bytes: [UInt8]), orderSecond: (key: String, bytes: [UInt8])) -> String {
+        logger.log("[E6] \(label)：CHTE=\(hex(chteValue)) × CHIE=08")
+        guard writeExpect(key: "CHTE", value: chteValue, expected: chteValue, step: "E6.\(label).CHTE") else { e6Abort(label) }
+        session.beginDischarge("CHIE")
+        guard writeExpect(key: "CHIE", value: chieDisable, expected: chieDisable, step: "E6.\(label).CHIE") else {
+            _ = session.endDischarge()
+            e6Abort(label)
+        }
+        for i in 0..<5 {   // 2s × 5：电流方向/pmset/双键回读
+            Thread.sleep(forTimeInterval: 2)
+            guard let s = telemetry.sample() else { continue }
+            guard checkSafety(s) else { break }
+            let chteBack = smc.read("CHTE").map { hex($0.bytes) } ?? "读失败"
+            let chieBack = smc.read("CHIE").map { hex($0.bytes) } ?? "读失败"
+            let dir = s.amperageMA < 0 ? "放电" : (s.amperageMA > 0 ? "充电" : "零")
+            logger.log("[E6] \(label) #\(i + 1) amp=\(s.amperageMA)mA(方向=\(dir)) ext=\(s.externalConnected) isCharging=\(s.isCharging) 回读 CHTE=\(chteBack) CHIE=\(chieBack) pmset=\(runPmset().replacingOccurrences(of: "\n", with: " | "))")
+            session.noteMatrix("e6.\(label) amp=\(s.amperageMA) chte=\(chteBack) chie=\(chieBack)")
+        }
+        let onTime = session.endDischarge()
+        session.logBudget(key: "CHIE")
+        logger.log("[E6] \(label) on-time=\(Int(onTime))s；恢复序：先 \(orderFirst.key) 后 \(orderSecond.key)")
+        let ok = restoreOrder(firstKey: orderFirst.key, firstBytes: orderFirst.bytes,
+                              secondKey: orderSecond.key, secondBytes: orderSecond.bytes)
+        session.noteMatrix("e6.\(label).restore=\(ok ? "ok" : "fail")")
+        logger.log("[E6] \(label) 完成：恢复序验证=\(ok ? "ok" : "fail")（收尾全量还原再做值级+行为级双验证）")
+        return "\(label)=\(ok ? "ok" : "restore-fail")"
+    }
+    private func e6Abort(_ label: String) -> Never {
+        logger.log("[E6] \(label) 写/回读失败——全量还原并结束")
+        let o = engine.fullRestore(reason: "E6 \(label) 写失败中止")
+        reportRestoreOutcome(o)
+        finalExit(130, note: "E6 写失败")
+    }
+    /// 恢复序验证：两键按序回原值（还原方向写免倒计时）+ 行为验证（30s 宽限）。
+    private func restoreOrder(firstKey: String, firstBytes: [UInt8], secondKey: String, secondBytes: [UInt8]) -> Bool {
+        guard writeExpect(key: firstKey, value: firstBytes, expected: firstBytes, skipCountdown: true, step: "E6.restore.\(firstKey)") else { return false }
+        Thread.sleep(forTimeInterval: 2)
+        guard writeExpect(key: secondKey, value: secondBytes, expected: secondBytes, skipCountdown: true, step: "E6.restore.\(secondKey)") else { return false }
+        return engine.behaviorVerified(expectCharging: session.behaviorExpectation(), graceS: 30, retried: false)
+    }
+    // MARK: --do-it 主流程
     private func doIt() -> Int32 {
-        logger.log("模式：--do-it（全流程写实验）")
-        logger.log("[须知] 用户在场全程；适配器连接且负载已知；勿跑其他重负载；运行期间不要合盖\n[须知] 预期噪声（正常非故障）：适配器禁用期外接 Hub/硬盘可能瞬断重枚举、屏幕亮度可能 dip、PD 重协商期充电图标闪烁")
-        guard getuid() == 0 else { logger.log("--do-it 需要 root：sudo swift Tools/spike-discharge.swift --do-it"); return 2 }
+        logger.log("模式：--do-it（WP1.5 放电重调：CHIE 0x8 修正假设，E0–E6 + P1/P2）")
+        logger.log("[须知] 用户在场全程；适配器连接且负载已知；勿跑其他重负载；运行期间不要合盖\n[须知] 预期噪声（正常非故障）：适配器禁用期外接 Hub/硬盘可能瞬断重枚举、屏幕亮度可能 dip、PD 重协商期充电图标闪烁；合盖外显时 adapter disable 可能因电源丢失而睡眠（batt 社区已知副作用）")
+        guard getuid() == 0 else { logger.log("--do-it 需要 root：sudo .build/debug/spike-discharge --do-it"); return 2 }
         guard runPreflight(strict: true) else { return 3 }
         guard guardian.acquire() else { logger.log("[检查] 防睡眠断言（NoIdleSleep）获取失败——中止"); return 3 }
         logger.log("[检查] 防睡眠断言（NoIdleSleep）已持有，全程有效（等效 caffeinate -i；请勿合盖）")
-        // 阶段 0：Amperage 符号标定（基线充电态锚定并记录）
-        logger.log("--- Amperage 符号标定（基线充电态锚定）---")
-        let cal = calibrate(samples: 6, intervalS: 2)
-        session.setCalibration(noise: cal.noise, threshold: cal.threshold, baselineIsCharging: cal.isCharging, baselineAmperage: cal.amperage)
-        logger.log("[标定] 噪声=\(cal.noise)mA 阈值=\(cal.threshold)mA 锚定 isCharging=\(cal.isCharging ?? false) amp=\(cal.amperage ?? 0)mA")
-        logger.log("[标定] 符号约定：方向以 isCharging 为准；放电成立 = isCharging==false 且 |Amperage|≥阈值，连续 ≥5 个 2s 采样")
-        session.concl("calibration.thresholdMA", "\(cal.threshold)")
-        session.concl("calibration.noiseMA", "\(cal.noise)")
-        // 阶段 1：枚举 + 基线原值（写前必记，P0-1）
-        logger.log("--- 阶段 1 键元数据 + 基线原值 ---")
-        if let chte = smc.read("CHTE") {
-            session.addBaseline(key: "CHTE", size: chte.size, type: chte.type, bytes: chte.bytes)
-            logger.log("enumerate.CHTE=存在 type=\(chte.type) size=\(chte.size) 原值=\(hex(chte.bytes))")
-        }
+        // 基线：仅 CHIE + CHTE（WP1.5 值集固定 {0x8}；旧代键重枚举禁用，132 自动跳过保留）
+        logger.log("--- 基线键元数据 + 原值（P0-1：写前必记）---")
         scanKeys(recordBaseline: true)
-        // P0-1：首次任何 SMC 写入前原子写状态文件
+        guard session.candidatePresent["CHIE"] != nil else {
+            logger.log("CHIE 不可读——无法实验（WP1.5 唯一实验键）")
+            guardian.release()
+            return 3
+        }
+        // E0 基线 60s（只读，嵌 P1 标定；此后才有任何写）
+        guard e0Baseline() else { guardian.release(); return 3 }
+        // P0-1：首次任何 SMC 写入前原子写状态文件（E1 探针为首写）
         guard session.writeStateFile() else { logger.log("状态文件写入失败（\(stateFilePath)）——拒绝进入写实验"); guardian.release(); return 3 }
         logger.log("[P0-1] 状态文件已原子写入 \(stateFilePath)（机型/固件头 + 每键 {key,size,type,originalHex,writtenAt}）")
-        // 信号安全网 + 看门狗（先于任何写实验）
         installSignalHandlers()
         watchdog = Watchdog { [weak self] in self?.watchdogTick() }
-        // 阶段 2：CHIE 适配器禁用范式
-        logger.log("=== 阶段 2：CHIE（适配器禁用范式二）===")
-        var established: [String: [UInt8]] = [:]
-        if let o = tryKey(key: "CHIE", paradigm: .adapter, hasEvidence: false) {
-            handleOutcome(o, key: "CHIE", into: &established)
-        }
-        // 还原验证失败（runbook）→ 跳过其余实验（评审 P1-1：继续写实验会误判成立键
-        // 并延长放电滞留——危险态不做下一刀），落到会话收尾（全量还原+结论）
-        var runbookAbort = false
-        if session.isRunbookEntered {
-            logger.log("=== runbook 已进入——中止其余实验，按处置指引操作 ===")
-            runbookAbort = true
-        }
-        // 阶段 3：电池侧候选（列表 − CHIE），同流程
-        if !runbookAbort { logger.log("=== 阶段 3：电池侧候选键（阶段 1 列表 − CHIE）===") }
-        if !runbookAbort {
-            for k in candidateKeys where k != "CHIE" {
-                if session.isRunbookEntered { logger.log("=== runbook 已进入——中止剩余候选实验 ==="); runbookAbort = true; break }
-                if let o = tryKey(key: k, paradigm: .battery, hasEvidence: evidenceKeys.contains(k)) {
-                    handleOutcome(o, key: k, into: &established)
-                }
-                if session.isRunbookEntered { logger.log("=== runbook 已进入——中止剩余候选实验 ==="); runbookAbort = true; break }
+        // E1–E3 ×2（E4=第二循环）；终止条件：温度/电量界（checkSafety 内部处理）、
+        // 判据④违反、不可解释态、预算触顶——任一触发立即还原并结束
+        var cycles: [CycleResult] = []
+        var stopReason = ""
+        cycleLoop: for n in 1...2 {
+            if session.budgetExceeded("CHIE") { stopReason = "CHIE 单键预算 ≥240s 触顶（E6 计入）"; break }
+            switch runCycle(cycle: n) {
+            case .done(let c):
+                cycles.append(c)
+                if let r = session.takeAbortReason() { finalExit(130, note: r + "（还原互斥期间登记，延迟处理）") }
+                if !c.recoveryOK { stopReason = "cycle\(n) E3 三要素窗判负（不可解释态）"; break cycleLoop }
+            case .writeNoGo:
+                stopReason = "E1 写 08 kr≠0——判 no-go（P2-3：不对 0x8 重试）"; break cycleLoop
+            case .readbackViolated(let actual):
+                stopReason = "判据④违反：CHIE 写 08 实际读回=\(actual)"; break cycleLoop
+            case .aborted:
+                stopReason = "还原路径失败（runbook 已记录现场）"; break cycleLoop
             }
         }
-        // 阶段 4：CHTE × 成立键交互矩阵
-        if runbookAbort {
-            logger.log("=== runbook 已进入——跳过交互矩阵 ===")
-        } else if established.isEmpty {
-            logger.log("=== 阶段 4：无成立键，跳过交互矩阵 ===")
+        // E5 + E6（仅正常完成时；提前终止路径只做终值记录后进入收尾还原）
+        var e6Executed = false
+        if stopReason.isEmpty {
+            e5FinalCheck()
+            let gate = e6Gate(cycles)
+            if gate.ok {
+                if session.budgetExceeded("CHIE") {
+                    session.concl("criterion.e6", "skipped(CHIE 预算 ≥240s 触顶)")
+                } else {
+                    e6Executed = true
+                    e6Interaction()
+                }
+            } else {
+                session.concl("criterion.e6", "skipped(\(gate.reason))")
+            }
         } else {
-            for (k, v) in established { matrixFor(key: k, dischargeValue: v) }
+            logger.log("=== 提前终止：\(stopReason)——跳过 E5/E6，进入会话收尾还原 ===")
+            session.concl("criterion.e6", "skipped(会话提前终止)")
+            for k in spikeKeys {
+                logger.log("[终值] \(k)=\(smc.read(k).map { hex($0.bytes) } ?? "读失败")（原值 \(session.originals[k].map(hex) ?? "?")）")
+            }
         }
-        // 会话结束：全量还原（双验证；通过则删状态文件）
-        logger.log("=== 会话结束：全量还原 ===")
-        let finalOutcome = engine.fullRestore(reason: "会话正常结束")
+        // 会话结束：全量还原（双验证收尾：值回读==原值 且 行为恢复；通过则删状态文件）
+        logger.log("=== 会话结束：全量还原（双验证收尾）===")
+        let finalOutcome = engine.fullRestore(reason: stopReason.isEmpty ? "会话正常结束" : "提前终止：\(stopReason)")
         reportRestoreOutcome(finalOutcome)
         watchdog?.stop()
-        emitConclusions(established: established)
+        emitConclusions(cycles: cycles, stopReason: stopReason, e6Executed: e6Executed)
         if case .verified = finalOutcome {
-            logger.log("[检查单] 会话结束：经 App 面板重新启用 Cellar daemon（禁止 launchctl）")
+            logger.log("[检查单] 会话结束：经 App 面板重新启用 Cellar daemon（禁止 launchctl）；目视确认充电指示/pmset")
             guardian.release()
             logger.log("=== 会话结束（干净）：双验证通过，状态文件已删除 ===")
             return 0
@@ -869,166 +1320,10 @@ private final class Runner: @unchecked Sendable {
         guardian.release()
         return 1
     }
-    private func handleOutcome(_ o: KeyOutcome, key: String, into established: inout [String: [UInt8]]) {
-        switch o {
-        case .established(let v):
-            established[key] = v
-            session.establishedKeys[key] = v
-            session.concl("criterion.2.\(key)", "established")
-        case .notEstablished: session.concl("criterion.2.\(key)", "not-established")
-        case .unconfirmed: session.concl("criterion.2.\(key)", "unconfirmed(重复性缺失)")
-        case .skipped(let r): session.concl("criterion.2.\(key)", "skipped(\(r))")
-        case .probeFailed: session.concl("criterion.2.\(key)", "skipped(写通路探针失败)")
-        case .aborted: session.concl("criterion.2.\(key)", "aborted")
-        }
-    }
-    private func tryKey(key: String, paradigm: Paradigm, hasEvidence: Bool) -> KeyOutcome? {
-        guard let present = session.candidatePresent[key] else { logger.log("[\(key)] 枚举未发现——跳过"); return .skipped(reason: "键不存在") }
-        guard present.size == 1 || present.size == 4 else { logger.log("[\(key)] 尺寸 \(present.size)B 无定义值域（规格 §2 仅 1B/4B）——不做写实验"); return .skipped(reason: "尺寸值域未定义") }
-        guard let current = smc.read(key) else { logger.log("[\(key)] 原值读取失败——跳过"); return .skipped(reason: "原值读取失败") }
-        let original = current.bytes
-        logger.log("[\(key)] 原值=\(hex(original))")
-        countdown(5, summary: "\(key) 写通路探针（写原值 \(hex(original)) → 回读验证）")
-        guard probeWrite(key: key) else { return .probeFailed }
-        let candidates = candidateValues(size: present.size, hasEvidence: hasEvidence, original: original)
-        guard !candidates.isEmpty else { logger.log("[\(key)] 候选值集为空（原值覆盖全部值集）——跳过"); return .skipped(reason: "候选集为空") }
-        logger.log("[\(key)] 候选值（按佐证强度排序）=[\(candidates.map(hex).joined(separator: ", "))]（值集−原值）")
-        for (i, v) in candidates.enumerated() {
-            if session.budgetExceeded(key) { logger.log("[\(key)] 单键累计预算 ≥120s——停止该键（P1-9）"); break }
-            logger.log("[\(key)] 候选 \(i + 1)/\(candidates.count)：value=\(hex(v))")
-            guard let first = runAttempt(key: key, value: v, paradigm: paradigm) else { return .aborted }
-            if !first.established { continue }
-            if session.budgetExceeded(key) { logger.log("[\(key)] 成立但预算不足以支撑确认——记录未确认"); return .unconfirmed }
-            guard let confirm = runAttempt(key: key, value: v, paradigm: paradigm) else { return .aborted }
-            if confirm.established { logger.log("[\(key)] 确认实验重复成立——记录成立键 value=\(hex(v))"); return .established(value: v) }
-            logger.log("[\(key)] 确认实验未重复成立——重复性缺失（判据 5 预注册：不可解释）")
-            return .unconfirmed
-        }
-        logger.log("[\(key)] 全部候选值尝试完毕，未成立")
-        return .notEstablished
-    }
-    /// 单次候选值实验：写候选 → 2s×10 采样 → 判定（早退 P2-7）→ 驻留 ≤30s → 还原双验证。nil=会话中止。
-    private func runAttempt(key: String, value: [UInt8], paradigm: Paradigm) -> AttemptResult? {
-        countdown(5, summary: "\(key) 写候选值 \(hex(value))（范式=\(paradigm == .adapter ? "适配器禁用" : "电池侧")）")
-        logger.log("[\(key)] 写入候选值 \(hex(value))")
-        let (ok, kr, result) = smc.writeDetailed(key, bytes: value)
-        session.recordWrite(key: key, bytes: value, ok: ok, kr: kr, result: result)
-        Thread.sleep(forTimeInterval: 0.5)
-        let notEstablished = AttemptResult(established: false, maxDischargeMA: 0, extFlipped: false)
-        guard ok else {
-            logger.log("[\(key)] 写入失败（kr 已记录）——还原后跳过该值")
-            guard engine.restoreOneKeyVerified(key) else { session.concl("restore.\(key)", "failed——会话中止"); return nil }
-            return notEstablished
-        }
-        guard let back = smc.read(key), back.bytes == value else {
-            session.recordReadbackViolation("\(key) 写 \(hex(value)) 后回读不一致（判据 4 违反）")
-            logger.log("[\(key)] 回读不一致（判据 4 违反）——还原后跳过该值")
-            guard engine.restoreOneKeyVerified(key) else { return nil }
-            return notEstablished
-        }
-        logger.log("[\(key)] 回读一致 value=\(hex(value))（判据 4 ✓）")
-        session.beginDischarge(key)
-        let writeTime = Date()
-        var consecutive = 0
-        var maxDischarge = 0
-        var extFlipped = false
-        var established = false
-        for i in 0..<10 {   // 2s × 10 = 20s 观察窗（规格 §3）
-            Thread.sleep(forTimeInterval: 2)
-            guard let s = telemetry.sample() else { logger.log("[样本] \(key) #\(i + 1) 遥测不可用——不计"); continue }
-            if !checkSafety(s) { return nil }
-            logger.log("[样本] \(key) #\(i + 1) on=+\(Int(Date().timeIntervalSince(writeTime)))s amp=\(s.amperageMA) isCharging=\(s.isCharging) ext=\(s.externalConnected) watts=\(s.watts.map(String.init) ?? "-") temp=\(tempS(s.temperatureC))℃ percent=\(s.percent)%")
-            let discharging = !s.isCharging && abs(s.amperageMA) >= session.thresholdMA
-            consecutive = discharging ? consecutive + 1 : 0
-            if discharging { maxDischarge = max(maxDischarge, abs(s.amperageMA)) }
-            if paradigm == .adapter && !s.externalConnected { extFlipped = true }
-            if consecutive >= 5 || extFlipped {
-                established = true
-                logger.log("[\(key)] 判据达成（连续放电样本=\(consecutive) ≥5；适配器断开=\(extFlipped)）——早退进入还原（P2-7)")
-                break
-            }
-        }
-        if established {
-            let dwellEnd = min(Date().addingTimeInterval(30), writeTime.addingTimeInterval(50))   // 驻留≤30s；60s 硬上限看门狗兜底
-            logger.log("[\(key)] 已成立：驻留观察 ≤30s")
-            while Date() < dwellEnd {
-                Thread.sleep(forTimeInterval: 2)
-                guard let s = telemetry.sample() else { continue }
-                if !checkSafety(s) { return nil }
-                logger.log("[驻留] \(key) amp=\(s.amperageMA) isCharging=\(s.isCharging) ext=\(s.externalConnected)")
-            }
-        }
-        let onTime = session.endDischarge()
-        session.logBudget(key: key)
-        logger.log("[\(key)] 本次 on-time=\(Int(onTime))s")
-        guard engine.restoreOneKeyVerified(key) else { session.concl("restore.\(key)", "failed——runbook 已记录现场，会话中止"); return nil }
-        session.appendRestoreOutcome("\(key)=verified")
-        session.concl("criterion.3.\(key)", "pass")
-        if let reason = session.takeAbortReason() { finalExit(130, note: reason + "（还原互斥期间登记，延迟处理）") }
-        logger.log("[\(key)] 还原双验证通过——回写原值且行为恢复")
-        return AttemptResult(established: established, maxDischargeMA: maxDischarge, extFlipped: extFlipped)
-    }
-    // MARK: 阶段 4 交互矩阵（CHTE × 成立键；四格 + 两恢复顺序）
-    private func matrixFor(key: String, dischargeValue: [UInt8]) {
-        logger.log("=== 阶段 4：CHTE × \(key) 交互矩阵 ===")
-        let enable: [UInt8] = [0, 0, 0, 0]
-        let stop: [UInt8] = [1, 0, 0, 0]
-        guard let dOrig = session.originals[key], let chteOrig = session.originals["CHTE"] else { logger.log("[矩阵] 缺基线原值——跳过"); return }
-        guard probeWrite(key: "CHTE") else { logger.log("[矩阵] CHTE 写通路探针失败——跳过矩阵"); return }
-        // 四格：CHTE=使能/停充 × D=off/on；每格写 + kr 记录 + 回读验证（判据 4）+ 电流方向/pmset 证据
-        let cells: [(label: String, chte: [UInt8], d: [UInt8])] = [("cell1", enable, dOrig), ("cell2", stop, dOrig), ("cell3", enable, dischargeValue), ("cell4", stop, dischargeValue)]
-        var onTime = 0.0
-        for (i, cell) in cells.enumerated() {
-            if i == 2 { session.beginDischarge(key) }   // 单元格 3 起放电-on（预算/看门狗计时起点）
-            let ok = writeExpect(key: "CHTE", value: cell.chte, expected: cell.chte)
-                && writeExpect(key: key, value: cell.d, expected: cell.d)
-            if !ok {
-                if i >= 2 { _ = session.endDischarge() }
-                restoreMatrixAbort(key: key)
-            }
-            recordCell(key: key, label: cell.label, chte: cell.chte, d: cell.d)
-            if i == 1 {   // 单元格 2 后：pmset ≤10s 证据（判据 3）
-                session.chteStopWithin10 = waitPmsetNotCharging(10)
-                session.concl("criterion.3.pmsetNotCharging10s", session.chteStopWithin10 ? "pass" : "fail")
-            }
-            if i == 3 { onTime = session.endDischarge() }
-        }
-        session.logBudget(key: key)
-        logger.log("[矩阵] 单元格 3/4 放电-on 累计=\(Int(onTime))s")
-        logger.log("[矩阵] 恢复顺序 A：先 \(key) 回原值 → 后 CHTE 回原值")
-        let orderA = restoreOrder(firstKey: key, firstBytes: dOrig, secondKey: "CHTE", secondBytes: chteOrig)
-        logger.log("[矩阵] 恢复顺序 B：先 CHTE 回原值 → 后 \(key) 回原值")
-        let orderB = restoreOrder(firstKey: "CHTE", firstBytes: chteOrig, secondKey: key, secondBytes: dOrig)
-        session.noteMatrix("\(key).restoreOrderA=\(orderA ? "ok" : "fail")")
-        session.noteMatrix("\(key).restoreOrderB=\(orderB ? "ok" : "fail")")
-        let clean = orderA && orderB
-        session.concl("criterion.5.matrix.\(key)", clean ? "clean" : "unexplainable(两向恢复顺序结果不一致)")
-        logger.log("[矩阵] \(key) 完成：两恢复顺序\(clean ? "一致通过" : "结果不一致——判据 5 记不可解释")")
-    }
-    private func restoreOrder(firstKey: String, firstBytes: [UInt8], secondKey: String, secondBytes: [UInt8]) -> Bool {
-        guard writeExpect(key: firstKey, value: firstBytes, expected: firstBytes, skipCountdown: true) else { return false }
-        Thread.sleep(forTimeInterval: 2)
-        guard writeExpect(key: secondKey, value: secondBytes, expected: secondBytes, skipCountdown: true) else { return false }
-        return engine.behaviorVerified(expectCharging: session.behaviorExpectation(), graceS: 30, retried: false)
-    }
-    private func restoreMatrixAbort(key: String) -> Never {
-        let o = engine.fullRestore(reason: "矩阵 \(key) 写失败中止")
-        reportRestoreOutcome(o)
-        finalExit(130, note: "矩阵写失败")
-    }
-    private func recordCell(key: String, label: String, chte: [UInt8], d: [UInt8]) {
-        Thread.sleep(forTimeInterval: 2)
-        guard let s = telemetry.sample() else { return }
-        if !checkSafety(s) { return }   // 超限时内部已全量还原并退出
-        let chteBack = smc.read("CHTE").map { hex($0.bytes) } ?? "读失败"
-        let dBack = smc.read(key).map { hex($0.bytes) } ?? "读失败"
-        logger.log("[矩阵] \(label) CHTE=\(hex(chte)) \(key)=\(hex(d)) 回读=chte:\(chteBack) \(key):\(dBack) amp=\(s.amperageMA) isCharging=\(s.isCharging) watts=\(s.watts.map(String.init) ?? "-") pmset=\(runPmset().replacingOccurrences(of: "\n", with: " | "))")
-        session.noteMatrix("\(key).\(label) amp=\(s.amperageMA) isCharging=\(s.isCharging) chte回读=\(chteBack) d回读=\(dBack)")
-    }
     // MARK: --restore
     private func restore(manual: (key: String, bytes: [UInt8])?) -> Int32 {
         logger.log("模式：--restore（按状态文件逐键还原 / 手动兜底）")
-        guard getuid() == 0 else { logger.log("--restore 需要 root：sudo swift Tools/spike-discharge.swift --restore"); return 2 }
+        guard getuid() == 0 else { logger.log("--restore 需要 root：sudo .build/debug/spike-discharge --restore"); return 2 }
         if let manual {
             logger.log("[手动兜底] 写 \(manual.key)=\(hex(manual.bytes))")
             countdown(5, summary: "手动兜底写 \(manual.key)=\(hex(manual.bytes))")
@@ -1060,24 +1355,40 @@ private final class Runner: @unchecked Sendable {
         return 0
     }
     // MARK: 阶段 5 结论（key=value 机器可读 + SMC-NOTES 回填摘要模板）
-    private func emitConclusions(established: [String: [UInt8]]) {
+    /// concl.* 键映射（WP1.5 重定义）：criterion.1/3/5 沿用；criterion.2 = 三条件 2 循环
+    /// （含三分支结果）；criterion.4 = 预注册判读表（0x8→0x8、0x0→0x0、实际读回值）；
+    /// criterion.e6 = 交互格结果；calibration.* = 标定字段（E0 窗内已发射）。
+    private func emitConclusions(cycles: [CycleResult], stopReason: String, e6Executed: Bool) {
         logger.log("=== 阶段 5：五判据结论（key=value 机器可读）===")
-        for k in candidateKeys {
+        for k in spikeKeys {
             if let p = session.candidatePresent[k] {
                 session.concl("criterion.1.\(k)", "pass type=\(p.type) size=\(p.size) 原值=\(p.origHex)")
             } else { session.concl("criterion.1.\(k)", "fail(不存在或不可读)") }
         }
-        session.concl("criterion.1.any", session.candidatePresent.isEmpty ? "fail" : "pass")
-        let anyEstablished = !established.isEmpty
-        session.concl("criterion.2.any", anyEstablished ? "pass" : "fail")
-        let allRestoresVerified = session.restoreOutcomesSnapshot().allSatisfy { $0.hasSuffix("=verified") }
-        let criterion3 = (session.restoreOutcomesSnapshot().isEmpty || allRestoresVerified) && (!anyEstablished || session.chteStopWithin10)
-        session.concl("criterion.3", criterion3 ? "pass" : "fail")
-        session.concl("criterion.3.restores", session.restoreOutcomesSnapshot().isEmpty ? "无实验还原" : session.restoreOutcomesSnapshot().joined(separator: ","))
-        session.concl("criterion.4", session.readbackViolations.isEmpty ? "pass(每步回读==写入值)" : "violated:" + session.readbackViolations.joined(separator: "|"))
+        session.concl("criterion.1.any", session.candidatePresent.count >= 2 ? "pass" : "fail")
+        // criterion.2 = 三条件 2 循环（含三分支结果）
+        let bothA = cycles.count == 2 && cycles.allSatisfy { $0.branch.hasPrefix("a") }
+        session.concl("criterion.2", bothA ? "pass(三条件 2 循环成立)" : "fail(需双循环 branch-a)")
+        for c in cycles { session.concl("criterion.2.cycle\(c.cycle)", "\(c.branch) \(c.branchDetail)") }
+        // criterion.3 沿用：逐循环恢复语义 + 全量还原
+        let restores = session.restoreOutcomesSnapshot()
+        let allRestoresOK = !restores.isEmpty && restores.allSatisfy { !$0.contains("fail") }
+        session.concl("criterion.3", allRestoresOK ? "pass" : "fail")
+        session.concl("criterion.3.restores", restores.isEmpty ? "无实验还原" : restores.joined(separator: ","))
+        // criterion.4 = 预注册判读表（0x8→0x8、0x0→0x0、其他值=违反+实际读回值字段）
+        session.concl("criterion.4.table", readbackTable.isEmpty ? "无写入步" : readbackTable.joined(separator: ","))
+        session.concl("criterion.4", session.readbackViolations.isEmpty ? "pass(0x8→0x8; 0x0→0x0)" : "violated:" + session.readbackViolations.joined(separator: "|"))
+        // §1.6 特例单列：行为面②成立但④违反 → 「键可写、行为有效、态不可读」
+        let anyA = cycles.contains { $0.branch.hasPrefix("a") }
+        if anyA && !session.readbackViolations.isEmpty {
+            session.concl("criterion.4.special", "key-writable-behavior-valid-state-unreadable(②过④不过——WP2 回读安全验证路径受限，单独评估)")
+        }
+        // criterion.5 沿用：无不可解释态；branch(c) 电池侧放电签名并入评估
         let unexplainable = session.matrixNotes.filter { $0.contains("unexplainable") }
-        session.concl("criterion.5", unexplainable.isEmpty ? "pass(重复性/清除滞留/恢复顺序均无异常记录)" : "fail:" + unexplainable.joined(separator: ","))
-        session.concl("established.keys", established.isEmpty ? "none" : established.map { "\($0)=\(hex($1))" }.joined(separator: ","))
+        let branchC = cycles.filter { $0.branch.hasPrefix("c") }.map { "cycle\($0.cycle)=电池侧放电签名(待解释)" }
+        session.concl("criterion.5", unexplainable.isEmpty && branchC.isEmpty ? "pass(无不可解释态/无残留)" : "note:" + (unexplainable + branchC).joined(separator: ","))
+        if !e6Executed && stopReason.isEmpty { session.concl("criterion.e6.effective", "not-executed(门控未过或预算不足)") }
+        session.concl("stop.reason", stopReason.isEmpty ? "none(双循环+收尾完整执行)" : stopReason)
         session.concl("session.onTime.totalS", "\(Int(session.sessionOnTimeTotal()))")
         for (k, v) in session.recentBudgetSnapshot() { session.concl("session.onTime.\(k)", "\(Int(v))") }
         session.concl("runbook", session.isRunbookEntered ? "entered" : "not-entered")
@@ -1085,30 +1396,26 @@ private final class Runner: @unchecked Sendable {
         session.concl("reboot.clearState", "unknown(实验记录项，不得断言)")
         // 结论读取走锁通道（评审 MEDIUM）：报告发射期间信号仍可能写 conclusions。
         let c1 = session.conclusion("criterion.1.any")
-        let c2 = session.conclusion("criterion.2.any")
+        let c2 = session.conclusion("criterion.2")
         let c3 = session.conclusion("criterion.3")
         let c4 = session.conclusion("criterion.4")
         let c5 = session.conclusion("criterion.5")
-        let go = c1 == "pass" && c2 == "pass" && c3 == "pass"
+        let go = c1 == "pass" && c2?.hasPrefix("pass") == true && c3 == "pass"
             && c4?.hasPrefix("pass") == true && c5?.hasPrefix("pass") == true
         session.concl("go", go ? "go" : "no-go(详见上方逐条判定)")
-        logger.log("SMC-NOTES 回填摘要模板：")
+        logger.log("SMC-NOTES 回填摘要模板（WP1.5 §7 修订素材）：")
         logger.log("smc-notes.backfill.start")
-        logger.log("# WP1 放电键调研会话：机型=\(machine.model) 固件=\(machine.firmware) macOS=\(machine.macOS)")
-        for k in candidateKeys {
+        logger.log("# WP1.5 放电重调会话：机型=\(machine.model) 固件=\(machine.firmware) macOS=\(machine.macOS)")
+        for k in spikeKeys {
             if let p = session.candidatePresent[k] {
                 logger.log("- \(k)：存在 type=\(p.type) size=\(p.size)B 原值=\(p.origHex)")
             } else { logger.log("- \(k)：不存在") }
         }
-        if established.isEmpty {
-            logger.log("- 成立键：无（双范式均未成立或键缺失）")
-        } else {
-            for (k, v) in established {
-                logger.log("- 成立键 \(k) 放电值=\(hex(v))")
-                for n in session.matrixNotes where n.hasPrefix(k + ".") { logger.log("  - 矩阵 \(n)") }
-            }
-            logger.log("- 交互矩阵结论：\(c5 ?? "?")；CHTE 停充 pmset≤10s 证据：\(session.conclusion("criterion.3.pmsetNotCharging10s") ?? "?")")
+        for c in cycles {
+            logger.log("- cycle\(c.cycle)：E2 判读=\(c.branch)（\(c.branchDetail)）；E3 恢复=\(c.recoveryOK ? "成立" : "判负")")
         }
+        logger.log("- 判读表：\(readbackTable.isEmpty ? "无" : readbackTable.joined(separator: "; "))")
+        for n in session.matrixNotes where n.hasPrefix("e5.") || n.hasPrefix("e6.") { logger.log("  - \(n)") }
         logger.log("- 待实测回填：重启是否清除键状态 = unknown（不得断言）")
         logger.log("smc-notes.backfill.end")
     }
