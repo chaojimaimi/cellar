@@ -68,6 +68,7 @@ enum ControlAttempt: Equatable {
 /// Task.detached，结果经 MainActor.run 回到主 actor 更新状态。
 @MainActor
 final class StatusController: ObservableObject {
+
     @Published private(set) var daemonStatus: DaemonStatus?
     @Published private(set) var connection: ConnectionState = .unknown
     @Published private(set) var busy = false
@@ -106,9 +107,14 @@ final class StatusController: ObservableObject {
         menuBarIconState(status: daemonStatus, connection: connection, powerOverride: powerOverride)
     }
 
-    /// IOPS 电源事件订阅安装（CellarApp 启动调用一次；PowerSourceMonitor 内部幂等）。
-    /// 安装即种子一次实时电源态，首图标态直接可翻转。
-    func installPowerSourceMonitoring() {
+    /// 启动期自标定（WP5 真机取证·实例替换修复）：CellarApp.init 早期访问
+    /// @StateObject 拿到的是被 SwiftUI 丢弃的临时实例——deinit 尸体链实锤（启动
+    /// ~100ms 内三个实例全部释放，monitor 随葬、IOPS 通知源被摘除，图标即时化
+    /// 静默失效）。修法 = WP3 StyleController 同款：自标定在自身 init 完成，
+    /// **幸存实例诞生即自带**后台轮询档 + IOPS 即时化订阅；临时实例同样自装
+    /// 随析构自摘（install 幂等 + deinit 摘源，无害）。
+    init() {
+        setPolling(panelVisible: false)
         powerSourceMonitor.controller = self
         powerSourceMonitor.install()
     }

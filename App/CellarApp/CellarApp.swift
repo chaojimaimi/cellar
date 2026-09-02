@@ -36,15 +36,12 @@ struct CellarApp: App {
         }
         onboarding.loadCompletedFlag()
         installer.refresh()
-        // §2.8 启动即入 60s 图标新鲜度档（双路线解耦定版：轮询恒在、与注册态无关
-        // ——不依赖面板首开；XPC 无应答快速失败，开销可忽略）。
-        statusController.setPolling(panelVisible: false)
-        // WP5 §2.4：IOPS 插拔电订阅（图标即时翻转数据源；安装即种子一次实时电源态）。
-        statusController.installPowerSourceMonitoring()
-        // WP3：风格加载在 StyleController.init 内自启动——⚠️ 不可在此处调用
-        // styleController.load()（App.init 早期访问 wrappedValue 会拿到被 install
-        // 替换的临时实例，Task 醒来时已释放、静默失效——WP3 真机实证，
-        // 见 StyleController.init 注释）。
+        // WP5 实例替换取证修复：statusController 的启动期自标定（后台轮询档 +
+        // IOPS 图标即时化订阅）已移入 StatusController 自身 init——App.init 早期
+        // 访问 @StateObject 拿到的是被 SwiftUI 丢弃的临时实例（deinit 尸体链实锤，
+        // 见 StatusController.init 注释）；installer/onboarding 的 init 期调用经
+        // 面板生命周期 re-trigger 兜底，观察期登记（不在此处改动）。
+        // WP3：风格加载同理在 StyleController.init 内自启动。
     }
 
     var body: some Scene {
