@@ -32,7 +32,7 @@ public struct BatterySnapshot: Equatable, Sendable {
     public let rawMaxCapacityMAh: Int?
     /// 原始当前容量 mAh（AppleRawCurrentCapacity，缺席 → nil）。
     public let rawCurrentCapacityMAh: Int?
-    /// 标称容量 mAh（AppleNominalChargeCapacity，缺席 → nil）。
+    /// 标称容量 mAh（NominalChargeCapacity——真机键名实测无 Apple 前缀，缺席 → nil）。
     /// WP2' 健康度口径：与 DesignCapacity 同源 Apple 官方（系统设置同源）；
     /// 缺席时消费侧回落 rawMaxCapacityMAh（方案 §4.3）。
     public let nominalChargeCapacityMAh: Int?

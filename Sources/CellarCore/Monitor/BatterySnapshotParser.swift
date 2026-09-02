@@ -31,7 +31,10 @@ public enum BatterySnapshotParser {
             fullyCharged: boolValue(props["FullyCharged"]),
             rawMaxCapacityMAh: intValue(props["AppleRawMaxCapacity"]),
             rawCurrentCapacityMAh: intValue(props["AppleRawCurrentCapacity"]),
-            nominalChargeCapacityMAh: intValue(props["AppleNominalChargeCapacity"]),
+            // ⚠️ 键名以真机 ioreg 实测为准（2026-09-03）：NominalChargeCapacity——
+            // 无 Apple 前缀（曾误写 AppleNominalChargeCapacity 致解析恒空、
+            // 健康度静默回退 rawMax 口径，面板 86% vs 系统 90% 的差异来源）。
+            nominalChargeCapacityMAh: intValue(props["NominalChargeCapacity"]),
             cellVoltagesMV: batteryData.flatMap { cellVoltages(from: $0) },
             fccMAh: batteryData.flatMap { intValue($0["FccComp1"]) },
             adapter: adapter(from: props["AdapterDetails"]),

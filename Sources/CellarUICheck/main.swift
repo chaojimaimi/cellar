@@ -97,7 +97,7 @@ private func makeSnapshot(
         "AppleRawCurrentCapacity": 4_838,
         // WP2' 健康度：Nominal 显式在场（6030/6300 → 96%——与 rawMax 兜底 97%
         // 有区分度，golden 钉死「循环 123 · 健康 96%」）。
-        "AppleNominalChargeCapacity": 6_030,
+        "NominalChargeCapacity": 6_030,
         "BatteryData": ["CellVoltage": [3_890, 3_895, 3_888], "FccComp1": 5_900],
     ]
     if let adapter {
