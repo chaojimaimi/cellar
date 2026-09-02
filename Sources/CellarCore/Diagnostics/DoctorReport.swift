@@ -92,6 +92,19 @@ public struct DoctorInputs: Sendable {
     /// 检查 8 是否已探测（区分"未探测"与"已探测但未运行"：后者渲染 INFO 行、
     /// 前者不渲染——既有 DoctorInputs 构造点（用例 65–68）零改动保持 7 项）。
     public let daemonProbeAttempted: Bool
+    /// 检查 3 键世代标注（CHTE/CHIE/CH0B 在位矩阵；nil = 未探测，不标注——
+    /// 兼容性约束：新字段全缺省值 + 条件渲染，评审 P0-3）。
+    public let keyPresence: KeyPresence?
+    /// 检查 6 进程层命中（「进程名[PID]」；nil = 未扫描——缺省形态零渲染）。
+    public let processHits: [String]?
+    /// 检查 9：launchctl print 解析的 daemon 注册态（nil = 解析失败）。
+    public let btmState: BTMState?
+    /// 检查 9 是否已探测（解析失败亦渲染 INFO——不静默；未探测不渲染）。
+    public let btmProbeAttempted: Bool
+    /// 检查 10：版本矩阵（CLI/daemon/App 三方；nil = 未探测不渲染）。
+    public let versionMatrix: VersionMatrix?
+    /// 检查 11：放电能力探测（nil = 未探测不渲染）。
+    public let dischargeProbe: DischargeProbe?
 
     public init(
         isRoot: Bool,
@@ -103,7 +116,13 @@ public struct DoctorInputs: Sendable {
         snapshotError: BatteryMonitorError?,
         conflict: ConflictScanResult,
         daemonStatus: DaemonStatus? = nil,
-        daemonProbeAttempted: Bool = false
+        daemonProbeAttempted: Bool = false,
+        keyPresence: KeyPresence? = nil,
+        processHits: [String]? = nil,
+        btmState: BTMState? = nil,
+        btmProbeAttempted: Bool = false,
+        versionMatrix: VersionMatrix? = nil,
+        dischargeProbe: DischargeProbe? = nil
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -115,6 +134,12 @@ public struct DoctorInputs: Sendable {
         self.conflict = conflict
         self.daemonStatus = daemonStatus
         self.daemonProbeAttempted = daemonProbeAttempted
+        self.keyPresence = keyPresence
+        self.processHits = processHits
+        self.btmState = btmState
+        self.btmProbeAttempted = btmProbeAttempted
+        self.versionMatrix = versionMatrix
+        self.dischargeProbe = dischargeProbe
     }
 }
 
@@ -133,6 +158,17 @@ public enum DoctorReportGenerator {
         ]
         if let daemonCheck = daemon(inputs) {
             checks.append(daemonCheck)
+        }
+        // WP5 新增 9–11：与检查 8 同款条件渲染（对应探测字段非缺省时追加在末尾；
+        // 缺省形态零渲染——用例 65 count==7 / 69 count==8 断言不动，评审 P0-3）。
+        if let btmCheck = btmRegistration(inputs) {
+            checks.append(btmCheck)
+        }
+        if let versionCheck = versionMatrixCheck(inputs) {
+            checks.append(versionCheck)
+        }
+        if let dischargeCheck = dischargeCapability(inputs) {
+            checks.append(dischargeCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -160,10 +196,18 @@ public enum DoctorReportGenerator {
     private static func backendProbe(_ inputs: DoctorInputs) -> DoctorCheck {
         switch inputs.probe {
         case .detected(let name, let keyNames):
-            return DoctorCheck(
-                name: "后端探测", status: .pass,
-                detail: "探测到 \(name) 后端（控制键：\(keyNames.joined(separator: ", "))）"
-            )
+            var detail = "探测到 \(name) 后端（控制键：\(keyNames.joined(separator: ", "))）"
+            // 键世代 info 标注（检查 3 并入，不改 status）：键在位矩阵非缺省时附加。
+            if let matrix = inputs.keyPresence {
+                var annotations: [String] = []
+                if matrix.chte == true { annotations.append("CHTE 世代") }
+                if matrix.ch0b == true { annotations.append("CH0B 世代") }
+                if matrix.chie == true { annotations.append("CHIE 在位（支持放电）") }
+                if !annotations.isEmpty {
+                    detail += "（" + annotations.joined(separator: "；") + "）"
+                }
+            }
+            return DoctorCheck(name: "后端探测", status: .pass, detail: detail)
         case .noneAvailable:
             return DoctorCheck(
                 name: "后端探测", status: .info,
@@ -214,14 +258,20 @@ public enum DoctorReportGenerator {
     // MARK: - 检查 6：共存检测
 
     private static func coexistence(_ inputs: DoctorInputs) -> DoctorCheck {
-        guard inputs.conflict.hasConflict else {
-            return DoctorCheck(name: "共存检测", status: .pass, detail: "未检测到其他充电管理工具")
-        }
         var entries: [String] = []
         entries.append(contentsOf: inputs.conflict.exact)
         for name in inputs.conflict.generic {
             // 通用词根兜底命中（尤其 power 词根易误报）在报告 detail 标注"疑似"。
             entries.append(name.lowercased().contains("power") ? "\(name)（疑似）" : name)
+        }
+        // 进程层命中并入（WP5 §2.2）：与目录命中分列来源标注；warn 语义同目录命中
+        // （疑似共存提示，非健康失败）。
+        let processHits = inputs.processHits ?? []
+        if !processHits.isEmpty {
+            entries.append("进程命中：" + processHits.joined(separator: "、"))
+        }
+        guard !entries.isEmpty else {
+            return DoctorCheck(name: "共存检测", status: .pass, detail: "未检测到其他充电管理工具")
         }
         return DoctorCheck(
             name: "共存检测", status: .warn,

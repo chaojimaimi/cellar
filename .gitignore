@@ -15,9 +15,11 @@ dist/
 App/.ci-build/
 App/.release-build/
 
-# 本地私有内容（不入公开仓库）
+# 本地私有内容（不入公开仓库）；docs/DEVICES.md 例外——WP5 §3 公开文档（机器
+# 可解析设备行收录表），必须随仓库发布：整目录忽略 + 单文件放行。
 PRIVATE-NOTES.md
-docs/
+docs/*
+!docs/DEVICES.md
 Tests/
 PLAN.md
 

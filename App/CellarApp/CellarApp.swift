@@ -39,6 +39,8 @@ struct CellarApp: App {
         // §2.8 启动即入 60s 图标新鲜度档（双路线解耦定版：轮询恒在、与注册态无关
         // ——不依赖面板首开；XPC 无应答快速失败，开销可忽略）。
         statusController.setPolling(panelVisible: false)
+        // WP5 §2.4：IOPS 插拔电订阅（图标即时翻转数据源；安装即种子一次实时电源态）。
+        statusController.installPowerSourceMonitoring()
         // WP3：风格加载在 StyleController.init 内自启动——⚠️ 不可在此处调用
         // styleController.load()（App.init 早期访问 wrappedValue 会拿到被 install
         // 替换的临时实例，Task 醒来时已释放、静默失效——WP3 真机实证，

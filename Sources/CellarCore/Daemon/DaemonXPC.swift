@@ -74,9 +74,9 @@ public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
     // install 后与 getStatus 的 version 核对（评审 F-3）；与 App/CLI 版本串一致
     // ——daemon 行为有变更必须 bump（WP2' 扩 dischargeToLimit 协议 + ActionState
-    // 扩展 + capabilities 字段，行为变更第三次破例）："0.3.0-alpha-dev" 已发布
-    // 于 WP2 面板卸载重装验证，本包为 0.3.1（发布归宿 0.3.1-alpha，防版本回退）。
-    public static let daemonVersion = "0.3.1-alpha-dev"
+    // 扩展 + capabilities 字段，行为变更第三次破例）：0.3.0 已发布于 WP2 面板卸载
+    // 重装验证，本包为 0.3.1（发布归宿 0.3.1-alpha，防版本回退）。
+    public static let daemonVersion = "0.3.1-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 版本号单变量：zip 文件名由此派生；发布时与 App/CLI/daemon 版本串保持一致。
-VERSION=0.3.0-alpha-dev
+VERSION=0.3.1-alpha
 
 PROJECT="App/CellarApp.xcodeproj"
 SCHEME="CellarApp"

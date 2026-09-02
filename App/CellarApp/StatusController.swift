@@ -86,6 +86,11 @@ final class StatusController: ObservableObject {
     /// 遥测快照（App 进程内 IOKit 只读，规格 §2.1 语义分源）。采样失败 → nil
     /// （不进横幅、不触发图标 .alert——失联才有 alert 的不变量不破）。
     @Published private(set) var batterySnapshot: BatterySnapshot?
+    /// App 侧 IOPS 实时电源态（WP5 §2.4 图标即时化数据源；nil = 尚未收到电源
+    /// 事件/读取失败——图标回退 daemonStatus 快照，零行为变化）。
+    @Published private(set) var powerOverride: PowerOverride?
+    /// IOPS 插拔电订阅（create-rule 所有权与释放见 PowerSourceMonitor）。
+    private let powerSourceMonitor = PowerSourceMonitor()
 
     /// 通知事件出口（CellarApp 注入 NotificationService.deliver；§2.3 单一入口投递）。
     /// WP2'：载荷附带 lastPercent——放电终态文案「当前电量 N%」由 App 按
@@ -96,8 +101,21 @@ final class StatusController: ObservableObject {
     private var notificationBaseline: DaemonStatus?
 
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
+    /// WP5 §2.4：IOPS 实时电源态 override 参与规则 4/5——图标随插拔电即时翻转。
     var iconState: MenuBarIconState {
-        menuBarIconState(status: daemonStatus, connection: connection)
+        menuBarIconState(status: daemonStatus, connection: connection, powerOverride: powerOverride)
+    }
+
+    /// IOPS 电源事件订阅安装（CellarApp 启动调用一次；PowerSourceMonitor 内部幂等）。
+    /// 安装即种子一次实时电源态，首图标态直接可翻转。
+    func installPowerSourceMonitoring() {
+        powerSourceMonitor.controller = self
+        powerSourceMonitor.install()
+    }
+
+    /// IOPS 实时电源态写入（PowerSourceMonitor 回调；图标即时翻转数据源）。
+    func apply(powerOverride: PowerOverride) {
+        self.powerOverride = powerOverride
     }
 
     /// daemon 能力清单透出（WP2' §2.1）：nil = 旧 daemon 未上报（升级提示）；

@@ -32,6 +32,19 @@ public enum MenuBarIconState: Equatable, Sendable {
     case alert
 }
 
+/// App 侧实时电源态（IOPS 订阅；WP5 §2.4 菜单栏图标插拔电即时化的数据源）。
+/// 非 nil 时替换 daemonStatus.lastExternalConnected/lastChargingEnabled 参与
+/// 规则 4/5 判定；规则 1/2/3（失联/未安装/禁用）优先级更高，不受 override 影响。
+public struct PowerOverride: Equatable, Sendable {
+    public let externalConnected: Bool
+    public let isCharging: Bool
+
+    public init(externalConnected: Bool, isCharging: Bool) {
+        self.externalConnected = externalConnected
+        self.isCharging = isCharging
+    }
+}
+
 /// 图标状态映射，规则全序（规格 §2.5 定版五条，逐条短路）：
 /// 1. connection == .unreachable → .alert（失联优先于一切）
 /// 2. status == nil → .disabled（connection 已被规则 1 过滤，全称覆盖三 connection 值）
@@ -41,13 +54,31 @@ public enum MenuBarIconState: Equatable, Sendable {
 ///
 /// nil 字段语义：nil ≠ false（规则 4 不触发）、nil ≠ true（规则 5 不触发）——
 /// 双 nil 落 .holding，与「未采样过」的初态语义一致。
-public func menuBarIconState(status: DaemonStatus?, connection: ConnectionState) -> MenuBarIconState {
+///
+/// powerOverride（WP5 §2.4）：非 nil 时以 App 侧 IOPS 实时电源态**替换**
+/// daemonStatus.last* 字段参与规则 4/5 判定（图标即时翻转——不再受 daemon 30s
+/// tick 与轮询档位约束）；override 下规则 5 语义同源：isCharging==true → .charging，
+/// 否则 → .holding。
+public func menuBarIconState(
+    status: DaemonStatus?,
+    connection: ConnectionState,
+    powerOverride: PowerOverride?
+) -> MenuBarIconState {
     if connection == .unreachable { return .alert }
     guard let status else { return .disabled }
     if status.mode == "disabled" { return .disabled }
+    if let powerOverride {
+        if powerOverride.externalConnected == false { return .discharging }
+        return powerOverride.isCharging ? .charging : .holding
+    }
     if status.lastExternalConnected == false { return .discharging }
     if status.lastChargingEnabled == true { return .charging }
     return .holding
+}
+
+/// 无 override 形态（既有调用点与用例 85 零改动；行为 == powerOverride nil）。
+public func menuBarIconState(status: DaemonStatus?, connection: ConnectionState) -> MenuBarIconState {
+    menuBarIconState(status: status, connection: connection, powerOverride: nil)
 }
 
 // MARK: - 菜单栏多状态符号（WP4 规格 §2.2 候选表 + §7.3 图标纪律）

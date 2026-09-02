@@ -3,6 +3,57 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1-alpha] - 2026-09-02
+
+Phase 3 complete — interface style system, one-shot actions (charge to full /
+discharge to limit), power flow visualization, battery health, full English +
+Simplified Chinese localization, snapshot test matrix, and an expanded
+eleven-check `doctor`. All verified end-to-end on Apple Silicon / macOS 26
+real hardware.
+
+### Added
+
+- **Interface style system**: Native / Cellar Amber themes with instant
+  switching, dark & light adaptive; Settings window (appearance / general /
+  about); menu-bar power flow visualization (adapter / floating / battery
+  with measured battery-side wattage)
+- **Charge to Full Once**: temporarily charge to 100% (battery calibration /
+  travel), automatically resuming the charge limit afterwards
+- **Discharge to Limit**: temporarily cuts adapter power and lets the battery
+  drain to the charge target, then restores automatically — with hardware
+  safety rails (60% floor, 40 °C cutoff, sleep abort, crash-recovery,
+  residual-state patrol); requires macOS 26+ (Tahoe backend) and supported
+  firmware (auto-detected, feature hidden otherwise)
+- **Battery health** percentage (nominal / design capacity) in the panel
+- **Power flow diagram** with real-time direction and measured wattage
+- **Full English + Simplified Chinese localization** (menu bar panel,
+  onboarding, settings, notifications, about)
+- **doctor expanded to eleven checks**: daemon registration state (BTM),
+  three-way version matrix, discharge capability & residual-state safety,
+  key-generation notes, and process-level coexistence scanning; new
+  `cellar doctor --devices` outputs a machine-parsable compatibility line
+  (no serial numbers or hardware UUIDs)
+- **Icon immediacy**: menu bar icon now reacts to plug/unplug instantly
+  (system power-source notifications instead of polling)
+
+### Changed
+
+- Daemon protocol version bumped to `0.3.1-alpha` (capabilities discovery;
+  App / daemon must be upgraded together — see README "Updating the App")
+- Onboarding, notifications and panel copy available in both languages;
+  daemon wire-format literals remain untranslated by design
+
+### Fixed
+
+- Settings window now opens in front of other apps
+- Discharge confirmation moved inline (the system dialog dismissed the
+  menu-bar panel)
+- Power-flow arrow direction during battery discharge; floating state now
+  shows a neutral "no flow" marker
+- Success banners auto-dismiss after 5 seconds (previously lingered)
+- Localization language matching for region-qualified preferences
+  (e.g. `zh-Hans-CN`)
+
 ## [0.2.0-alpha] - 2026-09-01
 
 Menu bar app (GUI) and embedded daemon — Phase 2 complete. Core charge

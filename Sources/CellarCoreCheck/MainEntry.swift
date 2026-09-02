@@ -309,6 +309,12 @@ struct Main {
         // WP2' 验收修正：StatusFailureKind 横幅通道映射（done 剥离失败通道，
         // 改走 success 反馈 + 5s 自动消退——StatusController 侧）
         scenarioStatusFailureKindMapping()
+        // WP5：doctor 扩展（进程扫描/BTM/版本矩阵/放电能力）+ 图标 override +
+        // DEVICES 设备行场景域（按域拆独立文件，main.swift 不增长）。
+        runProcessScanDomainScenarios()
+        runIconOverrideDomainScenarios()
+        runDoctorExtendedDomainScenarios()
+        runDeviceInfoDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
