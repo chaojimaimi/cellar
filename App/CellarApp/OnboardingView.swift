@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 /// 首启引导（WP5 §2.1 四步定版，340pt 分步 + 进度指示）：
@@ -308,7 +309,7 @@ struct OnboardingView: View {
                 feedback: statusController.controlFeedback,
                 connection: statusController.connection,
                 lastAttemptSummary: statusController.lastAttempt?.summary,
-                statusFailure: statusController.statusFailure,
+                statusFailureMessage: statusController.statusFailure?.message,
                 onRetry: statusController.lastAttempt == nil
                     ? { statusController.refreshNow() }
                     : { statusController.retryLastAttempt() }

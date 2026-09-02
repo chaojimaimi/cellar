@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 /// 外观 Tab（WP3 §4 定版）：风格 Picker（原生 / 酒窖琥珀）即时生效——

@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 // MARK: - 面板分区（WP3 S5a 自 PanelView 迁出：PanelView 行数回落项目规 ≤400；

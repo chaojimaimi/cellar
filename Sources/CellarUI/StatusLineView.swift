@@ -1,7 +1,7 @@
 import CellarCore
 import SwiftUI
 
-/// 状态行（WP4 规格 §2.4 数据源 + §7.2 重排）：**固定分段网格 2 行 3 列**——
+/// 状态行（WP4 规格 §2.4 数据源 + §7.2 重排；WP4 自 App target 下沉）：**固定分段网格 2 行 3 列**——
 /// 电源｜电流｜电压 // 温度｜循环｜适配器；每段 caption 标签 + monospacedDigit 值，
 /// 分段自适应宽、零截断（消除 §7.2 反馈的流式单行截断与跳动）。
 ///
@@ -10,11 +10,20 @@ import SwiftUI
 /// 适配器 W 取 adapter.watts 实时数据（§7.2：数值随硬件真实变化即正确，
 /// 缺席整体隐藏、留空位保网格稳定）；采样失败（snapshot == nil）→
 /// 「遥测不可用」（不进告警横幅，防 1s 刷屏）。
-struct StatusLineView: View {
-    let snapshot: BatterySnapshot?
+///
+/// ⚠️ WP4 下沉注记：段标签与降级文案仍为 LocalizedStringKey 字面量（「遥测不可
+/// 用」/「电源」等）——S3 §4.3 随方向词枚举化一并门面化（方案定版：方向词改造
+/// 不在 S1 做，currentDirectionWord 调用原样保留，报告注明）。字面量不在
+/// catalog 内 → 显示原文不变，下沉零行为差异。
+public struct StatusLineView: View {
+    public let snapshot: BatterySnapshot?
     @Environment(\.cellarTheme) private var theme
 
-    var body: some View {
+    public init(snapshot: BatterySnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    public var body: some View {
         if let snapshot {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {

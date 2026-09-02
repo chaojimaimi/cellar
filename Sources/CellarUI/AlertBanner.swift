@@ -8,16 +8,37 @@ import SwiftUI
 ///    → 无重试（失败来自 daemon 侧持续态，重试语义不适用；不占用 ① ② 通道）
 /// ④ 轮询致 unreachable 且无控制反馈（无上次动作语义）→「重试」= 立即刷新
 /// 成功反馈（下一次 .success）自动清除横幅（本视图对 success/none 不渲染）。
-struct AlertBanner: View {
+///
+/// ⚠️ WP4 下沉接口注记：原参数 `statusFailure: StatusFailureKind?` 改注入
+/// **文案** `statusFailureMessage: String?`——StatusFailureKind 迁 CellarCore 时
+/// 按硬事实 3 判据剥离 `.message`（文案常量留 App/NotificationService，CellarUI
+/// 不持有 App 域文案）；App 调用面传 `statusFailure?.message`，分支判定与优先级
+/// （①② > ③ > ④）逐字保持，零行为变化。S3 时 ③ 分支文案经 CellarL10n 门面化。
+public struct AlertBanner: View {
     let feedback: ControlFeedback?
     let connection: ConnectionState
     let lastAttemptSummary: String?
-    /// status 派生失败横幅（WP5；daemonStatus.lastAction 失败串，首次样本即呈现）。
-    let statusFailure: StatusFailureKind?
+    /// status 派生失败横幅文案（WP5；daemonStatus.lastAction 失败串，首次样本即
+    /// 呈现——App 层自 StatusFailureKind.message 投影）。
+    let statusFailureMessage: String?
     let onRetry: () -> Void
     @Environment(\.cellarTheme) private var theme
 
-    var body: some View {
+    public init(
+        feedback: ControlFeedback?,
+        connection: ConnectionState,
+        lastAttemptSummary: String?,
+        statusFailureMessage: String?,
+        onRetry: @escaping () -> Void
+    ) {
+        self.feedback = feedback
+        self.connection = connection
+        self.lastAttemptSummary = lastAttemptSummary
+        self.statusFailureMessage = statusFailureMessage
+        self.onRetry = onRetry
+    }
+
+    public var body: some View {
         if let content = bannerContent {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -54,8 +75,8 @@ struct AlertBanner: View {
         case .success, .none:
             break
         }
-        if let statusFailure {
-            return (statusFailure.message, nil)
+        if let statusFailureMessage {
+            return (statusFailureMessage, nil)
         }
         if connection == .unreachable {
             return ("守护进程失联，无法获取策略状态", "重试")

@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 /// 菜单栏面板（Phase 2 WP4 正式面板，规格 §2.7 七层分区；WP5 引导模式门）：
@@ -78,7 +79,7 @@ struct PanelView: View {
                 feedback: statusController.controlFeedback,
                 connection: statusController.connection,
                 lastAttemptSummary: statusController.lastAttempt?.summary,
-                statusFailure: statusController.statusFailure,
+                statusFailureMessage: statusController.statusFailure?.message,
                 onRetry: statusController.lastAttempt == nil
                     ? { statusController.refreshNow() }
                     : { statusController.retryLastAttempt() }

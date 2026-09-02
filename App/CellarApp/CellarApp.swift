@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 @main

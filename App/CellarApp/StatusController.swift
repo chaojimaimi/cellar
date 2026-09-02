@@ -3,34 +3,13 @@ import Combine
 import Foundation
 import os
 
-/// 控制操作反馈（规格 §2.3 三态 + §3.4 stale 分支）。非成功态全部红色系，
-/// 面板按 case 渲染；Message 为 daemon 拒绝原文或本地预检文案。
-enum ControlFeedback: Equatable {
-    case success(String)
-    /// daemon 拒绝原文上屏（含面板本地 LimitPolicy 预检失败文案——同一条反馈行）。
-    case daemonRejected(String)
-    /// 传输失败（timeout/connectionFailed）。
-    case transferFailed
-    /// stale daemon：版本不匹配（旧二进制无 admin 组判定，拒绝原文对面板用户是错误引导）。
-    case staleDaemon
-}
+// WP4：ControlFeedback / StatusFailureKind 两类型按硬事实 3 判据迁 CellarCore
+// （依赖闭包仅 Foundation；用户可见串剥离）——本文件仅保留 App 域文案投影。
 
-/// status 派生失败横幅形态（WP5 §2.3 P1-1 配套）：daemonStatus.lastAction 为
-/// enforce:error / enforce:verifyFailed 时由 StatusController 暴露——**不占用
-/// controlFeedback 通道**（daemon 侧 enforce 失败 WP4 横幅本不覆盖；原「双通道」
-/// 表述系引用未接线的通道，本条修复该矛盾）。
-enum StatusFailureKind: Equatable {
-    /// 写/传输失败（enforce:error）——红线 5。
-    case writeFailed
-    /// 外部写者冲突显式化（enforce:verifyFailed）。
-    case conflictSuspected
-    /// WP2 一次性动作终态（既有横幅通道新分支，P2-4 接线）：
-    /// fullOnce:done / timeout / cancel(crash-recovery)——锁存期持续呈现，
-    /// 下一次用户动作（新动作/取消/改限）自然清除。
-    case actionCompleted
-    case actionTimedOut
-    case actionInterrupted
-
+/// StatusFailureKind 的 App 域横幅文案（Core 枚举本体已迁，文案常量留
+/// NotificationService——§2.3 定版与通知同源；S3 时同走 CellarL10n
+/// notification.* key）。现文案原样，零行为变化。
+extension StatusFailureKind {
     /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
     var message: String {
         switch self {
@@ -39,19 +18,6 @@ enum StatusFailureKind: Equatable {
         case .actionCompleted: return NotificationService.actionCompletedMessage
         case .actionTimedOut: return NotificationService.actionTimeoutMessage
         case .actionInterrupted: return NotificationService.actionInterruptedMessage
-        }
-    }
-
-    /// 从 daemonStatus 派生（⚠️ lastAction 字面量与 CellarCore 通知分类同契约——
-    /// 变更两侧同步暴露，CellarCoreCheck 钉死精确值）。
-    init?(status: DaemonStatus) {
-        switch status.lastAction {
-        case "enforce:error": self = .writeFailed
-        case "enforce:verifyFailed": self = .conflictSuspected
-        case "fullOnce:done": self = .actionCompleted
-        case "fullOnce:timeout": self = .actionTimedOut
-        case "fullOnce:cancel(crash-recovery)": self = .actionInterrupted
-        default: return nil
         }
     }
 }

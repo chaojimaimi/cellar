@@ -1,29 +1,40 @@
 import SwiftUI
 
-// MARK: - 仪表显示上下文（WP4 规格 §2.3，面板层拼装）
+// MARK: - 仪表显示上下文（WP4 规格 §2.3，面板层拼装；WP4 自 App target 下沉）
 
 /// 仪表输入为面板层组装的显示上下文（纯数值，可预览可测）：
 /// - `percent == nil`（遥测不可用/采样失败）→ 中心「--」+ 中性环（降级形态）
 /// - `band == nil` → 隐藏区间弧段（未注册——策略真相在 daemon 拿不到；
 ///   mode == disabled——画 band 会误导「仍在限充」）
 /// - `axLabel` 由面板层拼装（「当前电量 85%，充电上限 80%，已停充」语义）
-struct GaugeState {
-    var percent: Int?
-    var band: ClosedRange<Int>?
-    var isCharging: Bool
-    var axLabel: String
+public struct GaugeState {
+    public var percent: Int?
+    public var band: ClosedRange<Int>?
+    public var isCharging: Bool
+    public var axLabel: String
+
+    public init(percent: Int?, band: ClosedRange<Int>?, isCharging: Bool, axLabel: String) {
+        self.percent = percent
+        self.band = band
+        self.isCharging = isCharging
+        self.axLabel = axLabel
+    }
 }
 
 /// 签名组件（产品视觉锚点）：底环 + band 弧 + 电量弧（充电中叠加 bolt 徽标）+
 /// 中心数字（monospacedDigit 动态字体）。轻量 trim 重绘，数值插值动画 ≤0.3s
 /// linear（无常驻 spring）；accessibilityElement(children: .ignore) 聚合单元素。
-struct GaugeView: View {
-    let state: GaugeState
+public struct GaugeView: View {
+    public let state: GaugeState
     @Environment(\.cellarTheme) private var theme
 
     private static let lineWidth: CGFloat = 14
 
-    var body: some View {
+    public init(state: GaugeState) {
+        self.state = state
+    }
+
+    public var body: some View {
         GeometryReader { proxy in
             // 环心半径 = 半宽 - 半线宽（bolt 徽标贴环顶、随尺寸缩放）。
             let ringRadius = proxy.size.width / 2 - Self.lineWidth / 2

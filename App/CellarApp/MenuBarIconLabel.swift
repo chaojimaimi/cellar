@@ -1,5 +1,6 @@
 import AppKit
 import CellarCore
+import CellarUI
 import SwiftUI
 
 /// 菜单栏动态图标（规格 §2.2 多状态符号 + alert 变色增强）。

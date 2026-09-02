@@ -1,4 +1,5 @@
 import CellarCore
+import CellarUI
 import SwiftUI
 
 /// 守护进程安装区（WP5 §2.2 统一安装 wrapper 接入后从 PanelView 拆出）：

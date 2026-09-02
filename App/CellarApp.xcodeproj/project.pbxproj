@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000012 /* CellarCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* CellarCore */; };
+		A10000000000000000000016 /* CellarUI in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000015 /* CellarUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +46,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000012 /* CellarCore in Frameworks */,
+				A10000000000000000000016 /* CellarUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -89,6 +91,7 @@
 			name = CellarApp;
 			packageProductDependencies = (
 				A10000000000000000000011 /* CellarCore */,
+				A10000000000000000000015 /* CellarUI */,
 			);
 			productName = CellarApp;
 			productReference = A10000000000000000000002 /* Cellar.app */;
@@ -290,6 +293,10 @@
 		A10000000000000000000011 /* CellarCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CellarCore;
+		};
+		A10000000000000000000015 /* CellarUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CellarUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
