@@ -221,6 +221,26 @@ public actor AppConfigStore {
         #endif
     }
 
+    /// 原子读改写（WP3 §3.1，评审 P0-1 定版）：actor 方法体内同步执行
+    /// （load → transform → save 无挂起点），单实例上 RMW 不可交错——共享同一
+    /// store 的多写者（风格/登录项/引导完成标志）并发更新时字段互不覆盖。
+    ///
+    /// - 读失败（缺失/损坏）→ 回退默认配置再改写（与 load 同语义：偏好可重建，
+    ///   不值得打断调用方）。
+    /// - 写失败原样上抛（调用方上屏失败文案，不静默）。
+    ///
+    /// ⚠️ 参数必须 `@Sendable`：Swift 6 数据竞争安全要求跨 actor 调用的全部实参
+    /// 可 Sendable（三调用点 StyleController / LoginItemController /
+    /// OnboardingController 全部跨隔离）；闭包应仅捕获 Sendable 值。
+    public func update(
+        _ transform: @Sendable (inout AppConfig) -> Void
+    ) throws -> AppConfig {
+        var config = load()
+        transform(&config)
+        try save(config)
+        return config
+    }
+
     /// 日志（actor 静态成员非隔离；Logger Sendable，跨隔离界安全）。
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "app-config")
 }

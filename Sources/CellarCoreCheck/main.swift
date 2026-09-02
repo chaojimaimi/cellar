@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -2233,6 +2233,90 @@ struct Main {
             )
             try JSONEncoder().encode(unknownKind).write(to: store.url)
             check(store.load() == nil && store.fileExists, "用例104", "kind != fullOnce → nil（未知动作 treat-as-absent）")
+        }
+
+        // MARK: - 场景（Phase 3 WP3 风格系统，用例 105–107）
+        // PanelStyle.validating 矩阵（§3.1：nil=未设置 vs 未知串语义分界在调用方日志）、
+        // vocabularyKey 完整性（§3.5 对账表 2 风格 × 7 词条）、AppConfigStore.update
+        // 原子读改写（评审 P0-1：字段互不覆盖矩阵 + 写失败上抛）。
+
+        // 用例 105：validating 矩阵——nil/空串/未知串 → nil；"native"/"amber" 合法；
+        // 大小写敏感（"Amber" 必须未知——手改 JSON 不猜意图）。
+        do {
+            check(PanelStyle.validating(nil) == nil, "用例105", "nil → nil（未设置 = 默认合法态，调用方不记日志）")
+            check(PanelStyle.validating("") == nil, "用例105", "空串 → nil（未知值路径，调用方须 os_log）")
+            check(PanelStyle.validating("native") == .native, "用例105", "\"native\" → .native")
+            check(PanelStyle.validating("amber") == .amber, "用例105", "\"amber\" → .amber")
+            check(PanelStyle.validating("Amber") == nil, "用例105", "\"Amber\" → nil（大小写敏感）")
+            check(PanelStyle.validating("dark") == nil, "用例105", "\"dark\" → nil（未知串）")
+        }
+
+        // 用例 106：vocabularyKey 完整性——2 风格 × 全词条产出合法 key
+        // （非空 + 前缀 vocabulary.<style>. + 词条名落尾）+ 词条集合钉死 7 个
+        // （延后词条不建死键，§3.5）。
+        do {
+            var allOK = true
+            for style in [PanelStyle.native, .amber] {
+                for word in VocabularyWord.allCases {
+                    let key = PanelStyle.vocabularyKey(style: style, word: word)
+                    if key.isEmpty { allOK = false }
+                    if !key.hasPrefix("vocabulary.\(style.rawValue).") { allOK = false }
+                    if !key.hasSuffix(word.rawValue) { allOK = false }
+                }
+            }
+            check(allOK, "用例106", "2 风格 × 全词条 key 非空且含正确前缀/词条名落尾")
+            check(
+                PanelStyle.vocabularyKey(style: .amber, word: .statusHoldingExternal)
+                    == "vocabulary.amber.statusHoldingExternal",
+                "用例106", "key 形态钉死：vocabulary.<style>.<word>（§3.6 示例 = 真实词条名）"
+            )
+            check(VocabularyWord.allCases.count == 7, "用例106", "词条数 = 7（对账表定版成员，不多不少）")
+        }
+
+        // 用例 107：AppConfigStore.update 原子读改写（评审 P0-1 定版）——
+        // 单字段改写不覆盖其余字段（互不覆盖矩阵三行）+ 读缺失回退默认再改写 +
+        // 写失败原样上抛。
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cellar-appconfig-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let fileURL = directory.appendingPathComponent("app-config.json")
+            let store = AppConfigStore(url: fileURL)
+
+            // 预置全字段非默认初值（style 取合法存储值形态）。
+            try await store.save(AppConfig(launchAtLogin: false, style: "amber", onboardingCompleted: false))
+
+            var updated = try await store.update { $0.launchAtLogin = true }
+            check(updated.launchAtLogin && updated.style == "amber" && !updated.onboardingCompleted,
+                  "用例107", "改 launchAtLogin → style/onboardingCompleted 保持（互不覆盖一）")
+            check(await store.load() == updated, "用例107", "update 返回值 == 磁盘状态（RMW 落盘）")
+
+            updated = try await store.update { $0.onboardingCompleted = true }
+            check(updated.onboardingCompleted && updated.launchAtLogin && updated.style == "amber",
+                  "用例107", "改 onboardingCompleted → launchAtLogin/style 保持（互不覆盖二）")
+
+            updated = try await store.update { $0.style = "native" }
+            check(updated.style == "native" && updated.launchAtLogin && updated.onboardingCompleted,
+                  "用例107", "改 style → launchAtLogin/onboardingCompleted 保持（互不覆盖三）")
+
+            // 读失败（文件缺失）→ 回退默认再改写（与 load 同语义）。
+            try FileManager.default.removeItem(at: fileURL)
+            updated = try await store.update { $0.style = "amber" }
+            check(updated == AppConfig(launchAtLogin: false, style: "amber", onboardingCompleted: false),
+                  "用例107", "读失败（文件缺失）→ 回退默认再改写")
+
+            // 写失败上抛：父路径置为普通文件——save 建目录必失败，错误不得被吞。
+            try "x".write(to: directory.appendingPathComponent("blocker"), atomically: true, encoding: .utf8)
+            let blockedStore = AppConfigStore(
+                url: directory.appendingPathComponent("blocker").appendingPathComponent("app-config.json")
+            )
+            do {
+                _ = try await blockedStore.update { $0.launchAtLogin = true }
+                check(false, "用例107", "写失败须上抛——但未抛错")
+            } catch {
+                check(true, "用例107", "写失败原样上抛（父路径为普通文件，建目录失败）")
+            }
         }
     }
 

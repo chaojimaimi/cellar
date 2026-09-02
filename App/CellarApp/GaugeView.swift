@@ -41,6 +41,10 @@ struct GaugeView: View {
                 Circle()
                     .trim(from: 0, to: arcFraction)
                     .stroke(theme.accent, style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))
+                    // 光晕随 token（WP3 §3.2；demo 事实：仅当前进度弧有 drop-shadow，
+                    // band 弧与底环无）。native 哑值（透明 + radius 0）消解为零视觉
+                    // 变化；渐变不用于仪表弧（弧为单色 accent，渐变消费面仅外观 Tab）。
+                    .shadow(color: theme.accentGlow.color, radius: theme.accentGlow.radius)
                     .rotationEffect(.degrees(-90))
                     .animation(.linear(duration: 0.3), value: state.percent)
 

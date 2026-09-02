@@ -52,22 +52,35 @@ struct StatusLineView: View {
         }
     }
 
-    /// 电源段：外接（充电中/已停充）或电池供电。「已停充」用 holding 强调色
-    /// （规格 §2.4 语义保持）。
+    /// 电源段：外接（充电中/已停充）或电池供电，词随风格（§3.5 对账表——
+    /// statusChargingExternal / statusHoldingExternal / statusBattery）。
     private func powerSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: "电源") {
             if snapshot.externalConnected && snapshot.isCharging {
-                Text("外接 · 充电中")
+                Text(theme.word(.statusChargingExternal))
             } else if snapshot.externalConnected {
-                // 分两段 Text（macOS 26 下 Text+Text 拼接已弃用）；「已停充」
-                // 子文本显式 holding，覆盖外层 secondaryText。
-                HStack(spacing: 0) {
-                    Text("外接 · ")
-                    Text("已停充").foregroundStyle(theme.holding)
-                }
+                holdingWord
             } else {
-                Text("电池供电")
+                Text(theme.word(.statusBattery))
             }
+        }
+    }
+
+    /// 停充段：语汇串按「·」拆两段渲染——前缀普通色 + 状态词 holding 强调色
+    /// （规格 §2.4 语义保持，A 原生视觉零回归）；串内无「·」时整串强调（回退
+    /// 安全，不丢语义）。
+    @ViewBuilder
+    private var holdingWord: some View {
+        let full = theme.word(.statusHoldingExternal)
+        if let separator = full.firstIndex(of: "·") {
+            HStack(spacing: 0) {
+                Text(String(full[...separator]))
+                Text(String(full[full.index(after: separator)...]))
+                    .foregroundStyle(theme.holding)
+            }
+        } else {
+            Text(full)
+                .foregroundStyle(theme.holding)
         }
     }
 
@@ -92,9 +105,9 @@ struct StatusLineView: View {
         }
     }
 
-    /// 温度段：一位小数。
+    /// 温度段：一位小数。段标签随风格（word(.tempLabel)——amber「窖温」，demo）。
     private func temperatureSegment(_ snapshot: BatterySnapshot) -> some View {
-        segment(caption: "温度") {
+        segment(caption: theme.word(.tempLabel)) {
             Text(String(format: "%.1f °C", snapshot.temperatureC))
         }
     }

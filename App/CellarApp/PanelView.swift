@@ -98,22 +98,34 @@ struct PanelView: View {
                 Divider()
                 controlSection
                 Divider()
-                actionSection
+                ActionSectionView()
             }
 
             Divider()
             DaemonSectionView()
 
             Divider()
-            loginItemSection
+            LoginItemSectionView()
 
             Divider()
 
-            Button("退出 Cellar") {
-                NSApplication.shared.terminate(nil)
-            }
+            PanelFooterView()
         }
         .padding(18)
+        // 自绘面板背景（WP3 §3.2；spike S2 定版：容器圆角贴合、无白边/脏色）——
+        // nil = 不画（native 走系统容器材质，A 原生零回归）。
+        .background {
+            if let panelBackground = theme.panelBackground {
+                panelBackground
+            }
+        }
+        // 面板边框（amber 专属；native nil 不画）。圆角对齐 MenuBarExtra 容器
+        // （精确值 S8 真机走查复核）。
+        .overlay {
+            if let panelBorder = theme.panelBorder {
+                RoundedRectangle(cornerRadius: 8).strokeBorder(panelBorder)
+            }
+        }
         // 首包同步（评审 P1；§7.1 语义扩展）：onAppear 时 status 多半未到，首个
         // 非 nil 回包补同步一次；此后轮询回包不再回写（用户拖动不被拽回）。
         // 拖动中首包到达：不回写（用户拖动值优先，松手即应用），但标记已同步——
@@ -236,7 +248,7 @@ struct PanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack {
-                Text("充电上限")
+                Text(theme.word(.limitLabel))
                 Spacer()
                 Text("\(Int(upperLimit))%")
                     .monospacedDigit()
@@ -296,56 +308,12 @@ struct PanelView: View {
         }
     }
 
-    // MARK: - 一次性动作区（WP2 §1.1 交付面）：动作活跃 → 状态行 + 取消按钮、
-    // 滑杆/预设/总开关禁用；无动作且 mode==active → 「充满一次」按钮。
+    // MARK: - 一次性动作区与登录项区（WP3 S5a 迁出至 PanelSections.swift：动作区
+    // 语汇 word(.actionFullOnce)、页脚 word(.quit)；动作活跃判定 isActionActive
+    // 供本区滑杆/预设/总开关禁用，语义与迁出前一致）。
     /// 动作活跃判定（滑杆/预设/总开关的禁用依据）。
     private var isActionActive: Bool {
         statusController.action != nil
-    }
-
-    private var actionSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if isActionActive {
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt.fill")
-                        .foregroundStyle(theme.success)
-                    Text("充满中…预计 100% 后自动恢复")
-                        .font(.caption)
-                    Spacer(minLength: 4)
-                    Button("取消") {
-                        statusController.cancelFullOnce()
-                    }
-                    .controlSize(.small)
-                    .disabled(statusController.busy)
-                }
-            } else if statusController.daemonStatus?.mode == "active" {
-                Button {
-                    statusController.fullOnce()
-                } label: {
-                    Label("充满一次：充电到 100% 后自动恢复限充", systemImage: "bolt.fill")
-                }
-                .controlSize(.small)
-                .disabled(statusController.busy)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 登录项开关（规格 §2.4 接线：SMAppService.loginItem + AppConfigStore 持久化）。
-    private var loginItemSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("开机启动 Cellar", isOn: Binding(
-                get: { loginItems.launchAtLogin },
-                set: { loginItems.toggle($0) }
-            ))
-            .disabled(loginItems.busy)
-            if let feedback = loginItems.feedback {
-                Text(feedback)
-                    .font(.caption)
-                    .foregroundStyle(feedback.hasPrefix("已") ? theme.success : theme.alert)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// 防抖应用排程（规格 §7.1）：新排程先 cancel 旧任务；延迟 300ms 后走

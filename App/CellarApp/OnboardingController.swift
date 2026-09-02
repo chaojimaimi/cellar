@@ -14,7 +14,7 @@ enum InstallGate: Equatable {
 /// PanelView 内 @State 每次开面板重置是既有事实，step 属主必须在此）。
 ///
 /// 职责：暂存步、冲突门状态（扫描折叠 + 命中详情）、触发式判定、收尾规则
-/// （静默补写）、安装复检统一 wrapper、完成写标志（load-modify-save + 内存先行）。
+/// （静默补写）、安装复检统一 wrapper、完成写标志（共享 store 原子 update + 内存先行）。
 @MainActor
 final class OnboardingController: ObservableObject {
     @Published private(set) var step: OnboardingStep = .welcome
@@ -181,21 +181,19 @@ final class OnboardingController: ObservableObject {
         }
     }
 
-    // MARK: - 完成写标志（§2.4：load-modify-save + 内存先行）
+    // MARK: - 完成写标志（§2.4：原子读改写 + 内存先行）
 
-    /// 写完成标志：load-modify-save（读当前配置改标志再存，防覆盖
-    /// launchAtLogin/style）。写盘失败 → 内存态已置完成（不困住用户）+ os_log
-    /// 非阻塞呈现；下次启动标志仍 false 时被收尾规则补写。
+    /// 写完成标志：经共享 store 的 actor 原子 update() 只写完成标志（WP3 §3.1
+    /// 评审 P0-1：launchAtLogin/style 等并发写者字段互不覆盖）。写盘失败 → 内存态
+    /// 已置完成（不困住用户）+ os_log 非阻塞呈现；下次启动标志仍 false 时被收尾
+    /// 规则补写。
     private func markCompleted() {
         onboardingCompleted = true
         gateOverride = false
         step = .done
         Task { [store] in
             do {
-                let config = await store.load()
-                var updated = config
-                updated.onboardingCompleted = true
-                try await store.save(updated)
+                _ = try await store.update { $0.onboardingCompleted = true }
             } catch {
                 Self.log.error("引导完成标志写盘失败（内存态已置完成，下次启动重试）：\(error.localizedDescription)")
             }
