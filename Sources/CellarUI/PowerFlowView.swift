@@ -5,15 +5,16 @@ import SwiftUI
 
 /// 功率流向三态（数据源 = App 侧 1s telemetry 快照，非 daemonStatus 30s 滞后字段）。
 public enum PowerFlow: Equatable, Sendable {
-    /// 外接 + 充电中（`[插头] → [Mac]` 与 `[Mac] ← [电池]` 双路径活跃）。
+    /// 外接 + 充电中（插头供电路径 + 充电流入电池，均右向活跃）。
     case charging
     /// 外接 + 停充漂浮（仅插头供电路径活跃；电池路径挂起）。
     case floating
-    /// 电池供电（仅电池路径活跃；插头路径熄灭）。
+    /// 电池供电（仅电池路径活跃且方向翻转：电池→Mac 左向；插头路径熄灭）。
     case onBattery
 }
 
-/// 功率流向图 `[插头] → [Mac] ← [电池]`：骨架恒定，活跃路径 accent 高亮 +
+/// 功率流向图 `[插头] → [Mac] ← [电池]`：骨架恒定、箭头方向随功率流翻转
+/// （充电流 Mac→电池右向 / 电池供电 电池→Mac 左向），活跃路径 accent 高亮 +
 /// 短标签（语汇词条 powerFlow.* ×2 风格，en 译文随 WP2' catalog 先行）。
 ///
 /// - 输入可选（快照缺席 → nil 不渲染——作为 GaugeView 与 StatusLineView 之间的
@@ -37,9 +38,14 @@ public struct PowerFlowView: View {
         if let flow = Self.flow(externalConnected: externalConnected, isCharging: isCharging) {
             HStack(spacing: 6) {
                 symbol(name: "powerplug", fallback: "circle.dashed")
-                arrow(active: flow == .charging || flow == .floating)
+                // 插头供电路径恒指向 Mac（右向）。
+                arrow(active: flow == .charging || flow == .floating, symbol: "arrow.right")
                 symbol(name: "laptopcomputer", fallback: "desktopcomputer")
-                arrow(active: flow == .charging || flow == .onBattery)
+                // 电池路径方向随功率流翻转：充电流 Mac→电池（右向）；电池供电
+                // 电池→Mac（左向）——真机验收修正（2026-09-02：恒右向把放电画成
+                // 「Mac 给电池充电」，用户目视报告）。
+                arrow(active: flow == .charging || flow == .onBattery,
+                      symbol: flow == .onBattery ? "arrow.left" : "arrow.right")
                 symbol(name: "battery.100", fallback: "battery.75")
                 Text(word(for: flow))
                     .font(.caption2)
@@ -76,8 +82,8 @@ public struct PowerFlowView: View {
     }
 
     /// 路径箭头：活跃 → accent 高亮；非活跃 → 降档灰（token 消费，无任何风格分支）。
-    private func arrow(active: Bool) -> some View {
-        Image(systemName: "arrow.right")
+    private func arrow(active: Bool, symbol: String) -> some View {
+        Image(systemName: symbol)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(active ? theme.accent : theme.secondaryText.opacity(0.35))
     }

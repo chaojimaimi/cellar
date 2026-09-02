@@ -48,11 +48,16 @@ public enum CellarL10n {
         return key
     }
 
-    /// 进程偏好语言与本 bundle 本地化的最优交集（s(_:) 的语言选择，与 Foundation
-    /// 标准查找同判据）；空 bundle/无交集 → 开发语言 → 终值兜底 zh-Hans（catalog
-    /// 源语言，defaultLocalization 对齐）。
+    /// 进程偏好语言与本 bundle 本地化的显式匹配；空 bundle/无交集 → 开发语言 →
+    /// 终值兜底 zh-Hans（catalog 源语言，defaultLocalization 对齐）。
+    /// ⚠️ 必须用 `preferredLocalizations(from:forPreferences:)` 显式匹配——无参
+    /// `preferredLocalizations` 不按用户 AppleLanguages 匹配（2026-09-02 真机
+    /// 实证：偏好 ["zh-Hans-CN","en-CN"] 时返回 en，带地区码偏好未落回 bundle 的
+    /// zh-Hans，UI 整体英文化），显式匹配实测正确返回 zh-Hans。
     static var preferredLocaleIdentifier: String {
-        Bundle.module.preferredLocalizations.first
+        let available = Bundle.module.localizations
+        let userPrefs = UserDefaults.standard.stringArray(forKey: "AppleLanguages") ?? []
+        return Bundle.preferredLocalizations(from: available, forPreferences: userPrefs).first
             ?? Bundle.module.developmentLocalization
             ?? "zh-Hans"
     }

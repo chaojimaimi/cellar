@@ -101,26 +101,37 @@ struct ActionSectionView: View {
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         } else if canStartDischarge {
-            Button {
-                showDischargeConfirm = true
-            } label: {
-                Label("放电到上限", systemImage: "arrow.down.circle")
-            }
-            .controlSize(.small)
-            .disabled(statusController.busy)
-            .accessibilityLabel("放电到上限：将适配器断电，电量降至目标后自动恢复限充")
-            .confirmationDialog(
-                "开始放电到上限？",
-                isPresented: $showDischargeConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("放电到上限") {
-                    statusController.dischargeToLimit()
+            if showDischargeConfirm {
+                // 内嵌确认块（真机验收修正 2026-09-02：confirmationDialog 弹出时
+                // MenuBarExtra 窗口被系统收起，确认后面板已关需重开——改面板内
+                // 展开保持窗口常驻，警告信息同等显著）。
+                VStack(alignment: .leading, spacing: 6) {
+                    // §4.1 显著警告：外设断电 + 合盖外显睡眠。
+                    Text("放电期间适配器将断电：外接硬盘/Hub 会瞬断，请先移除数据盘；合盖后外接显示器可能进入睡眠。")
+                        .font(.caption)
+                        .foregroundStyle(theme.warning)
+                    HStack(spacing: 8) {
+                        Button("确认放电") {
+                            showDischargeConfirm = false
+                            statusController.dischargeToLimit()
+                        }
+                        .controlSize(.small)
+                        .disabled(statusController.busy)
+                        Button("返回") {
+                            showDischargeConfirm = false
+                        }
+                        .controlSize(.small)
+                    }
                 }
-                Button("取消", role: .cancel) {}
-            } message: {
-                // §4.1 显著警告：外设断电 + 合盖外显睡眠。
-                Text("放电期间适配器将断电：外接硬盘/Hub 会瞬断，请先移除数据盘；合盖后外接显示器可能进入睡眠。")
+            } else {
+                Button {
+                    showDischargeConfirm = true
+                } label: {
+                    Label("放电到上限", systemImage: "arrow.down.circle")
+                }
+                .controlSize(.small)
+                .disabled(statusController.busy)
+                .accessibilityLabel("放电到上限：将适配器断电，电量降至目标后自动恢复限充")
             }
         }
     }
