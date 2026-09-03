@@ -16,7 +16,9 @@ struct SettingsView: View {
             AboutTab()
                 .tabItem { Label(CellarL10n.s("settings.about"), systemImage: "info.circle") }
         }
-        .frame(width: 420, height: 300)
+        // 高度随通用 Tab 内容增长（v1.1 加风扇区后 300 已裁切内容——三 Tab 共用
+        // 一帧，取最高 Tab 适配；Form 不自动滚动，高度不足即静默裁切）。
+        .frame(width: 420, height: 680)
     }
 }
 
