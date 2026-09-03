@@ -8,7 +8,7 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.4.0-alpha** — battery protection round complete: charge-side thermal pause (paused at ≥ 40 °C / resumes below 37 °C), optional auto-discharge (discharges back to the limit when above it, off by default), one-click battery calibration (four-phase full-charge / deep-discharge cycle), instant enforcement on plug/unplug (charging resumes within 1–2 s of plugging in). All Phase 3 capabilities (theme system, Charge to Full once, Discharge to Limit, power-flow graph, battery health, zh/en bilingual, eleven-check `doctor`) shipped with 0.3.1-alpha; core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.5.0-alpha** — smart fan cooling (v1.1): automatically boosts the built-in fan when the battery temperature exceeds the threshold (default 37 °C, independent of the charge-side thermal pause configuration), with adjustable threshold/speed and strategies (constant-speed cooling [default] / two-stage / full-speed emergency), an opt-in toggle off by default, runtime capability verification (honestly disabled on unsupported machines), and automatic restoration of system fan control on exit/sleep/anomaly. Phase 4 battery protection (charge-side thermal pause, optional auto-discharge, one-click battery calibration, instant enforcement on plug/unplug) shipped with 0.4.0-alpha; all Phase 3 capabilities (theme system, Charge to Full once, Discharge to Limit, power-flow graph, battery health, zh/en bilingual, eleven-check `doctor`) shipped with 0.3.1-alpha; core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
@@ -158,6 +158,7 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 2 (0.2.0-alpha)**: menu-bar App (GUI); `install` via the system framework
 - ✅ **Phase 3 (0.3.1-alpha)**: theme system, Charge to Full once, Discharge to Limit, power flow, battery health, zh/en bilingual, snapshot matrix, eleven-check `doctor`
 - ✅ **Phase 4 (0.4.0-alpha)**: battery protection round — charge-side thermal pause, optional auto-discharge, one-click battery calibration, instant enforcement on plug/unplug
+- ✅ **Phase 5 · v1.1 (0.5.0-alpha)**: smart fan cooling (released) — automatic fan boost above the temperature threshold, opt-in off by default, three speed strategies, runtime capability verification, automatic restoration of system control on anomalies
 - Phase 5+: statistics panel, calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
 
 The full roadmap and design documents are published in the release notes.

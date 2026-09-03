@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0-alpha] - 2026-09-04
+
+### Added
+
+- **智能风扇降温（v1.1）**：电池温度超过阈值（默认 37 °C，独立于充电热暂停 40/37 配置）自动提速内置风扇散热；opt-in 开关默认关闭；三种转速策略（恒速降温【默认】/ 两级分段 / 全速应急）；基于真实硬件探测的运行时能力验证（不支持机型诚实显示「不支持」，不盲写）；Apple Silicon 需先切换风扇手动模式（实测验证的解锁序列）；退出/睡眠/异常一律恢复系统自动管理；设置区与面板状态行；CLI status 风扇行 + doctor 风扇检查项
+- **CLI `setFan` XPC 命令与 DaemonStatus 风扇字段**（协议向后兼容）
+
+### Fixed
+
+- **数据目录校验兼容性缺陷**（0.4.1 引入的 root:wheel 严格判定在 macOS 惯例 admin 组环境下阻断安装——组属主不再参与判定，保留 uid 与无组/其他可写位校验；install 对既有非 root 属主目录拒绝并提示人工处置，防投毒目录被洗白）
+- **设置窗口通用 Tab 内容加风扇区后固定高度裁切**（内容改滚动布局）
+
 ## [0.4.0-alpha] - 2026-09-03
 
 ### Added
