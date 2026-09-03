@@ -54,14 +54,23 @@ do {
         atPath: "/Library/Application Support/Cellar",
         withIntermediateDirectories: true
     )
+    // 归一化 root:wheel 0755（daemon 以 root 运行；createDirectory 组继承父目录
+    // admin——与 install 侧同一纪律）。⚠️ 只对既有 root 属主目录归一化（审查 P1-1：
+    // 父目录组可写时非 root 可预创建投毒目录，无条件 chown 会洗白）——uid≠0 的
+    // 既有目录跳过归一化，交由下方校验 fail-secure 退出。
+    var st = stat()
+    if stat("/Library/Application Support/Cellar", &st) == 0, st.st_uid == 0 {
+        chown("/Library/Application Support/Cellar", 0, 0)
+        chmod("/Library/Application Support/Cellar", 0o755)
+    }
 } catch {
     lifecycleLog.error("自举策略目录失败（\(error)）——策略持久化将不可用（内存策略继续生效）")
 }
-// 0.4.1 安全审计 F-3（纵深防御）：数据目录须 root 属主/属组且无组/其他可写位——
+// 0.4.1 安全审计 F-3（纵深防御）：数据目录须 root 属主且无组/其他可写位——
 // 固定名临时文件（.policy.json.tmp）的 symlink 竞态在目录可被非 root 预创建时
 // 成为 root 写原语。不合规 → fault 退出（fail-secure；launchd KeepAlive 节流重试）。
 if !verifyRootOwnedDirectory(path: "/Library/Application Support/Cellar") {
-    lifecycleLog.fault("数据目录属主/权限校验失败（须 root:root 且无组/其他可写位）——fail-secure 退出")
+    lifecycleLog.fault("数据目录属主/权限校验失败（须 root 属主且无组/其他可写位）——fail-secure 退出")
     exit(1)
 }
 

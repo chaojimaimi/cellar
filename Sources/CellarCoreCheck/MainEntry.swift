@@ -1561,6 +1561,30 @@ struct Main {
                   "用例79", "空路径 → .unknown")
         }
 
+        // 用例 79b：verifyRootOwnedDirectory（0.4.1 F-3；0.5.0 修订后语义）。
+        // 非 root 测试进程无法构造 root 属主目录——通过路径只覆盖拒绝面：
+        // 缺失 / uid≠0 / 组或其他可写位；uid==0 ∧ 0755 的通过路径由真机 install
+        // 流程验证（本机 2026-09-03 root:admin 755 事故即该函数的回归现场）。
+        // sudo 执行本套件时 uid 门不可达——跳过（P3-2 加固）。
+        if geteuid() != 0 {
+            do {
+                let dir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("cellar-f3-verify-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let path = dir.path
+
+                check(!verifyRootOwnedDirectory(path: path + "/missing"),
+                      "用例79b", "路径不存在 → false（stat 失败 fail-secure）")
+                // 测试目录属主=当前用户（uid≠0）→ uid 门拒绝，与 mode 无关。
+                check(!verifyRootOwnedDirectory(path: path),
+                      "用例79b", "uid≠0 → false（root 属主门）")
+                try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: path)
+                check(!verifyRootOwnedDirectory(path: path),
+                      "用例79b", "组/其他可写位（0777）→ false（写面封堵门）")
+            }
+        }
+
         // 用例 80：launchctl print 输出解析（防线 c root 路径行）+ 解析→判定全链路。
         do {
             let sample = """

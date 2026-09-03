@@ -307,11 +307,25 @@ enum DaemonInstaller {
             let template = try String(contentsOfFile: plistSource, encoding: .utf8)
             try fileManager.createDirectory(atPath: logDirectory, withIntermediateDirectories: true)
             try fileManager.createDirectory(atPath: policyDirectory, withIntermediateDirectories: true)
+            // 归一化 root:wheel 0755（createDirectory 组继承父目录 admin——曾导致
+            // F-3 校验自否）。⚠️ 只对**既有 root 属主**目录归一化（R1 审查 P1-1）：
+            // 父目录组可写时非 root 可预创建目录并植入 .policy.json.tmp symlink，
+            // 无条件 chown 会把投毒目录洗白成合规态——uid≠0 的既有目录直接拒绝，
+            // 由用户人工处置；新建目录（stat 不存在）与本进程 root 身份同主，安全。
+            for directory in [logDirectory, policyDirectory] {
+                var st = stat()
+                if stat(directory, &st) == 0, st.st_uid != 0 {
+                    print("❌ 数据目录已存在且非 root 属主（疑似预创建），拒绝安装：\(directory)——请人工核查后删除或改属主")
+                    throw ExitCode(1)
+                }
+                chown(directory, 0, 0)
+                chmod(directory, 0o755)
+            }
             // 0.4.1 安全审计 F-3（纵深防御）：数据目录须 root 属主且无组/其他可写位
             // （对齐上方 PrivilegedHelperTools 的属主校验纪律），不合规即中止安装。
             for directory in [logDirectory, policyDirectory]
             where !verifyRootOwnedDirectory(path: directory) {
-                print("❌ 数据目录属主/权限校验失败（须 root:root 且无组/其他可写位）：\(directory)")
+                print("❌ 数据目录属主/权限校验失败（须 root 属主且无组/其他可写位）：\(directory)")
                 throw ExitCode(1)
             }
             try template.write(toFile: plistPath, atomically: true, encoding: .utf8)
