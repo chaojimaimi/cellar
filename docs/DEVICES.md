@@ -6,19 +6,19 @@
 
 ## 字段表
 
-| 字段 | 含义 | 值 | 数据源 |
-|---|---|---|---|
-| `device.model` | 机型标识 | 如 `Mac15,9` | sysctl `hw.model` |
-| `device.chip` | 芯片型号 | 如 `Apple_M4_Pro` | `machdep.cpu.brand_string` |
-| `device.macos` | macOS 版本 | 如 `26.6_(26B2064)` | `sw_vers` |
-| `device.firmware` | 固件版本 | 如 `10151.140.19.0.1` | IODeviceTree `rom-version` 固定键 |
-| `device.backend` | 控制后端 | `tahoe` / `legacy` | 运行时探测 |
-| `device.keys.chte` | CHTE 键在位 | `yes` / `no` | SMC 元数据探测 |
-| `device.keys.chie` | CHIE 键在位 | `yes` / `no` | SMC 元数据探测 |
-| `device.keys.ch0b` | CH0B 键在位 | `yes` / `no` | SMC 元数据探测 |
-| `device.discharge` | 放电能力 | `yes` / `no` | supportsDischarge（tahoe ∧ CHIE） |
-| `device.limit.verify` | 限充执法一致性 | `pass` / `unknown` | daemon 快照 + CHTE 停充回读 |
-| `device.discharge.verify` | 放电完成路径 | `pass` / `unknown` | daemon `lastAction` |
+| 字段                      | 含义           | 值                    | 数据源                            |
+| ------------------------- | -------------- | --------------------- | --------------------------------- |
+| `device.model`            | 机型标识       | 如 `Mac15,9`          | sysctl `hw.model`                 |
+| `device.chip`             | 芯片型号       | 如 `Apple_M4_Pro`     | `machdep.cpu.brand_string`        |
+| `device.macos`            | macOS 版本     | 如 `26.6_(26B2064)`   | `sw_vers`                         |
+| `device.firmware`         | 固件版本       | 如 `10151.140.19.0.1` | IODeviceTree `rom-version` 固定键 |
+| `device.backend`          | 控制后端       | `tahoe` / `legacy`    | 运行时探测                        |
+| `device.keys.chte`        | CHTE 键在位    | `yes` / `no`          | SMC 元数据探测                    |
+| `device.keys.chie`        | CHIE 键在位    | `yes` / `no`          | SMC 元数据探测                    |
+| `device.keys.ch0b`        | CH0B 键在位    | `yes` / `no`          | SMC 元数据探测                    |
+| `device.discharge`        | 放电能力       | `yes` / `no`          | supportsDischarge（tahoe ∧ CHIE） |
+| `device.limit.verify`     | 限充执法一致性 | `pass` / `unknown`    | daemon 快照 + CHTE 停充回读       |
+| `device.discharge.verify` | 放电完成路径   | `pass` / `unknown`    | daemon `lastAction`               |
 
 > 值内空格以 `_` 占位（保持「空格分隔令牌」契约，机器可直接按空格拆分）；
 > 字段序固定不增删；布尔值渲染 `yes`/`no`。
@@ -32,10 +32,10 @@
 欢迎在 issue 中附上完整 `cellar doctor --devices` 输出行（并注明机型/芯片/macOS
 版本），收录至此表：
 
-| 收录 | 机型 | 芯片 | macOS | 实测行 |
-|---|---|---|---|---|
+| 收录                        | 机型    | 芯片         | macOS  | 实测行                                                                                                                                                                                                                                                            |
+| --------------------------- | ------- | ------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ✅ 开发机（端到端验收基线） | Mac14,6 | Apple M2 Max | 26.6.2 | `device.model=Mac14,6 device.chip=Apple_M2_Max device.macos=26.6.2_(25G83) device.firmware=unknown device.backend=tahoe device.keys.chte=yes device.keys.chie=yes device.keys.ch0b=no device.discharge=yes device.limit.verify=pass device.discharge.verify=pass` |
-| 待收录 | — | — | — | — |
+| 待收录                      | —       | —            | —      | —                                                                                                                                                                                                                                                                 |
 
 ## 隐私与提交提醒
 
