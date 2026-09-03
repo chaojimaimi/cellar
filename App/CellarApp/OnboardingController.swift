@@ -41,6 +41,10 @@ final class OnboardingController: ObservableObject {
 
     init(store: AppConfigStore = AppConfigStore(url: AppConfigStore.defaultURL)) {
         self.store = store
+        // 0.4.1 批：启动加载自标定（StatusController/StyleController.init 同款模式）
+        // ——App.init 早期访问 @StateObject 拿到的是被丢弃的临时实例，自标定保证
+        // 幸存实例必然完成加载（幂等；多实例创建无害）。
+        loadCompletedFlag()
     }
 
     // MARK: - 加载与注册变化（App 组合根接线）

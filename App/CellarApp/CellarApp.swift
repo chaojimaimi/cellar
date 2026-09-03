@@ -34,14 +34,12 @@ struct CellarApp: App {
         onboarding.onInstallSucceeded = { [notifications] in
             notifications.requestAuthorization()
         }
-        onboarding.loadCompletedFlag()
-        installer.refresh()
-        // WP5 实例替换取证修复：statusController 的启动期自标定（后台轮询档 +
-        // IOPS 图标即时化订阅）已移入 StatusController 自身 init——App.init 早期
-        // 访问 @StateObject 拿到的是被 SwiftUI 丢弃的临时实例（deinit 尸体链实锤，
-        // 见 StatusController.init 注释）；installer/onboarding 的 init 期调用经
-        // 面板生命周期 re-trigger 兜底，观察期登记（不在此处改动）。
-        // WP3：风格加载同理在 StyleController.init 内自启动。
+        // 0.4.1 批（观察期收尾）：installer/onboarding 的启动期调用已迁移进各自
+        // init 自标定（StatusController/StyleController 同款模式）——App.init 早期
+        // 访问 @StateObject 拿到的是被 SwiftUI 丢弃的临时实例（deinit 尸体链实锤），
+        // 自标定保证幸存实例必然完成首次刷新/加载。已知残留：上方两处回调接线
+        // 仍接线于临时实例且无 re-trigger 兜底（真机通知实证工作，登记不扩 scope）。
+        // WP3：风格加载在 StyleController.init 内自启动。
     }
 
     var body: some Scene {

@@ -59,6 +59,13 @@ final class DaemonInstaller: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var settingsOpened = false
 
+    /// 0.4.1 批：注册态刷新自标定（StatusController/StyleController.init 同款模式）
+    /// ——App.init 早期访问 @StateObject 拿到的是被丢弃的临时实例，自标定保证
+    /// 幸存实例必然完成首次 refresh（幂等只读；主线程同步段仅本地文件检查）。
+    init() {
+        refresh()
+    }
+
     /// MenuBarExtra 视图重建防轮询泄漏（规格 §2.6）。
     deinit {
         pollTask?.cancel()

@@ -122,8 +122,7 @@ verified end-to-end on Apple Silicon / macOS 26 real hardware.
   hard-coded gid) so group membership cannot be spoofed.
 - **Version alignment**: development builds between 0.1.0-alpha and this
   release reported `0.2.1-alpha-dev`; the release line is now unified on
-  `0.2.0-alpha` (App, daemon, and CLI), with `CFBundleVersion` bumped to
-  2. Version comparisons are string-equality throughout, so the numeric
+  `0.2.0-alpha` (App, daemon, and CLI), with `CFBundleVersion` bumped to 2. Version comparisons are string-equality throughout, so the numeric
   step-back has no logic impact; stale daemons from dev builds surface
   via the existing stale-version prompt.
 - **CI**: added an `app-build` job on `macos-26` (pinned Xcode 26.6) that

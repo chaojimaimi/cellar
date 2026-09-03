@@ -9,6 +9,7 @@ import SwiftUI
 struct DaemonSectionView: View {
     @EnvironmentObject private var installer: DaemonInstaller
     @EnvironmentObject private var onboarding: OnboardingController
+    @EnvironmentObject private var statusController: StatusController
     @Environment(\.cellarTheme) private var theme
 
     /// 安装复检进行中（统一 wrapper「检查中」态，§2.2 P2-3）。
@@ -116,17 +117,28 @@ struct DaemonSectionView: View {
 
     /// 四象限文案（§2.2 表格逐行对应；全部经 CellarL10n——含「检测到手工安装
     /// 残留与托管注册并存…」迁移守卫文案）。
+    /// 0.4.1 批混合态弱化：手工 daemon 健康运行（route==manual ∧ XPC connected）
+    /// 时，migrate/cleanMixed 两象限降级为说明性文案（功能不受影响）——文案按
+    /// 象限拆分：migrate 象限无托管残留（registration==notRegistered），不含残留句
+    /// （快审 R1 P1）；cleanMixed 象限保留残留句 + 面板卸载指引。daemon 失联/
+    /// 未运行时维持原文案（此时残留确有风险）。
     private var guidanceText: String {
         guard installer.loaded else { return "" }
+        let manualHealthy = installer.route == .manual
+            && statusController.connection == .connected
         switch installer.guidance {
         case .normalInstall:
             return CellarL10n.s("panel.daemon.guidance.normal")
         case .running:
             return CellarL10n.s("panel.daemon.guidance.running")
         case .migrateFromLegacy:
-            return CellarL10n.s("panel.daemon.guidance.migrate")
+            return manualHealthy
+                ? CellarL10n.s("panel.daemon.guidance.manualHealthy")
+                : CellarL10n.s("panel.daemon.guidance.migrate")
         case .cleanMixedState:
-            return CellarL10n.s("panel.daemon.guidance.cleanMixed")
+            return manualHealthy
+                ? CellarL10n.s("panel.daemon.guidance.cleanMixedHealthy")
+                : CellarL10n.s("panel.daemon.guidance.cleanMixed")
         }
     }
 }
