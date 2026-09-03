@@ -153,6 +153,11 @@ final class DaemonCore: @unchecked Sendable {
                     ))
                 }
             }
+            if pending.kind == Calibration.kind {
+                // WP3：校准残留按相位恢复 CHIE（discharge 在场/相位缺失未知 → 无条件
+                // 恢复 fail-closed；chargeFull/hold 无需）。通知经 crash-recovery 锁存补发。
+                restoreCalibrationAfterCrashLocked(pending, events: &events)
+            }
             _ = actionTrack.adoptForCrashRecovery(pending)
             events.append(LogEvent(
                 category: .lifecycle, level: .info,
@@ -208,6 +213,13 @@ final class DaemonCore: @unchecked Sendable {
             if actionTrack.action?.kind == Discharge.dischargeToLimitKind {
                 cancelDischargeForSleepLocked(events: &events)
             } else {
+                // WP3：校准同跳过睡前停充且不取消——睡眠中 SMC 继续充电（充电相），
+                // 睡眠掉电即校准进程（放电相），唤醒全量 tick 推进相位；lastAction 直写
+                // 当前相位字面量（nil/未知回退 calibration:chargeFull——不产出
+                // calibration:start，R1 P2-2）。
+                let constructed = actionTrack.action?.kind == Calibration.kind
+                    ? CalibrationLiteral.phase(actionTrack.action?.phase.flatMap(Calibration.Phase.init(rawValue:)) ?? .chargeFull)
+                    : OneShotLiteral.start(kind: actionTrack.action?.kind ?? OneShot.fullOnceKind)
                 events.append(LogEvent(
                     category: .control, level: .info,
                     message: "睡眠策略跳过停充：一次性动作进行中（充电即目标，规格 P0-1）"
@@ -217,9 +229,7 @@ final class DaemonCore: @unchecked Sendable {
                     mode: policy.mode,
                     upperLimit: policy.upperLimit,
                     hysteresis: policy.hysteresis,
-                    lastAction: actionTrack.effectiveLastAction(
-                        OneShotLiteral.start(kind: actionTrack.action?.kind ?? OneShot.fullOnceKind)
-                    ),
+                    lastAction: actionTrack.effectiveLastAction(constructed),
                     lastPercent: lastStatus?.lastPercent,
                     lastExternalConnected: lastStatus?.lastExternalConnected,
                     lastChargingEnabled: lastStatus?.lastChargingEnabled,
@@ -606,6 +616,11 @@ final class DaemonCore: @unchecked Sendable {
                     backend: backend,
                     events: &events
                 )
+            } else if actionTrack.action?.kind == Calibration.kind {
+                // WP3：校准 → 相位状态机维护分支（转移纯函数 + 副作用，方案 §2.2）。
+                actionName = maintainCalibrationLocked(
+                    now: Date(), snapshot: snapshot, backend: backend, events: &events
+                )
             } else {
                 actionName = maintainActionLocked(
                     now: Date(),
@@ -756,7 +771,7 @@ final class DaemonCore: @unchecked Sendable {
         smcClient = client
         backend = detected
         capabilities = RuntimeProbe.supportsDischarge(backend: detected, client: client)
-            ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge]
+            ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge, DaemonXPC.capabilityCalibration]
             : []
         events.append(LogEvent(
             category: .control, level: .info,

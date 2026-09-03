@@ -162,6 +162,27 @@ struct ActionSectionView: View {
     }
 }
 
+/// 校准区薄包装（WP3 §2.4）：参数驱动组件（CellarUI）的 App 侧桥接——全部数据
+/// 与回调经 statusController 派生，组件零 App 符号依赖（CellarUICheck 可独立渲染）。
+struct CalibrationSection: View {
+    @EnvironmentObject private var statusController: StatusController
+
+    var body: some View {
+        CalibrationSectionView(
+            calibrationActive: statusController.daemonStatus?.isCalibrationAction == true,
+            phase: statusController.daemonStatus?.calibrationPhase,
+            percent: statusController.batterySnapshot?.percent
+                ?? statusController.daemonStatus?.lastPercent,
+            capabilityPresent: statusController.capabilities?.contains(DaemonXPC.capabilityCalibration) == true,
+            modeActive: statusController.daemonStatus?.mode == "active",
+            actionIdle: statusController.action == nil,
+            busy: statusController.busy,
+            onStart: { statusController.calibrateStart() },
+            onCancel: { statusController.calibrateCancel() }
+        )
+    }
+}
+
 /// 登录项开关区（规格 §2.4 接线：SMAppService.loginItem + AppConfigStore 持久化；
 /// WP3 S5a 自 PanelView 迁出，文案与布局零变化）。
 struct LoginItemSectionView: View {

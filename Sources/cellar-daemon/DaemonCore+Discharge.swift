@@ -315,7 +315,7 @@ extension DaemonCore {
         guard let percent = lastStatus?.lastPercent else {
             events.append(LogEvent(
                 category: .control, level: .warn,
-                message: "放电终态/取消：无采样电量，enforce CHTE 延后至下一常规 tick"
+                message: "终态/取消：无采样电量，enforce CHTE 延后至下一常规 tick"
             ))
             return
         }
@@ -345,12 +345,12 @@ extension DaemonCore {
             _ = try controller.perform(action, backend: backend)   // noop 不触碰 backend
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "放电终态/取消：已按当前策略恢复限充（action=\(action)，温度=\(temperatureC.map { String(format: "%.1f", $0) } ?? "未知")°C，percent=\(percent)% enforce 收敛）"
+                message: "终态/取消：已按当前策略恢复限充（action=\(action)，温度=\(temperatureC.map { String(format: "%.1f", $0) } ?? "未知")°C，percent=\(percent)% enforce 收敛）"
             ))
         } catch {
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "放电终态/取消：enforce CHTE 失败（\(error)）（下 tick 常规 enforce 兜底）"
+                message: "终态/取消：enforce CHTE 失败（\(error)）（下 tick 常规 enforce 兜底）"
             ))
         }
     }
@@ -397,11 +397,15 @@ extension DaemonCore {
         return OneShotLiteral.safety(kind: Discharge.dischargeToLimitKind)
     }
 
-    /// 监护缺失计数（评审 P1-5）：backend/采样/控制键读取早退 × 放电动作活跃 →
-    /// 连续 ≥3 tick（90s）→ 安全终止 + 告警（恢复尽力；失败交 §2.4 不变量）。
-    /// performTickLocked 步骤 1/2/3 早退路径调用。
+    /// 监护缺失计数（评审 P1-5；WP3 门控扩展 R1 P1-1 + R2 P1-1 三道闸之一——**链条
+    /// 第一道闸**：外层 guard 不放行则 Discharge.swift 两轨道方法永不执行）：放电
+    /// （dischargeToLimit）或校准放电相（calibration ∧ phase==discharge）× backend/
+    /// 采样/控制键读取早退 → 连续 ≥3 tick（90s）→ 安全终止 + 告警（恢复尽力；
+    /// 失败交 §2.4 不变量）。performTickLocked 步骤 1/2/3 早退路径调用。
     func noteDischargeMonitoringLossLocked(events: inout [LogEvent]) {
-        guard actionTrack.action?.kind == Discharge.dischargeToLimitKind else { return }
+        guard actionTrack.action?.kind == Discharge.dischargeToLimitKind
+            || (actionTrack.action?.kind == Calibration.kind
+                && actionTrack.action?.phase == Calibration.Phase.discharge.rawValue) else { return }
         guard actionTrack.noteMonitoringLoss() else {
             events.append(LogEvent(
                 category: .control, level: .warn,

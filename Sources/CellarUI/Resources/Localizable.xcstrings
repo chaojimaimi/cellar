@@ -154,6 +154,142 @@
         }
       }
     },
+    "calibration.cancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Calibration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消校准"
+          }
+        }
+      }
+    },
+    "calibration.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm & Start"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认开始校准"
+          }
+        }
+      }
+    },
+    "calibration.phase.chargeFull" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Charging to Full"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "充满中"
+          }
+        }
+      }
+    },
+    "calibration.phase.discharge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discharging"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放电中"
+          }
+        }
+      }
+    },
+    "calibration.phase.hold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Holding & Balancing"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "静置平衡中"
+          }
+        }
+      }
+    },
+    "calibration.start" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Calibration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始校准"
+          }
+        }
+      }
+    },
+    "calibration.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Battery Calibration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电池校准"
+          }
+        }
+      }
+    },
+    "calibration.warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The full cycle takes about 6–10 hours — start it overnight while plugged in. During discharge the adapter is disabled and USB peripherals lose power; the whole machine runs on battery, so power use is noticeable. You can cancel anytime; after a restart you must start over."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全程约 6–10 小时，建议睡前插电启动；放电阶段会禁用适配器，USB 外设将断电；放电阶段整机由电池供电、耗电明显；可随时取消，重启后需重新开始。"
+          }
+        }
+      }
+    },
     "common.axMenuBarIcon" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -490,6 +626,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动放电已启动（目标 %lld%%）"
+          }
+        }
+      }
+    },
+    "notification.calibrationCompleted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calibration complete: the charge limit has resumed — please plug in the power adapter now"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校准完成：已恢复限充，请立即接通电源"
+          }
+        }
+      }
+    },
+    "notification.calibrationInterrupted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calibration interrupted: normal charge management has resumed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校准已中止：已恢复正常充电管理"
+          }
+        }
+      }
+    },
+    "notification.calibrationPhase" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calibration is now in “%@”: keep the power adapter connected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校准已进入「%@」阶段，请保持电源连接"
           }
         }
       }

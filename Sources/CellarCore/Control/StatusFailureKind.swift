@@ -31,14 +31,20 @@ public enum StatusFailureKind: Equatable {
 
     /// 从 daemonStatus 派生（⚠️ lastAction 字面量与 CellarCore 通知分类同契约——
     /// 变更两侧同步暴露，CellarCoreCheck 钉死精确值）。done 字面量（fullOnce/
-    /// dischargeToLimit）不映射（成功走 success 反馈通道）；超时/崩溃中断映射
-    /// 安全终态；取消（cancel）不入通道（用户动作，不打扰）。
+    /// dischargeToLimit/calibration）不映射（成功走 success 反馈通道）；超时/崩溃
+    /// 中断映射安全终态；取消（cancel）不入通道（用户动作，不打扰）。
+    /// WP3（R2 P2-3 钉死）：calibration:safety/timeout/cancel(crash-recovery) →
+    /// .actionInterrupted（校准中止红色横幅如实上屏；横幅复用既有 actionInterrupted
+    /// 通用文案不显「校准」字样——通知通道有专属文案，横幅为次通道，失真登记 R2
+    /// P3-2）；calibration:done/cancel 不入失败通道（done 走成功横幅、cancel 走
+    /// statusFailure 无痕）。
     public init?(status: DaemonStatus) {
         switch status.lastAction {
         case "enforce:error": self = .writeFailed
         case "enforce:verifyFailed": self = .conflictSuspected
         case "fullOnce:timeout", "dischargeToLimit:timeout": self = .actionTimedOut
         case "fullOnce:cancel(crash-recovery)", "dischargeToLimit:cancel(crash-recovery)": self = .actionInterrupted
+        case "calibration:safety", "calibration:timeout", "calibration:cancel(crash-recovery)": self = .actionInterrupted
         case "dischargeToLimit:safety": self = .actionSafetyTerminated
         default: return nil
         }

@@ -317,19 +317,26 @@ extension OneShotTrack {
         return .cancelled(reason: reason, literal: literal)
     }
 
-    /// 监护缺失计数推进（performTickLocked 早退路径调用；仅 discharge 活跃时生效）。
+    /// 监护缺失计数推进（performTickLocked 早退路径调用；仅放电/校准放电相活跃时
+    /// 生效——门控谓词「== dischargeToLimitKind ∨ (kind == calibration ∧ phase ==
+    /// discharge)」三道闸之一，方案 §2.2 R1 P1-1 + R2 P1-1）。
     /// 返回 true = 连续 ≥3 tick（90s）→ 调用方执行终止恢复（terminateMonitoringLoss）。
     public mutating func noteMonitoringLoss() -> Bool {
-        guard action?.kind == Discharge.dischargeToLimitKind else { return false }
+        guard action?.kind == Discharge.dischargeToLimitKind
+            || (action?.kind == Calibration.kind
+                && action?.phase == Calibration.Phase.discharge.rawValue) else { return false }
         monitoringLossTicks += 1
         return monitoringLossTicks >= Discharge.monitoringLossLimit
     }
 
     /// 监护缺失终止（noteMonitoringLoss 返回 true 后由 daemon 调用）；
-    /// safety 字面量锁存 + 清空动作。空轨/非放电 → nil（防御）。
+    /// safety 字面量按 kind 构造（calibration 自动 calibration:safety）锁存 + 清空
+    /// 动作。空轨/非放电/非校准放电相 → nil（防御）。
     @discardableResult
     public mutating func terminateMonitoringLoss() -> String? {
-        guard action?.kind == Discharge.dischargeToLimitKind else { return nil }
+        guard action?.kind == Discharge.dischargeToLimitKind
+            || (action?.kind == Calibration.kind
+                && action?.phase == Calibration.Phase.discharge.rawValue) else { return nil }
         let kind = action!.kind
         action = nil
         latchedLiteral = OneShotLiteral.safety(kind: kind)

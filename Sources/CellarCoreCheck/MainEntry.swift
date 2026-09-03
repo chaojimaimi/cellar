@@ -320,6 +320,10 @@ struct Main {
         // Phase 4 WP2：自动放电（opt-in）场景域（方案 §4.1 九项：触发矩阵/Codable
         // 兼容/线格式/字面量锁存/值域/通知矩阵/事件承载）。
         try runAutoDischargeDomainScenarios()
+        // Phase 4 WP3：自动校准（手动触发版）场景域（方案 §4.1 十一项：前置矩阵/
+        // 三相位转移/监护缺失门控/Codable/字面量家族/通知矩阵/AppSide 助手/交互拒绝/
+        // StatusFailureKind 映射）。
+        try runCalibrationDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

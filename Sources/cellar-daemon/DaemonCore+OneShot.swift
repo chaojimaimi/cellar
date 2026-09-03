@@ -93,17 +93,25 @@ extension DaemonCore {
 /// - dischargeToLimit（WP2' §2.3）：**恢复 CHIE=0x0（重试阶梯 + 告警——取消写失败
 ///   ≠ 取消完成，红线 5）→ enforce CHTE**（恢复限充语义，数据源 = lastStatus；
 ///   失败下 tick 常规 enforce 兜底）→ lastAction=`dischargeToLimit:cancel`；
+/// - calibration（WP3 第三分支）：discharge 相（或 CHIE 回读非使能）→ CHIE 恢复
+///   重试阶梯 + `enforceLimitChargingLocked`（恢复限充语义）
+///   → lastAction=`calibration:cancel`；
 /// - 清锁存 → 删 action.json。任何失败仅记日志——取消本身不因写失败中断。
 ///
 /// `latchCancelled`（审查 M3）：setLimits/disable/restoreAndExit/SIGHUP-disabled
-/// 为 daemon 发起取消 → discharge 取消字面量**锁存**（App 轮询必见终态、通知必发）；
-/// XPC cancelAction（用户点击取消）默认 false 不锁存（App 即时反馈路径）。
-/// fullOnce 不受本参数影响（恒走 cancel() 旧语义）。
+/// 为 daemon 发起取消 → discharge/calibration 取消字面量**锁存**（App 轮询必见
+/// 终态、通知必发）；XPC cancelAction（用户点击取消）默认 false 不锁存（App 即时
+/// 反馈路径）。fullOnce 不受本参数影响（恒走 cancel() 旧语义——cancel 不通知，
+/// 锁存无消费面）。
     func cancelActionLocked(events: inout [LogEvent], latchCancelled: Bool = false) {
-        // kind 预取：cancel 会清空动作，分流判断必须在取消之前。
+        // kind 预取：cancel 会清空动作，分流判断必须在取消之前；
+        // calibration 相位同理由：第三分支需要 phase 判定 CHIE 恢复。
         let kind = actionTrack.action?.kind
+        let calibrationPhase = kind == Calibration.kind
+            ? actionTrack.action?.phase.flatMap(Calibration.Phase.init(rawValue:))
+            : nil
         let literal: String?
-        if latchCancelled && kind == Discharge.dischargeToLimitKind {
+        if latchCancelled && (kind == Discharge.dischargeToLimitKind || kind == Calibration.kind) {
             literal = actionTrack.cancelLatched()
         } else {
             literal = actionTrack.cancel()
@@ -142,6 +150,26 @@ extension DaemonCore {
                 events.append(LogEvent(
                     category: .control, level: .warn,
                     message: "取消放电动作：无控制后端，跳过 CHIE 恢复与 enforce（仅落终态）"
+                ))
+            }
+        } else if kind == Calibration.kind {
+            // WP3 第三分支：校准取消——discharge 相（CHIE=0x8 在场）或回读非使能
+            // （残留，fail-closed）→ CHIE 恢复重试阶梯；enforce CHTE 恢复限充语义
+            // （数据源 = lastStatus；失败下 tick 常规 enforce 兜底，同放电分支）。
+            if let backend, backend.adapterControlSupported {
+                if calibrationPhase == .discharge
+                    || Discharge.residualPatrolNeeded(enabled: (try? backend.adapterEnabled()) ?? nil) {
+                    restoreCalibrationCHIELocked(backend: backend, terminal: "取消", events: &events)
+                }
+                enforceLimitChargingLocked(
+                    backend: backend,
+                    temperatureC: (try? monitor.snapshot())?.temperatureC,
+                    events: &events
+                )
+            } else {
+                events.append(LogEvent(
+                    category: .control, level: .warn,
+                    message: "取消校准动作：无控制后端，跳过 CHIE 恢复与 enforce（仅落终态）"
                 ))
             }
         } else if let backend {

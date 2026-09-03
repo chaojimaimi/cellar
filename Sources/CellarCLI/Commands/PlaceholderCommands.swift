@@ -84,6 +84,18 @@ enum DaemonCommandHelpers {
         if let action = status.lastAction {
             print("最近动作：\(action)")
         }
+        // WP3：校准动作活跃 → 校准行（相位词与面板 l10n 同源——CLI 输出恒中文，
+        // 与既有限充管理中/最近动作等字面量同一惯例，不本地化）。
+        if status.isCalibrationAction {
+            let phaseWord: String
+            switch status.calibrationPhase {
+            case .chargeFull: phaseWord = "充满中"
+            case .hold: phaseWord = "静置平衡中"
+            case .discharge: phaseWord = "放电中"
+            case nil: phaseWord = "未知"
+            }
+            print("校准：\(phaseWord)")
+        }
         if let percent = status.lastPercent {
             print("最近电量：\(percent)%")
         }
@@ -160,6 +172,46 @@ struct DisableCommand: ParsableCommand {
         try DaemonCommandHelpers.requireRoot("disable")
         try DaemonCommandHelpers.runDaemonCall {
             try DaemonXPCClient().disable()
+        }
+    }
+}
+
+/// cellar calibrate —— 电池校准（WP3 手动触发版：四相状态机由 daemon 执行）。
+/// start 前置拒绝（mode/外接/能力/在轨动作）→ daemonError 原文；cancel 幂等。
+struct CalibrateCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "calibrate",
+        abstract: "电池校准（充满 → 静置平衡 → 放电至 10% → 恢复限充；经 daemon 执行，需 root）",
+        subcommands: [CalibrateStartCommand.self, CalibrateCancelCommand.self]
+    )
+}
+
+/// cellar calibrate start —— 开始校准。
+struct CalibrateStartCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "start",
+        abstract: "开始自动校准（建议睡前插电启动，全程约 6–10 小时）"
+    )
+
+    func run() throws {
+        try DaemonCommandHelpers.requireRoot("calibrate start")
+        try DaemonCommandHelpers.runDaemonCall {
+            try DaemonXPCClient().startCalibration()
+        }
+    }
+}
+
+/// cellar calibrate cancel —— 取消进行中的校准。
+struct CalibrateCancelCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "cancel",
+        abstract: "取消进行中的校准（幂等，无动作亦成功）"
+    )
+
+    func run() throws {
+        try DaemonCommandHelpers.requireRoot("calibrate cancel")
+        try DaemonCommandHelpers.runDaemonCall {
+            try DaemonXPCClient().cancelCalibration()
         }
     }
 }

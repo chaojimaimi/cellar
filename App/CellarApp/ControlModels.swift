@@ -28,6 +28,10 @@ enum ControlAttempt: Equatable {
     /// WP2' 放电动作（同 fullOnce 形态：重试 = 重新发送命令）。
     case dischargeToLimit
     case cancelDischarge
+    /// WP3 校准动作（同 fullOnce 形态：重试 = 重新发送命令——startCalibration 幂等
+    /// 拆分/actionOccupied 拒绝经 daemon 上抛，重试无害）。
+    case startCalibration
+    case cancelCalibration
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -46,6 +50,10 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.discharge")
         case .cancelDischarge:
             return CellarL10n.s("status.summary.cancelDischarge")
+        case .startCalibration:
+            return CellarL10n.s("calibration.start")
+        case .cancelCalibration:
+            return CellarL10n.s("calibration.cancel")
         }
     }
 }

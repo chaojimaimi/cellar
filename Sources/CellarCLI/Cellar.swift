@@ -20,6 +20,7 @@ struct Cellar: ParsableCommand {
             DisableCommand.self,
             InstallCommand.self,
             UninstallCommand.self,
+            CalibrateCommand.self,
         ]
     )
 }

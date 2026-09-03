@@ -15,6 +15,7 @@
 import Foundation
 import IOKit
 import IOKit.pwr_mgt
+import IOKit.ps
 import Darwin
 import os
 import CellarCore
@@ -86,6 +87,9 @@ scheduleHeartbeat(core: core)
 
 // 6. 电源通知（主 RunLoop source）。
 registerPowerNotifications(core: core)
+
+// 6.5 IOPS 插拔即时执法（WP3 折叠项：插电恢复充电从 ≤30s 缩到 1-2s）。
+registerPowerSourceWatcher()
 
 lifecycleLog.info("daemon 启动完成：version=\(DaemonXPC.daemonVersion, privacy: .public)")
 
@@ -188,4 +192,61 @@ private func registerPowerNotifications(core: DaemonCore) {
         return
     }
     CFRunLoopAddSource(CFRunLoopGetMain(), source.takeUnretainedValue(), .commonModes)
+}
+
+// MARK: - IOPS 插拔即时执法（WP3 折叠项；App/PowerSourceMonitor.swift 同 API 模式）
+
+/// IOPS 通知源（create-rule 所有权；进程存活期持有，从不释放）。
+nonisolated(unsafe) private var iopsSource: CFRunLoopSource?
+/// ≥1s 节流基准 + 上次外部电源态（翻转检测；nil = 尚未读到——首个事件必 tick）。
+nonisolated(unsafe) private var lastPowerSourceEventAt = Date.distantPast
+nonisolated(unsafe) private var lastPowerSourceExternal: Bool?
+
+/// IOPS 电源事件回调（App 侧同款模式，root 可用）：≥1s 节流 → 解析
+/// IOPSGetPowerSourceDescription（"Power Source State" == "AC Power" 判外部电源）
+/// → 与上值比较无变化 no-op → `core.sampleAndEnforce()` 全量 tick。
+/// ⚠️ 回调在主 runloop（与电源通知/心跳同串行），core 内部有锁——无重入风险，
+/// 但本回调不做重活（只转发，语义决策全在锁内 tick）。
+private func iopsPowerCallback(context: UnsafeMutableRawPointer?) {
+    guard let core = daemonCore else { return }
+    let now = Date()
+    guard now.timeIntervalSince(lastPowerSourceEventAt) >= 1 else { return }
+    lastPowerSourceEventAt = now
+    guard let external = readIOPSExternalPower() else {
+        // 读取失败：保持上值不 tick（心跳兜底仍在）。
+        return
+    }
+    guard external != lastPowerSourceExternal else { return }
+    lastPowerSourceExternal = external
+    // 插电 → ≤1s tick → decide(enable) 写 CHTE=0 → 1-2s 内恢复充电；拔电 → 全量
+    // 重估（状态如实）。翻转门/温度守卫/自动放电触发同步即时化。
+    core.sampleAndEnforce()
+}
+
+/// 读 IOPS 外部电源态（"Power Source State" == "AC Power"；macOS 26 运行时字典
+/// 已无 ExternalConnected 键——App 侧 2026-09-02 实测键位语义同源）。描述字典为
+/// 借用引用（takeUnretainedValue）；读取失败 → nil（不 tick）。
+private func readIOPSExternalPower() -> Bool? {
+    guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return nil }
+    guard let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() else { return nil }
+    for index in 0..<CFArrayGetCount(sources) {
+        guard let rawSource = CFArrayGetValueAtIndex(sources, index) else { continue }
+        let source = unsafeBitCast(rawSource, to: CFTypeRef.self)
+        guard let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() else { continue }
+        if let state = (description as NSDictionary)["Power Source State"] as? String {
+            return state == "AC Power"
+        }
+    }
+    return nil
+}
+
+/// 注册 IOPS 电源事件（context = nil：回调只读全局；回调在主 RunLoop 派发）。
+/// 注册失败 → error 日志（30s 心跳兜底仍在，**不退出**）。
+private func registerPowerSourceWatcher() {
+    guard let source = IOPSNotificationCreateRunLoopSource(iopsPowerCallback, nil)?.takeRetainedValue() else {
+        lifecycleLog.error("IOPS 电源通知注册失败——插拔即时执法降级为 30s 心跳（daemon 继续运行）")
+        return
+    }
+    iopsSource = source
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
 }

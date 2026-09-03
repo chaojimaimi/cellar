@@ -117,6 +117,9 @@ struct PanelView: View {
                 controlSection
                 Divider()
                 ActionSectionView()
+                // WP3：校准区（ActionSection 之后；能力门控缺失时组件整区隐藏）。
+                Divider()
+                CalibrationSection()
             }
 
             Divider()

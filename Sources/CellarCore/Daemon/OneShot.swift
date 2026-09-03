@@ -9,8 +9,8 @@ import os
 /// `\(kind):start` / `\(kind):done` / `\(kind):cancel` / `\(kind):timeout` /
 /// `\(kind):cancel(crash-recovery)`。
 public struct OneShotAction: Codable, Equatable, Sendable {
-    /// 动作类型字面量（"fullOnce" | "dischargeToLimit"；"/Library/Application Support/
-    /// Cellar/action.json" 载入时 kind 不在白名单 → 视为缺失）。
+    /// 动作类型字面量（"fullOnce" | "dischargeToLimit" | "calibration"；"/Library/
+    /// Application Support/Cellar/action.json" 载入时 kind 不在白名单 → 视为缺失）。
     public var kind: String
     /// 启动时刻。
     public var startedAt: Date
@@ -19,17 +19,27 @@ public struct OneShotAction: Codable, Equatable, Sendable {
     /// 放电目标电量 %（WP2' dischargeToLimit 专用；fullOnce 恒 nil——评审 P1-6：
     /// 可选字段 + 合成 Codable decodeIfPresent，旧格式 fullOnce JSON 无本键 → nil 兼容）。
     public var targetPercent: Int?
+    /// WP3 校准相位（"chargeFull" | "hold" | "discharge"；fullOnce/dischargeToLimit
+    /// 恒 nil——可选字段 + 合成 Codable decodeIfPresent，旧格式 JSON 无本键 → nil 兼容）。
+    public var phase: String?
+    /// WP3 校准相位起始时刻（相位推进时更新；其余动作恒 nil；崩溃恢复按相位恢复
+    /// CHIE 的精确性前提——相位落盘先于副作用写入，方案 §2.2）。
+    public var phaseStartedAt: Date?
 
     public init(
         kind: String = OneShot.fullOnceKind,
         startedAt: Date,
         deadline: Date,
-        targetPercent: Int? = nil
+        targetPercent: Int? = nil,
+        phase: String? = nil,
+        phaseStartedAt: Date? = nil
     ) {
         self.kind = kind
         self.startedAt = startedAt
         self.deadline = deadline
         self.targetPercent = targetPercent
+        self.phase = phase
+        self.phaseStartedAt = phaseStartedAt
     }
 }
 
@@ -160,7 +170,10 @@ public struct OneShotTrack: Equatable, Sendable {
     /// 直到下一次用户动作（setLimits/enable/disable/fullOnce 重启）才清除。
     public internal(set) var latchedLiteral: String?
     /// 完成判定去抖计数（连续满足条件 tick 数；中断归零）。
-    public private(set) var debounceTicks = 0
+    /// WP3：setter 收窄自 private 放宽 internal（Calibration.swift 的
+    /// applyCalibrationCounters 同模块回写；daemon 模块仍只经 mutating 方法转移
+    /// ——单一属主不变量不破）。
+    public internal(set) var debounceTicks = 0
     /// WP2' 放电判定链计数器（存储属性本体——扩展不能加存储属性；转移逻辑见
     /// Discharge.swift 的 tickDischarge/noteMonitoringLoss）。
     /// ext 异常去抖计数（N=2；ext=false 或 CHIE 被保活纠正 → 清零）。
@@ -335,6 +348,7 @@ public struct ActionStore: Sendable {
     /// 校验式读：缺失 / 损坏 / kind 不在白名单 → nil + 日志（绝不回落部分动作）。
     /// WP2'：白名单扩 {"fullOnce", "dischargeToLimit"}（旧格式 fullOnce JSON 无
     /// targetPercent 键 → 合成 Codable decodeIfPresent 自动 nil，评审 P1-6）。
+    /// WP3：白名单扩 "calibration"（phase/phaseStartedAt 同款可选字段兼容）。
     public func load() -> OneShotAction? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let decoded = try? JSONDecoder().decode(OneShotAction.self, from: data) else {
@@ -342,14 +356,16 @@ public struct ActionStore: Sendable {
             return nil
         }
         guard Self.knownKinds.contains(decoded.kind) else {
-            Self.log.error("action.json 动作类型未知（kind=\(decoded.kind)）——仅支持 fullOnce/dischargeToLimit，按缺失处理")
+            Self.log.error("action.json 动作类型未知（kind=\(decoded.kind)）——仅支持 fullOnce/dischargeToLimit/calibration，按缺失处理")
             return nil
         }
         return decoded
     }
 
     /// kind 白名单（载入判定：不在清单即 treat-as-absent——未知动作不进入恢复路径）。
-    private static let knownKinds: Set<String> = [OneShot.fullOnceKind, Discharge.dischargeToLimitKind]
+    private static let knownKinds: Set<String> = [
+        OneShot.fullOnceKind, Discharge.dischargeToLimitKind, Calibration.kind,
+    ]
 
     /// 原子写（同目录临时文件 + rename），文件权限 0644。
     /// 父目录缺失等错误原样上抛（daemon main 已自举目录；写失败拒绝动作启动）。

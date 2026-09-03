@@ -92,6 +92,9 @@ public enum DaemonXPC {
     /// WP2' 自动放电能力字面量（与 discharge 同批上报——自动放电是策略能力非硬件
     /// 能力；App 按三态显隐开关：nil = 需升级 / 缺席 = 不支持 / 含 = 可用）。
     public static let capabilityAutoDischarge = "autoDischarge"
+    /// WP3 校准能力字面量（与 discharge 同批上报——校准为纯软件能力，强度依赖
+    /// 放电能力探测（tahoe ∧ CHIE 在位）；App 按能力显隐校准区，XPC 侧纵深防御）。
+    public static let capabilityCalibration = "calibration"
 
     // MARK: - 线格式键与常量
 
@@ -243,6 +246,18 @@ public struct DaemonXPCClient: Sendable {
     /// 原文；动作已在轨 → 幂等回当前状态。
     public func dischargeToLimit() throws -> DaemonStatus {
         try exchange(cmd: "dischargeToLimit")
+    }
+
+    /// WP3：开始校准（手动触发四相状态机；无参数——相位序列由 daemon 执行）。
+    /// 前置拒绝（mode/外接/能力）→ daemonError 原文；校准已在轨 → 幂等回当前状态；
+    /// 其他动作在轨 → actionOccupied 拒绝原文。
+    public func startCalibration() throws -> DaemonStatus {
+        try exchange(cmd: "startCalibration")
+    }
+
+    /// WP3：取消校准（独立命令臂；幂等——无动作亦成功回当前状态）。
+    public func cancelCalibration() throws -> DaemonStatus {
+        try exchange(cmd: "cancelCalibration")
     }
 
     // MARK: - 内部

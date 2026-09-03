@@ -38,8 +38,9 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 64：组件 × 风格(2) × 外观(2) × 态；
-// WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增）
+// MARK: - 矩阵案例定义（§3.3 N = 76：组件 × 风格(2) × 外观(2) × 态；
+// WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增；
+// WP3 自 64 扩 76——校准区 3 态 12 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -131,8 +132,8 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 64 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
-// WP1 自 60 扩 64——状态行温度暂停态 4 新增）
+// MARK: 76 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -250,6 +251,34 @@ private func buildCases() -> [SnapshotCase] {
                 ) {
                     AnyView(wrap(style, scheme) {
                         banner.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // 校准区 3 态（idle/确认块/运行中放电相）×4（WP3 §2.5 新增 12 张，
+            // 64 → 76）：参数驱动组件直接构造（onStart/onCancel 空闭包——渲染无
+            // 副作用；running 相位钉死放电相——相位词 + 电量组合的代表形态）。
+            let calibrations: [(String, CalibrationSectionView)] = [
+                ("idle", CalibrationSectionView(
+                    calibrationActive: false, phase: nil, percent: nil,
+                    capabilityPresent: true, modeActive: true, busy: false,
+                    onStart: {}, onCancel: {})),
+                ("confirm", CalibrationSectionView(
+                    calibrationActive: false, phase: nil, percent: nil,
+                    capabilityPresent: true, modeActive: true, busy: false,
+                    onStart: {}, onCancel: {}, initialConfirmVisible: true)),
+                ("running", CalibrationSectionView(
+                    calibrationActive: true, phase: .discharge, percent: 23,
+                    capabilityPresent: true, modeActive: true, busy: false,
+                    onStart: {}, onCancel: {})),
+            ]
+            for (stateName, section) in calibrations {
+                cases.append(SnapshotCase(
+                    name: "Calibration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
                     })
                 })
             }

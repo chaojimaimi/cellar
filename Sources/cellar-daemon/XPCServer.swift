@@ -134,6 +134,13 @@ final class XPCServer: @unchecked Sendable {
         case "cancelAction":
             respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
 
+        case "startCalibration":
+            // WP3 校准（鉴权门同变更命令；无参数——相位序列由 daemon 执行）。
+            respondChange(peer: peer, operation: "startCalibration", body: { try core.startCalibration() })
+
+        case "cancelCalibration":
+            respondChange(peer: peer, operation: "cancelCalibration", body: { try core.cancelCalibration() })
+
         default:
             send(errorReply("未知命令：\(request.cmd)"), to: peer.connection)
         }

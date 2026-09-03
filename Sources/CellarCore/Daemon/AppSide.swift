@@ -311,6 +311,23 @@ public extension DaemonStatus {
     }
 }
 
+// MARK: - 校准动作助手（WP3 §2.3：daemonStatus.action 直读，App 面板校准区数据源）
+
+/// 校准动作态/相位态派生（OneShotAction.phase 为持久化原始值——未知串显式 nil，
+/// 消费面按「未知」降级呈现，不猜测语义）。
+public extension DaemonStatus {
+    /// 动作在轨且 kind == calibration。
+    var isCalibrationAction: Bool {
+        action?.kind == Calibration.kind
+    }
+
+    /// 校准当前相位（kind==calibration 时解析 action.phase 原始值；未知串/缺席 → nil）。
+    var calibrationPhase: Calibration.Phase? {
+        guard isCalibrationAction, let raw = action?.phase else { return nil }
+        return Calibration.Phase(rawValue: raw)
+    }
+}
+
 // MARK: - 展示格式化
 
 /// 时间戳本地时区渲染。⚠️ 直接对 Date 做字符串插值（description）恒为 UTC——

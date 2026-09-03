@@ -104,6 +104,20 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         case .autoDischargeStarted(let upperLimit):
             // WP2' 自动放电启动（触发时用户不在场；目标 = 触发时刻策略上限）。
             return CellarL10n.s("notification.autoDischargeStarted", upperLimit)
+        case .calibrationPhaseChanged(let phase):
+            // WP3 校准相位转移：相位词经 CellarL10n（calibration.phase.*，与面板
+            // 同 catalog 同源——夜间过夜场景用户须能区分相位）。
+            let word: String
+            switch phase {
+            case .chargeFull: word = CellarL10n.s("calibration.phase.chargeFull")
+            case .hold: word = CellarL10n.s("calibration.phase.hold")
+            case .discharge: word = CellarL10n.s("calibration.phase.discharge")
+            }
+            return CellarL10n.s("notification.calibrationPhase", word)
+        case .calibrationCompleted:
+            return CellarL10n.s("notification.calibrationCompleted")
+        case .calibrationInterrupted:
+            return CellarL10n.s("notification.calibrationInterrupted")
         }
     }
 
@@ -123,6 +137,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         case .actionSafetyTerminated(let kind): return "action.\(kind).safety.\(Int(now.timeIntervalSince1970))"
         case .actionCancelled(let kind): return "action.\(kind).cancelled.\(Int(now.timeIntervalSince1970))"
         case .autoDischargeStarted: return "action.\(Discharge.dischargeToLimitKind).autostart.\(Int(now.timeIntervalSince1970))"
+        case .calibrationPhaseChanged: return "calibration.phase.\(Int(now.timeIntervalSince1970))"
+        case .calibrationCompleted: return "calibration.completed.\(Int(now.timeIntervalSince1970))"
+        case .calibrationInterrupted: return "calibration.interrupted.\(Int(now.timeIntervalSince1970))"
         }
     }
 

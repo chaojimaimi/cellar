@@ -91,6 +91,16 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     /// WP2' 自动放电启动（lastAction 转移 dischargeToLimit:autostart——daemon
     /// 自动触发时用户不在场，必须发通知；upperLimit = 触发时刻策略上限）。
     case autoDischargeStarted(upperLimit: Int)
+    /// WP3 校准相位转移（lastAction 转移进入 calibration:hold / calibration:discharge；
+    /// chargeFull 为启动相——启动是用户操作已知，不另发）。
+    case calibrationPhaseChanged(phase: Calibration.Phase)
+    /// WP3 校准完成（lastAction 转移 calibration:done）。
+    case calibrationCompleted
+    /// WP3 校准中止（lastAction 转移 calibration:safety / calibration:timeout /
+    /// calibration:cancel(crash-recovery)）。**独立于既有 .actionTimeout 事件形态**
+    /// （R1 P3-3 登记）：校准需专属文案——夜间过夜场景用户必须能区分「校准完成」
+    /// 与「充满一次完成」，timeout 折进 interrupted 语义。
+    case calibrationInterrupted
 }
 
 /// 通知分类纯函数（§2.3 定版）。
@@ -139,9 +149,11 @@ public func notificationEvents(
     case "enforce:disableCharging":
         // P1-4：previous 为 fullOnce:*/dischargeToLimit:*（终态锁存或动作期）→ 恢复
         // 停充是动作的期望收尾，不误报 limitReached（前缀含 start——该转移不可达，
-        // 防御覆盖无害）。
+        // 防御覆盖无害）。P2-1：校准中止（充电相拔电 → safety + 恢复停充）同样豁免
+        // ——校准动作期/终态后的 enforce 停充不误报「已达上限」。
         if previous.lastAction?.hasPrefix("fullOnce:") == true
-            || previous.lastAction?.hasPrefix("\(dischargeKind):") == true {
+            || previous.lastAction?.hasPrefix("\(dischargeKind):") == true
+            || previous.lastAction?.hasPrefix("\(Calibration.kind):") == true {
             return []
         }
         return [.limitReached(upperLimit: current.upperLimit)]
@@ -171,6 +183,22 @@ public func notificationEvents(
         // WP2' 自动放电启动（触发发生在 daemon 运行期，App 轮询必见转移——
         // 首样本臂不破例；upperLimit 取 current 现值）。
         return [.autoDischargeStarted(upperLimit: current.upperLimit)]
+    case CalibrationLiteral.phase(.hold):
+        // WP3 校准相位转移（进入 hold/discharge 发事件；chargeFull 为启动相不另发
+        // ——落入 default 空臂；相位字面量每 tick 稳定，转移只在相位切换出现）。
+        return [.calibrationPhaseChanged(phase: .hold)]
+    case CalibrationLiteral.phase(.discharge):
+        return [.calibrationPhaseChanged(phase: .discharge)]
+    case CalibrationLiteral.done():
+        return [.calibrationCompleted]
+    case CalibrationLiteral.safety(),
+         CalibrationLiteral.timeout(),
+         CalibrationLiteral.cancelCrashRecovery():
+        // 安全/超时/崩溃恢复一律「校准已中止」；calibration:cancel（用户/隐式取消）
+        // → []（用户取消即时反馈路径；daemon 发起取消经面板终态呈现，不通知）。
+        return [.calibrationInterrupted]
+    case CalibrationLiteral.cancel():
+        return []
     default:
         return []
     }

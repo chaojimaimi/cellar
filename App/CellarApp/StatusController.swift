@@ -152,16 +152,24 @@ final class StatusController: ObservableObject {
             // 动作完成上升沿（真机验收修正 2026-09-02）：done 已剥离失败横幅
             // 通道（红色告警 + 锁存常驻——成功终态语义错位），改走 success 反馈
             // + 5s 自动消退；lastAction 锁存期上升沿只触发一次（prev==done 不重报）。
-            let isDone = status.lastAction == "fullOnce:done"
+            // WP3：calibration:done 同形态（成功横幅「校准完成」——完成文案含
+            // 「请立即接通电源」，R1 P3-1）。
+            let calibrationDone = status.lastAction == "calibration:done"
+            let isDone = calibrationDone
+                || status.lastAction == "fullOnce:done"
                 || status.lastAction == "dischargeToLimit:done"
-            let wasDone = lastActionLiteral == "fullOnce:done"
+            let wasDone = lastActionLiteral == "calibration:done"
+                || lastActionLiteral == "fullOnce:done"
                 || lastActionLiteral == "dischargeToLimit:done"
             if isDone && !wasDone {
-                // done 终态按动作类型拆两个 key（「充满一次」/放电到上限的
-                // kindWord 组装不适合单格式串——zh 引号差异在 en 无对应形态）。
-                setSuccessFeedback(status.lastAction == "fullOnce:done"
-                    ? CellarL10n.s("status.doneFullOnce")
-                    : CellarL10n.s("status.doneDischarge"))
+                // done 终态按动作类型拆 key（「充满一次」/放电到上限的
+                // kindWord 组装不适合单格式串——zh 引号差异在 en 无对应形态；
+                // 校准完成走通知同 catalog 专属 key）。
+                setSuccessFeedback(calibrationDone
+                    ? CellarL10n.s("notification.calibrationCompleted")
+                    : status.lastAction == "fullOnce:done"
+                        ? CellarL10n.s("status.doneFullOnce")
+                        : CellarL10n.s("status.doneDischarge"))
             }
             lastActionLiteral = status.lastAction
         }
@@ -305,6 +313,27 @@ final class StatusController: ObservableObject {
         )
     }
 
+    /// 「电池校准」（WP3）：一键启动四相校准（充满 → 静置平衡 2h → 放电至 10% →
+    /// 恢复限充）。前置拒绝 → daemonError 原文上屏；校准已在轨 → daemon 幂等回
+    /// 当前状态；其他动作在轨 → .actionOccupied 拒绝上屏（互斥双向，面板校准区
+    /// idle 条件 action == nil 双重防护）。
+    func calibrateStart() {
+        runControl(
+            attempt: .startCalibration,
+            operation: { try DaemonXPCClient().startCalibration() },
+            successFeedback: CellarL10n.s("calibration.start")
+        )
+    }
+
+    /// 取消校准（XPC 独立臂 cancelCalibration——幂等，无动作亦成功回当前状态）。
+    func calibrateCancel() {
+        runControl(
+            attempt: .cancelCalibration,
+            operation: { try DaemonXPCClient().cancelCalibration() },
+            successFeedback: CellarL10n.s("calibration.cancel")
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -321,6 +350,10 @@ final class StatusController: ObservableObject {
             dischargeToLimit()
         case .cancelDischarge:
             cancelDischarge()
+        case .startCalibration:
+            calibrateStart()
+        case .cancelCalibration:
+            calibrateCancel()
         }
     }
 
