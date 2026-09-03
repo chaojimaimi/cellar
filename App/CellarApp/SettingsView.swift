@@ -16,9 +16,9 @@ struct SettingsView: View {
             AboutTab()
                 .tabItem { Label(CellarL10n.s("settings.about"), systemImage: "info.circle") }
         }
-        // 高度随通用 Tab 内容增长（v1.1 加风扇区后 300 已裁切内容——三 Tab 共用
-        // 一帧，取最高 Tab 适配；Form 不自动滚动，高度不足即静默裁切）。
-        .frame(width: 420, height: 680)
+        // 高度给中等值即可——通用 Tab 内容已装 ScrollView（v1.1 风扇区加入后
+        // 定高帧两次裁切，滚动才是可持续形态；三 Tab 共用一帧）。
+        .frame(width: 420, height: 560)
     }
 }
 
@@ -36,7 +36,10 @@ private struct GeneralTab: View {
     @State private var autoDischargeConfirming = false
 
     var body: some View {
-        Form {
+        // v1.1：内容装进 ScrollView（风扇区加入后定高帧两次裁切——定高猜高度
+        // 不可持续，滚动是 macOS 高个设置页的标准形态；窗口给中等高度）。
+        ScrollView {
+            Form {
             Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
                 get: { loginItems.launchAtLogin },
                 set: { loginItems.toggle($0) }
@@ -117,6 +120,7 @@ private struct GeneralTab: View {
             loginItems.load()
             loginItems.refreshRegistration()
             queryNotificationAuthorization()
+        }
         }
     }
 
