@@ -38,8 +38,8 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 60：组件 × 风格(2) × 外观(2) × 态；
-// WP2' 自 48 扩 60——PowerFlow 12 新增）
+// MARK: - 矩阵案例定义（§3.3 N = 64：组件 × 风格(2) × 外观(2) × 态；
+// WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -75,11 +75,13 @@ private let fixedTimestamp = Date(timeIntervalSince1970: 1_700_000_000)
 
 /// 真实型快照构造：走 BatterySnapshotParser 纯函数（与生产同一解析路径），字段
 /// 形状仿 AppleSmartBattery 注册表实测（BatterySnapshot.swift 注记）。
+/// temperatureCentiC 可注入（默认 3100 = 31.0 °C——WP1 温度暂停态需 40+ 高温）。
 private func makeSnapshot(
     percent: Int,
     isCharging: Bool,
     externalConnected: Bool,
     amperageMA: Int,
+    temperatureCentiC: Int = 3_100,
     adapter: [String: Any]?
 ) -> BatterySnapshot? {
     var props: [String: Any] = [
@@ -88,7 +90,7 @@ private func makeSnapshot(
         "ExternalConnected": externalConnected,
         "Voltage": 11_670,
         "Amperage": amperageMA,
-        "Temperature": 3_100,          // 厘摄氏度 → 31.0 °C
+        "Temperature": temperatureCentiC,
         "CycleCount": 123,
         "DesignCapacity": 6_300,
         "MaxCapacity": 100,
@@ -129,7 +131,8 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 60 案例清单（WP2'：仪表 20 + 状态行 16 + 功率流向 12 + 横幅 12）
+// MARK: 64 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// WP1 自 60 扩 64——状态行温度暂停态 4 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -161,7 +164,7 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
-            // 状态行 4 态（充电/停充漂浮/电池供电/遥测不可用）×4。
+            // 状态行 5 态（充电/停充漂浮/电池供电/温度暂停/遥测不可用）×4。
             let charging = makeSnapshot(percent: 85, isCharging: true, externalConnected: true,
                                         amperageMA: -1_800,
                                         adapter: ["Watts": 96, "AdapterVoltage": 20_150,
@@ -176,19 +179,27 @@ private func buildCases() -> [SnapshotCase] {
             // 电池供电：无适配器（AdapterDetails 缺席 → 整段隐藏、留空位）。
             let battery = makeSnapshot(percent: 62, isCharging: false, externalConnected: false,
                                        amperageMA: 950, adapter: nil)
-            let statusLines: [(String, BatterySnapshot?)] = [
-                ("charging", charging),
-                ("holdingFloat", holdingFloat),
-                ("battery", battery),
-                ("telemetryNil", nil),
+            // WP1 温度暂停态：tempPauseActive=true + 高温快照（4020 厘摄氏度 =
+            // 40.2 °C）——温度段注词「40.2 °C · 暂停中」形态钉死（方案 §4.2）。
+            let tempPaused = makeSnapshot(percent: 80, isCharging: false, externalConnected: true,
+                                          amperageMA: 0, temperatureCentiC: 4_020,
+                                          adapter: ["Watts": 96, "AdapterVoltage": 20_150,
+                                                    "Current": 4_770, "Name": "96W USB-C Power Adapter",
+                                                    "Description": "adapter", "IsWireless": false])
+            let statusLines: [(String, BatterySnapshot?, Bool)] = [
+                ("charging", charging, false),
+                ("holdingFloat", holdingFloat, false),
+                ("battery", battery, false),
+                ("tempPaused", tempPaused, true),
+                ("telemetryNil", nil, false),
             ]
-            for (stateName, snapshot) in statusLines {
+            for (stateName, snapshot, tempPause) in statusLines {
                 cases.append(SnapshotCase(
                     name: "StatusLine_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {
-                        StatusLineView(snapshot: snapshot)
+                        StatusLineView(snapshot: snapshot, tempPauseActive: tempPause)
                             .frame(width: 304, alignment: .leading)
                     })
                 })

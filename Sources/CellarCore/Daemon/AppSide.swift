@@ -299,6 +299,18 @@ public actor AppConfigStore {
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "app-config")
 }
 
+// MARK: - 温度暂停派生助手（WP1 充电侧温度暂停）
+
+/// 温度暂停态判定（daemonStatus → 状态行注词的唯一接线）。
+/// `enforce:tempPause` 表示「当前处于温度暂停态」，非单次写事件——case 3/4 无写
+/// 仍返回该字面量，暂停期持续可见（App 60s 轮询必见，审查 M3 同构）。字面量是
+/// wire 格式永不本地化，App 不裸写字符串（方案 §2.4）。
+public extension DaemonStatus {
+    var isTempPauseAction: Bool {
+        lastAction == "enforce:tempPause"
+    }
+}
+
 // MARK: - 展示格式化
 
 /// 时间戳本地时区渲染。⚠️ 直接对 Date 做字符串插值（description）恒为 UTC——

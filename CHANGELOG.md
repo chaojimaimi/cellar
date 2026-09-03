@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0-alpha] - Unreleased
+
+### Added
+
+- **充电侧温度暂停**：电池 ≥ 40 °C 自动暂停充电、< 37 °C 恢复（3 °C 滞回）；放电热终止后不再热态回充
+
 ## [0.3.1-alpha] - 2026-09-02
 
 Phase 3 complete — interface style system, one-shot actions (charge to full /

@@ -126,7 +126,14 @@ extension DaemonCore {
                         message: "取消放电动作：已恢复适配器使能（CHIE=0x00，回读校验通过）"
                     ))
                 }
-                enforceLimitChargingLocked(backend: backend, events: &events)
+                // WP1：本作用域无现成 snapshot——锁内读一次温度（放电启动前置同款
+                // 先例，方案 §1.9）；失败 → nil 旁路（≤1 tick 窗口，下 tick 常规
+                // 守卫按充电现态重新介入，方案 §2.3）。
+                enforceLimitChargingLocked(
+                    backend: backend,
+                    temperatureC: (try? monitor.snapshot())?.temperatureC,
+                    events: &events
+                )
             } else {
                 events.append(LogEvent(
                     category: .control, level: .warn,

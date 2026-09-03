@@ -191,13 +191,15 @@ extension DaemonCore {
             // 若只恢复 CHIE，通知说「限充已恢复」但最长 30s 存在无约束充电
             // （enforce 收敛前电池直接充到上限）。floor=60 案 percent<resume →
             // enableCharging 无害（CHTE 本就是 0）。
-            enforceLimitChargingLocked(backend: backend, events: &events)
+            // WP1：传本 tick 快照温度——放电热终止（≥40°C）后恢复路径被守卫拦截
+            // 热态回充（方案 §2.3）。
+            enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             deleteActionFileLocked(events: &events)
             return actionTrack.latchedLiteral ?? fallbackLiteral(for: outcome)
         case .cancelled(let reason, let literal):
             // 统一取消：恢复 CHIE（重试阶梯 + 告警）→ enforce CHTE（恢复限充语义）。
             restoreDischargeAdapterLocked(backend: backend, terminal: "取消(\(reason))", events: &events)
-            enforceLimitChargingLocked(backend: backend, events: &events)
+            enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             deleteActionFileLocked(events: &events)
             return literal
         case .keepAlive:
@@ -247,7 +249,11 @@ extension DaemonCore {
 /// 数据源 = 最近成功采样（lastStatus，≤30s 陈旧可接受——决策规则与常规 enforce
 /// 相同，下 tick 全量重估兜底）；external 恒 true（CHIE=0x00 已确认写入 →
 /// 适配器恢复）。失败仅记日志（enforce 常规分支本就会重试）。
-    func enforceLimitChargingLocked(backend: any ChargingBackend, events: inout [LogEvent]) {
+///
+/// WP1：`temperatureC` = 调用点作用域内可得的温度（nil = 快照失败旁路——
+/// 守卫跳过一 tick，按常规决策执行；旁路窗口 ≤1 tick，下 tick 常规守卫按充电
+/// 现态重新介入，方案 §2.3）。
+    func enforceLimitChargingLocked(backend: any ChargingBackend, temperatureC: Double?, events: inout [LogEvent]) {
         guard let percent = lastStatus?.lastPercent else {
             events.append(LogEvent(
                 category: .control, level: .warn,
@@ -262,10 +268,26 @@ extension DaemonCore {
                 externalConnected: true,   // CHIE=0x00 回读已确认（恢复方校验过）
                 chargingEnabled: chargingEnabled
             )
-            _ = try controller.enforce(context: context, backend: backend)
+            // 套温度守卫：放电热终止（≥40°C）后 CHTE 现态为使能、percent 恒 < 上限
+            // → 守卫 case 2 主动写停充，修复「41°C 热态回充」间隙（方案 §2.3）；
+            // 37–40°C 区间恢复按常规决策回充（低于暂停阈值，符合守卫声明语义）。
+            let action: ChargingAction
+            if let temperatureC {
+                let base = controller.decide(context: context)
+                action = ThermalGuard.guarded(
+                    base: base, context: context, temperatureC: temperatureC
+                ).action
+            } else {
+                events.append(LogEvent(
+                    category: .control, level: .warn,
+                    message: "无温度数据，热守卫跳过一 tick"
+                ))
+                action = controller.decide(context: context)
+            }
+            _ = try controller.perform(action, backend: backend)   // noop 不触碰 backend
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "放电终态/取消：已按当前策略恢复限充（percent=\(percent)% enforce 收敛）"
+                message: "放电终态/取消：已按当前策略恢复限充（action=\(action)，温度=\(temperatureC.map { String(format: "%.1f", $0) } ?? "未知")°C，percent=\(percent)% enforce 收敛）"
             ))
         } catch {
             events.append(LogEvent(

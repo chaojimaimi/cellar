@@ -573,14 +573,34 @@ final class DaemonCore: @unchecked Sendable {
                 actionName = patrolLiteral
             } else {
                 do {
-                    let action = try controller.enforce(context: context, backend: backend)
-                    switch action {
-                    case .enableCharging: actionName = "enforce:enableCharging"
-                    case .disableCharging: actionName = "enforce:disableCharging"
-                    case .noop: actionName = "enforce:noop"
+                    // WP1：温度守卫介入常规执法——decide → ThermalGuard.guarded →
+                    // perform（noop 不触碰 backend；enable/disable 经写后回读校验，
+                    // 红线 5 不变）。「充电中升温」（chargingEnabled==true ∧ percent
+                    // < 上限）时 decide 恒 noop，守卫直接看充电现态判热停写（方案
+                    // §2.2）。actionName 映射：暂停态（case 2/3/4）统一字面量
+                    // enforce:tempPause——case 3/4 无写也返回，percent < 恢复阈值
+                    // 期间持续可见（滞回带 [resume, upper) 内落 case 6 不标——
+                    // 限充滞回语义，方案 §2.1；审查 M3 同构）。
+                    let base = controller.decide(context: context)
+                    let guarded = ThermalGuard.guarded(
+                        base: base,
+                        context: context,
+                        temperatureC: snapshot.temperatureC
+                    )
+                    _ = try controller.perform(guarded.action, backend: backend)
+                    if guarded.tempPauseActive {
+                        actionName = "enforce:tempPause"
+                    } else {
+                        switch guarded.action {
+                        case .enableCharging: actionName = "enforce:enableCharging"
+                        case .disableCharging: actionName = "enforce:disableCharging"
+                        case .noop: actionName = "enforce:noop"
+                        }
                     }
                 } catch BackendError.verifyFailed(let key, let desired, let actual) {
                     // 外部写者在写读之间翻转状态 = 冲突显式化（WP4 不得误诊为协议故障）。
+                    // 错误臂优先于暂停态显示：热停写被外部/硬件拒绝是红线 5 事件，
+                    // 显式化压过状态行注词（方案 §2.2）。
                     actionName = "enforce:verifyFailed"
                     events.append(LogEvent(
                         category: .control, level: .warn,

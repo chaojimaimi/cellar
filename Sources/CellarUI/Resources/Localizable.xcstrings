@@ -2517,6 +2517,23 @@
         }
       }
     },
+    "statusline.tempPaused" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂停中"
+          }
+        }
+      }
+    },
     "statusline.unavailable" : {
       "extractionState" : "manual",
       "localizations" : {

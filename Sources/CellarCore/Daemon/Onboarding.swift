@@ -107,6 +107,8 @@ public enum CellarNotificationEvent: Hashable, Sendable {
 ///   `enforce:error` → `.writeFailed`；`enforce:verifyFailed` → `.conflictSuspected`。
 /// - `sleep:*`、`disable`、`enable`、`noop` → 不通知（睡眠停充/用户动作语义；
 ///   睡眠路径 verifyFailed 也不写 lastAction，DaemonCore.swift:229-233 只记日志）。
+/// - `enforce:tempPause` → 不通知（WP1 保护动作；首样本臂抑制 + 转移臂落
+///   default 空，两臂均有场景钉死——暂停/恢复都不产生通知噪音）。
 /// - **WP2 动作字面量（P1-3 + P1-4）**：
 ///   `fullOnce:done` 转移 → `.actionCompleted`；`fullOnce:timeout` 转移 →
 ///   `.actionTimeout`；`fullOnce:cancel(crash-recovery)` 转移 →

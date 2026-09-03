@@ -101,7 +101,12 @@ struct PanelView: View {
                 }
             )
 
-            StatusLineView(snapshot: statusController.batterySnapshot)
+            // WP1：温度暂停注词接线——daemonStatus 与 batterySnapshot 在本组装点
+            // 交汇（方案 §2.4 数据流：App 侧直读遥测 + daemon 轮询两源并存）。
+            StatusLineView(
+                snapshot: statusController.batterySnapshot,
+                tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true
+            )
 
             // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
             // 手工路线（CLI 安装）的 daemon 同样可控制；mode=="disabled" 时区内

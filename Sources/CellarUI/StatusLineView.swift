@@ -13,10 +13,14 @@ import SwiftUI
 /// 「遥测不可用」（不进告警横幅，防 1s 刷屏）。
 public struct StatusLineView: View {
     public let snapshot: BatterySnapshot?
+    /// 温度暂停态（daemonStatus.isTempPauseAction 派生）：温度段追加「暂停中」注词。
+    /// 默认 false 向后兼容——既有调用点（快照矩阵/无 daemon 场景）零改动（方案 §2.4）。
+    public let tempPauseActive: Bool
     @Environment(\.cellarTheme) private var theme
 
-    public init(snapshot: BatterySnapshot?) {
+    public init(snapshot: BatterySnapshot?, tempPauseActive: Bool = false) {
         self.snapshot = snapshot
+        self.tempPauseActive = tempPauseActive
     }
 
     public var body: some View {
@@ -117,10 +121,14 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 温度段：一位小数。段标签随风格（word(.tempLabel)——amber「窖温」，demo）。
+    /// 温度段：一位小数。温度暂停态追加「 · 暂停中」注词——词经 CellarL10n
+    /// （用户可见新词不走字面量，方案 §2.5）；「40.2°C · 暂停中」形态，注词与
+    /// 数值同段同字体（monospacedDigit 由 segment 统一施加）。段标签随风格
+    /// （word(.tempLabel)——amber「窖温」，demo）。
     private func temperatureSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: theme.word(.tempLabel)) {
-            Text(String(format: "%.1f °C", snapshot.temperatureC))
+            let base = String(format: "%.1f °C", snapshot.temperatureC)
+            Text(tempPauseActive ? "\(base) · \(CellarL10n.s("statusline.tempPaused"))" : base)
         }
     }
 
