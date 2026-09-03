@@ -20,24 +20,33 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 当前值——防「改上限/启停用把开关静默重置」）。合成 Codable 的
     /// decodeIfPresent/encodeIfPresent——旧 policy.json 无本键 → nil 兼容。
     public var autoDischargeEnabled: Bool?
+    /// Phase 5 v1.1 风扇策略（nil = 未配置，视为全默认关）。⚠️ **F-1 全构造点
+    /// 透传强制条款（R1 P0-2 扩面）**：不止 PolicyStore.load()——daemon 内存重建
+    /// 三处（setLimits/disable/enable 的显式构造）都必须携带当前值，走 init 默认
+    /// nil 会把用户已配置的风扇设置静默清空并落盘（与 0.4.1 F-1 同型事故）。
+    /// 合成 Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    public var fan: FanPolicy?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
-        autoDischargeEnabled: Bool? = nil
+        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
         self.hysteresis = hysteresis
         self.autoDischargeEnabled = autoDischargeEnabled
+        self.fan = fan
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
 
     /// 校验：mode ∈ {active, disabled}；`try LimitPolicy(upperLimit:hysteresis:)` 成功。
     /// 任何非法（含 upperLimit=30 这类可绕过 60 地板的持久化回流）→ nil（评审 A-2/P0）。
+    /// fan 一律透传（F-1：fan 的语义合法由 FanPolicy 自身保证——DaemonPolicy
+    /// 不额外校验，nil 与非 nil 都原样携带）。
     public static func validated(
         mode: String, upperLimit: Int, hysteresis: Int,
-        autoDischargeEnabled: Bool? = nil
+        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -45,7 +54,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         }
         return DaemonPolicy(
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
-            autoDischargeEnabled: autoDischargeEnabled
+            autoDischargeEnabled: autoDischargeEnabled, fan: fan
         )
     }
 }
@@ -69,16 +78,34 @@ public struct PolicyStore: Sendable {
     /// 原子读 + 强校验（评审 A-2）：任何非法形态 → nil，绝不回落"半合法"策略。
     /// ⚠️ 0.4.1 安全审计 F-1：autoDischargeEnabled 必须透传 validated——缺失会让
     /// daemon 重启/SIGHUP 后自动放电开关静默复位（持久化回流完整性）。
+    /// ⚠️ Phase 5 v1.1 F-1 扩面：`fan` 语义非法（阈值越界等）→ **整包 nil**——
+    /// 绝不回落半合法风扇配置（FanGuard 决策建立在越界语义上），与 A-2 同纪律。
     public func load() -> DaemonPolicy? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let decoded = try? JSONDecoder().decode(DaemonPolicy.self, from: data) else {
             return nil
         }
+        let fan: FanPolicy?
+        if let decodedFan = decoded.fan {
+            guard let validatedFan = FanPolicy.validated(
+                enabled: decodedFan.enabled,
+                strategy: decodedFan.strategy,
+                thresholdCentiC: decodedFan.thresholdCentiC,
+                releaseHysteresisCentiC: decodedFan.releaseHysteresisCentiC,
+                speedPercent: decodedFan.speedPercent,
+                stage2Percent: decodedFan.stage2Percent,
+                stage2RiseCentiC: decodedFan.stage2RiseCentiC
+            ) else { return nil }
+            fan = validatedFan
+        } else {
+            fan = nil
+        }
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
             hysteresis: decoded.hysteresis,
-            autoDischargeEnabled: decoded.autoDischargeEnabled
+            autoDischargeEnabled: decoded.autoDischargeEnabled,
+            fan: fan
         )
     }
 

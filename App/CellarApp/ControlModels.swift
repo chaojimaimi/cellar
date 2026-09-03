@@ -32,6 +32,8 @@ enum ControlAttempt: Equatable {
     /// 拆分/actionOccupied 拒绝经 daemon 上抛，重试无害）。
     case startCalibration
     case cancelCalibration
+    /// Phase 5 v1.1 风扇设置（重试 = 重发上次 FanWire——缺席保持语义下无害）。
+    case setFan(FanWire)
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -54,6 +56,8 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("calibration.start")
         case .cancelCalibration:
             return CellarL10n.s("calibration.cancel")
+        case .setFan:
+            return CellarL10n.s("status.summary.setFan")
         }
     }
 }

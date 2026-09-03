@@ -2,7 +2,7 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十一项只读诊断（不写任何 SMC 键）。
+/// cellar doctor —— 十二项只读诊断（不写任何 SMC 键）。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -12,7 +12,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十一项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：十二项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。
@@ -40,6 +40,11 @@ struct DoctorCommand: ParsableCommand {
         var chargingError: SMCError?
         var keyPresence: KeyPresence?
         var dischargeProbe: DischargeProbe?
+        // Phase 5 v1.1：检查 12 风扇键只读探测（F0Tg/F0Md/F0Ac/F0Mn/F0Mx 在位 +
+        // F0Md/F0Tg 现态；只读——不写任何键）。
+        var fanKeysPresent: [String] = []
+        var fanMdValue: UInt8?
+        var fanTgRPM: Float?
 
         do {
             let client = try SMCClient.makeDefault()
@@ -51,6 +56,15 @@ struct DoctorCommand: ParsableCommand {
                 chie: try? client.keyExists("CHIE"),
                 ch0b: try? client.keyExists("CH0B")
             )
+
+            // 检查 12：风扇键在位/现态（keyExists 失败按缺席；F0Md/F0Tg 读取失败 → nil）。
+            for key in ["F0Tg", "F0Md", "F0Ac", "F0Mn", "F0Mx"] {
+                if (try? client.keyExists(key)) == true {
+                    fanKeysPresent.append(key)
+                }
+            }
+            fanMdValue = (try? client.read("F0Md"))?.first
+            fanTgRPM = (try? client.read("F0Tg")).flatMap(FanSMC.decodeRPM)
 
             do {
                 let backend = try RuntimeProbe.probe(client: client)
@@ -146,7 +160,13 @@ struct DoctorCommand: ParsableCommand {
             btmState: btmState,
             btmProbeAttempted: true,
             versionMatrix: versionMatrix,
-            dischargeProbe: dischargeProbe
+            dischargeProbe: dischargeProbe,
+            fanProbe: FanDoctorProbe(
+                keysPresent: fanKeysPresent,
+                mdValue: fanMdValue,
+                tgRPM: fanTgRPM,
+                config: daemonStatus?.fan
+            )
         )
     }
 

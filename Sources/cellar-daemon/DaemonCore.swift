@@ -47,8 +47,11 @@ final class DaemonCore: @unchecked Sendable {
     /// 当前策略（经 `applyPolicyLocked` 写入——validated 已保证语义合法）。
     var policy: DaemonPolicy = .default
     var controller = LimitController(policy: try! LimitPolicy(upperLimit: 80, hysteresis: 2))
-    /// IOKit 传输持有方（重建 SMCClient 即换新 transport）。
-    private var smcClient: SMCClient?
+    /// IOKit 传输持有方（重建 SMCClient 即换新 transport）。⚠️ 可见性：Phase 5
+    /// v1.1 起 internal——风扇状态机需经它读写 F0 键（executable internal 模块外不可达）。
+    var smcClient: SMCClient?
+    /// Phase 5 v1.1 风扇运行时状态（结构体定义在 DaemonCore+Fan.swift——扩展不能加存储属性）。
+    var fanState = FanRuntimeState()
     /// 探测得到的后端；nil = 尚未探测成功（心跳驱动重试/自愈）。
     var backend: (any ChargingBackend)?
     /// daemon 能力清单（WP2' §2.1）：启动探测通过（tahoe ∧ CHIE 在位，评审 P1-1
@@ -171,6 +174,9 @@ final class DaemonCore: @unchecked Sendable {
                 message: "崩溃恢复：action.json 损坏或动作类型未知，已删除并无动作启动"
             ))
         }
+        // Phase 5 v1.1：风扇启动恢复（F0Md≠0 → 写 0 + warn——崩溃残留窗口收口，
+        // 方案 §6.5；逻辑在 DaemonCore+Fan.swift 的 releaseFanLocked 内）。
+        releaseFanLocked(events: &events)
         let shouldEnforce = policy.mode == "active"
         lock.unlock()
         emit(events)
@@ -203,6 +209,10 @@ final class DaemonCore: @unchecked Sendable {
             lock.unlock()
             emit(events)
         }
+
+        // Phase 5 v1.1：睡眠前释放风扇（睡眠中系统管热，boost 值滞留无意义——
+        // 方案 §6.4 路口④；逻辑在 DaemonCore+Fan.swift）。
+        releaseFanLocked(events: &events)
 
         // WP2 P0-1 门控：动作活跃 → 跳过睡前停充（充电即目标，无上限可守；否则用户
         // 睡前点充满 → 夜间停充 → 超时取消，最高频场景失效）。lastAction 保持动作字面量。
@@ -339,7 +349,7 @@ final class DaemonCore: @unchecked Sendable {
             adapterCycleArmed = true
         }
         applyPolicyLocked(
-            DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys, autoDischargeEnabled: autoFlag),
+            DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys, autoDischargeEnabled: autoFlag, fan: policy.fan),
             events: &events
         )
         persistPolicyLocked(events: &events)
@@ -393,7 +403,7 @@ final class DaemonCore: @unchecked Sendable {
         applyPolicyLocked(
             DaemonPolicy(
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
-                autoDischargeEnabled: policy.autoDischargeEnabled
+                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan
             ),
             events: &events
         )
@@ -422,7 +432,7 @@ final class DaemonCore: @unchecked Sendable {
         applyPolicyLocked(
             DaemonPolicy(
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
-                autoDischargeEnabled: policy.autoDischargeEnabled
+                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan
             ),
             events: &events
         )
@@ -452,6 +462,8 @@ final class DaemonCore: @unchecked Sendable {
         if actionTrack.isActive {
             cancelActionLocked(events: &events, latchCancelled: true)
         }
+        // Phase 5 v1.1：退出恢复风扇（boost 中 → Tg→原值 + Md=0，方案 §6.4 路口①）。
+        releaseFanLocked(events: &events)
         if let backend {
             do {
                 try backend.setChargingEnabled(true)
@@ -769,6 +781,7 @@ final class DaemonCore: @unchecked Sendable {
         let client = try SMCClient.makeDefault()
         let detected = try RuntimeProbe.probe(client: client)
         smcClient = client
+        fanState.clientGeneration += 1   // Phase 5 v1.1：SMCClient 重建代际——风扇 facts 缓存失效信号
         backend = detected
         capabilities = RuntimeProbe.supportsDischarge(backend: detected, client: client)
             ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge, DaemonXPC.capabilityCalibration]
@@ -816,7 +829,8 @@ final class DaemonCore: @unchecked Sendable {
     }
 
     /// 持久化当前策略（失败仅记日志——内存策略继续生效；SIGHUP 重读会回落磁盘旧值）。
-    private func persistPolicyLocked(events: inout [LogEvent]) {
+    /// ⚠️ 可见性：Phase 5 v1.1 起 internal——setFanConfig 持久化风扇策略复用本方法。
+    func persistPolicyLocked(events: inout [LogEvent]) {
         do {
             try policyStore.save(policy)
             events.append(LogEvent(
@@ -848,6 +862,7 @@ final class DaemonCore: @unchecked Sendable {
         status.upperLimit = policy.upperLimit
         status.hysteresis = policy.hysteresis
         status.autoDischargeEnabled = policy.autoDischargeEnabled
+        status.fan = fanStatusLocked()
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

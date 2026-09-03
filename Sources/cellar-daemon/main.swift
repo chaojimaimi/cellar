@@ -101,6 +101,9 @@ installSignal(SIGHUP) {
 //    periodicTick 兜底——WP4 触发词表内，规格 §0.5）。
 scheduleHeartbeat(core: core)
 
+// 5.5 Phase 5 v1.1：风扇 tick（10 秒；与心跳错峰，锁内短临界区——方案 §3 锁纪律）。
+scheduleFanTick(core: core)
+
 // 6. 电源通知（主 RunLoop source）。
 registerPowerNotifications(core: core)
 
@@ -151,6 +154,27 @@ private func scheduleHeartbeat(core: DaemonCore) {
         { _, info in
             guard let info else { return }
             Unmanaged<DaemonCore>.fromOpaque(info).takeUnretainedValue().sampleAndEnforce()
+        },
+        &context
+    )
+    CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+}
+
+// MARK: - Phase 5 v1.1 风扇 tick（10 秒；方案 §3：与 30s 心跳错峰，锁内短临界区）
+
+private func scheduleFanTick(core: DaemonCore) {
+    var context = CFRunLoopTimerContext(
+        version: 0,
+        info: UnsafeMutableRawPointer(Unmanaged.passUnretained(core).toOpaque()),
+        retain: nil, release: nil, copyDescription: nil
+    )
+    let timer = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        CFAbsoluteTimeGetCurrent() + 10, 10, 0, 0,
+        { _, info in
+            guard let info else { return }
+            // 锁在 core 内（runFanTick 自取锁）；温度/决策/写副作用全在锁内。
+            Unmanaged<DaemonCore>.fromOpaque(info).takeUnretainedValue().runFanTick()
         },
         &context
     )

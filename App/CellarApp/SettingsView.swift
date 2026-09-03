@@ -77,6 +77,17 @@ private struct GeneralTab: View {
                 }
             }
 
+            // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
+            // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
+            // 旧 daemon（fan==nil）控件禁用 + 升级提示）。
+            FanSectionView(
+                fan: statusController.fanStatus,
+                busy: statusController.busy,
+                onApply: { statusController.setFan($0) }
+            )
+
+            Divider()
+
             LabeledContent(CellarL10n.s("settings.registrationStatus")) {
                 HStack {
                     Text(registrationText)

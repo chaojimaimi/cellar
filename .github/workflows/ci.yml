@@ -71,7 +71,7 @@ jobs:
           path: App/.ci-build/Build/Products/Release/Cellar.app
 
   # 快照矩阵门禁（WP4 §3.2 定版）：macos-26 单一权威渲染环境（与 app-build 同
-  # 镜像假设）。golden 已提交（Snapshots/Goldens/，76 张），本 job 为对比模式
+  # 镜像假设）。golden 已提交（Snapshots/Goldens/，84 张），本 job 为对比模式
   # 全绿门禁；渲染确定性依赖 pin Xcode + AppleLanguages=en（golden=en 定版）。
   snapshot:
     runs-on: macos-26
@@ -90,7 +90,7 @@ jobs:
       - name: Build CellarUICheck
         run: swift build --product CellarUICheck
 
-      - name: Snapshot comparison (76 goldens)
+      - name: Snapshot comparison (84 goldens)
         env:
           AppleLanguages: en
           AppleLocale: en_US

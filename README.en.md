@@ -15,11 +15,12 @@
 - **Any charge limit (60–100%)**: including the sub-80% range not natively supported by the system
 - **Hysteresis**: charging stops at the limit and only resumes after self-discharge down to the recovery threshold (default: limit −2%), avoiding frequent on/off cycling
 - **Charge-side thermal pause**: charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce); no hot restart of charging after a thermally terminated discharge
+- **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
 - **Optional auto-discharge**: automatically discharges back to the limit when charge is above it (off by default; enabling requires double confirmation; after completion it needs to cool down and the adapter to be replugged before it can trigger again)
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
 - **Discharge to Limit**: temporarily disconnects the adapter and runs on battery until the charge drops to the limit target, then automatically restores (real-time supply power visualization; support conditions below)
 - **Root-free read-only monitoring**: charge level, charging/discharging state, voltage, current, temperature, cycle count, battery health, design/full charge capacity, cell voltages, adapter details
-- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command eleven-point diagnostics (including a device compatibility line)
+- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command twelve-point diagnostics (including a device compatibility line)
 
 ## GUI (App)
 
@@ -117,7 +118,7 @@ GUI route: open `App/CellarApp.xcodeproj` in Xcode and build; place the resultin
 
 ```bash
 cellar status          # status overview (backend, level, charging state, control key, daemon state)
-cellar doctor          # eleven-point diagnostic report (exit codes 0/1/2 usable in scripts)
+cellar doctor          # twelve-point diagnostic report (exit codes 0/1/2 usable in scripts)
 cellar doctor --devices  # single-line device compatibility output (welcome in issue reports)
 sudo cellar set 80     # set limit 80% (range 60–100; --hysteresis n available)
 sudo cellar disable    # stop limit management, restore default system charging
@@ -140,14 +141,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 246 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 333 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 86.45%)
-swift run CellarUICheck     # 76 UI snapshot comparisons + localization completeness gate
+                            # pure logic, ≥80% · currently 88.12%)
+swift run CellarUICheck     # 84 UI snapshot comparisons + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

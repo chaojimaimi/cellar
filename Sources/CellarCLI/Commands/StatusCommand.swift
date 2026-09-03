@@ -46,6 +46,7 @@ struct StatusCommand: ParsableCommand {
         do {
             let status = try DaemonXPCClient().getStatus()
             DaemonCommandHelpers.printStatus(status)
+            printFanLine(status)
             printRouteLine()
         } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
             if FileManager.default.fileExists(atPath: DaemonInstaller.plistPath) {
@@ -71,6 +72,45 @@ struct StatusCommand: ParsableCommand {
             print("安装路线：手工路线（sudo cellar uninstall 可卸载）")
         case .unknown:
             print("安装路线：未知（服务未加载或 launchctl 输出无法识别）")
+        }
+    }
+
+    // MARK: - Phase 5 v1.1 风扇行（方案 §8 CLI 段）
+
+    /// 风扇状态行（九态词 + 策略 + 阈值；fan==nil = 旧 daemon 未上报 —— 升级提示）。
+    private func printFanLine(_ status: DaemonStatus) {
+        guard let fan = status.fan else {
+            print("风扇：旧版守护进程未上报（升级后可查看）")
+            return
+        }
+        var parts = [fanStateWord(fan.state, fan: fan)]
+        parts.append("策略：" + fanStrategyName(fan.strategy))
+        parts.append(String(format: "阈值 %.1f°C", Double(fan.thresholdCentiC) / 100))
+        print("风扇：" + parts.joined(separator: " · "))
+    }
+
+    private func fanStateWord(_ state: FanStateWord, fan: FanStatus) -> String {
+        switch state {
+        case .off: return "已关闭"
+        case .probing: return "探测中"
+        case .automatic: return "自动"
+        case .boost:
+            let rpm = fan.targetRPM.map { "\(Int($0.rounded()))" } ?? "?"
+            return "加速中 →\(rpm)rpm"
+        case .hold: return "保持"
+        case .degraded: return "已暂停介入（采样异常）"
+        case .unsupported: return "本机不支持"
+        case .strategyUnsupported: return "暂不支持该策略"
+        case .conflict: return "检测到其他风扇控制写入者"
+        }
+    }
+
+    private func fanStrategyName(_ strategy: FanStrategy) -> String {
+        switch strategy {
+        case .constantSpeed: return "恒速降温"
+        case .minRaise: return "抬升下限"
+        case .twoStage: return "两级分段"
+        case .emergency: return "全速应急"
         }
     }
 

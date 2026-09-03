@@ -334,6 +334,23 @@ final class StatusController: ObservableObject {
         )
     }
 
+    // MARK: - Phase 5 v1.1 风扇
+
+    /// 风扇状态（nil = 旧 daemon 未上报——设置区需升级提示；新 daemon 恒非 nil）。
+    var fanStatus: FanStatus? {
+        daemonStatus?.fan
+    }
+
+    /// 风扇设置（FanWire 缺席字段 = daemon 保持现值；成功反馈由统一通道上屏）。
+    /// 失败三态走统一控制通道（daemonError 原文 / stale 比对 / 连接态）。
+    func setFan(_ wire: FanWire) {
+        runControl(
+            attempt: .setFan(wire),
+            operation: { try DaemonXPCClient().setFan(wire) },
+            successFeedback: CellarL10n.s("status.summary.setFan")
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -354,6 +371,8 @@ final class StatusController: ObservableObject {
             calibrateStart()
         case .cancelCalibration:
             calibrateCancel()
+        case .setFan(let wire):
+            setFan(wire)
         }
     }
 

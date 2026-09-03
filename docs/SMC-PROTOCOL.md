@@ -4,7 +4,7 @@
 
 ## Scope
 
-Cellar uses SMC only on the **control path** (enable/disable charging, adapter control). All monitoring reads (charge level, voltage, current, temperature, cycle count, health, capacities, adapter details) come from `AppleSmartBattery` via IOKit and do not touch the SMC — see the README's "Root-free read-only monitoring" feature.
+Cellar uses SMC only on the **control paths** (enable/disable charging, adapter control during explicit discharge, and fan speed control in the opt-in smart fan cooling feature). All monitoring reads (charge level, voltage, current, temperature, cycle count, health, capacities, adapter details) come from `AppleSmartBattery` via IOKit and do not touch the SMC — see the README's "Root-free read-only monitoring" feature.
 
 ## Universal dispatch: selector 2 + `data8` sub-selectors
 
@@ -58,6 +58,27 @@ Key availability varies with firmware generation, so Cellar **runtime-probes** t
 - `CHTE` readable → **Tahoe backend** (preferred; this is the tested path).
 - else `CH0B`/`CH0C` present → **Legacy backend** (older systems; untested).
 - neither → **read-only mode** (monitoring still works).
+
+## Fan control keys (Phase 5 v1.1)
+
+Smart fan cooling (opt-in, off by default) targets the **first fan (F0)** only. Verified on the same firmware generation as the charging keys:
+
+| Key | Type / size | Role |
+|---|---|---|
+| `F0Tg` | `flt` / 4B | Target fan speed (rpm) |
+| `F0Md` | 1B | Fan mode: `0x00` = system automatic · `0x01` = manual direct-write |
+| `F0Ac` | `flt` / 4B | Actual fan speed (rpm) — live value that follows the target |
+| `F0Mn` / `F0Mx` | `flt` / 4B | Minimum / maximum rpm — **read-only** (writes are refused by firmware) |
+
+Protocol facts (verified on macOS 26.x / Apple M2 Max, firmware 18000.161.10):
+
+- `flt` values are packed **little-endian** IEEE-754 single precision (e.g. `1350.0` → `00 C0 A8 44`).
+- Writes to `F0Tg` are **rejected by firmware while `F0Md` = 0** (read-back returns the old value). The unlock sequence is: write `F0Md` = 1, verify read-back, then write `F0Tg`. The release sequence writes `F0Tg` back to the pre-boost snapshot, then `F0Md` = 0 to hand control back to the system.
+- `F0Tg` writes at or above the minimum (`F0Mn`) are clamped into `[F0Mn, F0Mx]` by the daemon; Cellar never writes values below the system baseline.
+- Writes require root, like all SMC control keys — fan writes happen only in the root daemon.
+- The daemon verifies write-follow by checking `F0Ac` ≥ written target − 300 rpm, and detects external writers by read-back drift of `F0Tg`.
+
+The `setFan` XPC command carries fan parameters as UINT64 keys; the `fanStrategy` wire mapping is append-only: `0` = constantSpeed, `1` = minRaise (currently rejected, reserved), `2` = twoStage, `3` = emergency.
 
 ## Verification statement
 

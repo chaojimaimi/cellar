@@ -105,6 +105,9 @@ public struct DoctorInputs: Sendable {
     public let versionMatrix: VersionMatrix?
     /// 检查 11：放电能力探测（nil = 未探测不渲染）。
     public let dischargeProbe: DischargeProbe?
+    /// 检查 12（Phase 5 v1.1）：风扇控制只读探测（键在位矩阵 + F0Md/F0Tg 现态 +
+    /// daemon 配置现态；nil = 未探测不渲染——异常现态可见化，配合 §6.5 残留窗口）。
+    public let fanProbe: FanDoctorProbe?
 
     public init(
         isRoot: Bool,
@@ -122,7 +125,8 @@ public struct DoctorInputs: Sendable {
         btmState: BTMState? = nil,
         btmProbeAttempted: Bool = false,
         versionMatrix: VersionMatrix? = nil,
-        dischargeProbe: DischargeProbe? = nil
+        dischargeProbe: DischargeProbe? = nil,
+        fanProbe: FanDoctorProbe? = nil
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -140,6 +144,26 @@ public struct DoctorInputs: Sendable {
         self.btmProbeAttempted = btmProbeAttempted
         self.versionMatrix = versionMatrix
         self.dischargeProbe = dischargeProbe
+        self.fanProbe = fanProbe
+    }
+}
+
+/// 检查 12 输入：风扇键只读探测（CLI DoctorCommand 组装；只读——不写任何键）。
+public struct FanDoctorProbe: Equatable, Sendable {
+    /// 在位键列表（F0Tg/F0Md/F0Ac/F0Mn/F0Mx 探测结果；按探测顺序）。
+    public let keysPresent: [String]
+    /// F0Md 现态（0=系统自动；nil = 读取失败/缺席）。
+    public let mdValue: UInt8?
+    /// F0Tg 现态 rpm（LE 解码；nil = 读取失败/缺席）。
+    public let tgRPM: Float?
+    /// daemon 风扇配置现态（FanStatus；nil = 旧 daemon 未上报/未运行）。
+    public let config: FanStatus?
+
+    public init(keysPresent: [String], mdValue: UInt8?, tgRPM: Float?, config: FanStatus?) {
+        self.keysPresent = keysPresent
+        self.mdValue = mdValue
+        self.tgRPM = tgRPM
+        self.config = config
     }
 }
 
@@ -169,6 +193,10 @@ public enum DoctorReportGenerator {
         }
         if let dischargeCheck = dischargeCapability(inputs) {
             checks.append(dischargeCheck)
+        }
+        // Phase 5 v1.1 检查 12：风扇控制（条件渲染同 9-11——fanProbe 缺省零渲染）。
+        if let fanCheck = fanControl(inputs) {
+            checks.append(fanCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -313,5 +341,49 @@ public enum DoctorReportGenerator {
             name: "daemon", status: .info,
             detail: "未安装或未运行（sudo cellar install 或从 Cellar 面板安装可启用限充）"
         )
+    }
+
+    // MARK: - 检查 12：风扇控制（Phase 5 v1.1 增补；条件渲染同 9-11）
+
+    /// 风扇键只读探测 + F0Md/F0Tg 现态 + daemon 配置现态（键缺属性 = 本机不支持，
+    /// INFO 不抬退出码；F0Md≠0 = 可能残留禁用，WARN 显式可见化——配合 §6.5
+    /// 启动恢复窗口与硬件验收重启项）。
+    private static func fanControl(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard let probe = inputs.fanProbe else { return nil }
+        let present = probe.keysPresent
+        guard present.contains("F0Tg") && present.contains("F0Md") else {
+            return DoctorCheck(
+                name: "风扇控制", status: .info,
+                detail: "本机无风扇控制键（在位：\(present.isEmpty ? "无" : present.joined(separator: "、"))）——功能不可用属预期"
+            )
+        }
+        var status: CheckStatus = .pass
+        var parts = ["键在位（" + present.joined(separator: "、") + "）"]
+        if let md = probe.mdValue {
+            if md != 0 {
+                // P3-6：配置开启（enabled）时的 F0Md=1 是合法介入态（boost 两步写
+                // 的解锁步行进中）——INFO 措辞，避免硬件验收并发项（§11 项 2/6）
+                // 误报；关闭/无配置态 → WARN 残留嫌疑（异常现态可见化，配合 §6.5）。
+                let intervening = probe.config?.enabled == true
+                status = intervening ? .info : .warn
+                parts.append(intervening
+                    ? "F0Md=\(md)（策略介入中——风扇加速运行）"
+                    : "F0Md=\(md)（非系统自动值——疑似残留，daemon 未运行时可重启清理）")
+            } else {
+                parts.append("F0Md=0（系统自动）")
+            }
+        } else {
+            parts.append("F0Md 读取失败")
+        }
+        if let tg = probe.tgRPM {
+            parts.append("F0Tg≈\(Int(tg.rounded()))rpm")
+        } else {
+            parts.append("F0Tg 读取失败")
+        }
+        if let config = probe.config {
+            parts.append("配置=\(config.enabled ? "开启" : "关闭")（\(config.strategy.rawValue)，阈值 "
+                + String(format: "%.1f", Double(config.thresholdCentiC) / 100) + "°C）")
+        }
+        return DoctorCheck(name: "风扇控制", status: status, detail: parts.joined(separator: "；"))
     }
 }

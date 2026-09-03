@@ -98,7 +98,9 @@ struct PanelView: View {
                 isCharging: statusController.batterySnapshot?.isCharging,
                 batteryPowerW: statusController.batterySnapshot.map {
                     Double($0.voltageMV) * Double($0.amperageMA) / 1_000_000
-                }
+                },
+                // Phase 5 v1.1：风扇状态行（仅 boost/hold 介入期显形；off 完全隐形）。
+                fanStatus: statusController.daemonStatus?.fan
             )
 
             // WP1：温度暂停注词接线——daemonStatus 与 batterySnapshot 在本组装点

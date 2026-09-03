@@ -6,9 +6,9 @@ import CellarCore
 /// raw XPC 监听（串行队列）+ euid/组门 + 鉴权失败限流 + 命令分发（规格 §0.2/§0）。
 ///
 /// 安全契约：
-/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable` 仅 **euid==0 或
+/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan` 仅 **euid==0 或
 ///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
-///   admin 组放宽；放宽的攻击面上限为充电策略操纵，无提权/无数据泄露），
+///   admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/无数据泄露），
 ///   否则错误回包（ok=false + 原文）。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
@@ -140,6 +140,51 @@ final class XPCServer: @unchecked Sendable {
 
         case "cancelCalibration":
             respondChange(peer: peer, operation: "cancelCalibration", body: { try core.cancelCalibration() })
+
+        case FanWireKeys.command:
+            // Phase 5 v1.1：setFan（鉴权门同变更命令；值域校验 validFan* 与
+            // FanPolicy.validated 同源——CellarCoreCheck 同源测试；错误原文回包）。
+            guard authorize(peer, operation: "setFan") else { return }
+            guard let fan = request.fan else {
+                send(errorReply("setFan 缺少风扇参数"), to: peer.connection)
+                return
+            }
+            // 七键值域校验（类型混淆已由 validateRequest 整包拒绝——此处只查值域）。
+            if let value = fan.enabled, !FanWireKeys.validEnabled(value) {
+                send(errorReply("风扇开关参数越界（0/1）"), to: peer.connection)
+                return
+            }
+            if let value = fan.strategy, !FanWireKeys.validStrategy(value) {
+                send(errorReply("风扇策略参数越界（0-3）"), to: peer.connection)
+                return
+            }
+            if let value = fan.threshold, !FanWireKeys.validThreshold(value) {
+                send(errorReply("风扇阈值参数越界（3000-5500 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            if let value = fan.hysteresis, !FanWireKeys.validHysteresis(value) {
+                send(errorReply("风扇滞回参数越界（100-500 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            if let value = fan.speed, !FanWireKeys.validSpeed(value) {
+                send(errorReply("风扇转速参数越界（40-100%）"), to: peer.connection)
+                return
+            }
+            if let value = fan.stage2, !FanWireKeys.validStage2(value) {
+                send(errorReply("风扇二级转速参数越界（60-100%）"), to: peer.connection)
+                return
+            }
+            if let value = fan.stage2Rise, !FanWireKeys.validStage2Rise(value) {
+                send(errorReply("风扇升档温差参数越界（100-500 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            do {
+                let status = try core.setFanConfig(fan)
+                sendStatus(status, to: peer)
+            } catch {
+                // FanSetError（参数越界/minRaise 未开放）→ 原文回传（App 上屏）。
+                send(errorReply(String(describing: error)), to: peer.connection)
+            }
 
         default:
             send(errorReply("未知命令：\(request.cmd)"), to: peer.connection)

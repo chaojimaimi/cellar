@@ -302,7 +302,7 @@ func runDoctorExtendedDomainScenarios() {
         daemonProbeAttempted: true
     )).checks.count == 8, "医生-5", "dischargeProbe 缺省 → 检查 11 不渲染")
 
-    // 医生-6：CLI 全探测路径输入形态 → 十一项全渲染（编号/顺序钉死）。
+    // 医生-6：CLI 全探测路径输入形态 → 十二项全渲染（编号/顺序钉死）。
     do {
         let full = DoctorInputs(
             isRoot: true, smcConnected: true,
@@ -311,23 +311,28 @@ func runDoctorExtendedDomainScenarios() {
             snapshot: snapshot, snapshotError: nil,
             conflict: ConflictScanResult(exact: [], generic: []),
             daemonStatus: DaemonStatus(
-                version: "0.3.1-alpha", mode: "active", upperLimit: 80, hysteresis: 2
+                version: "0.5.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2
             ),
             daemonProbeAttempted: true,
             keyPresence: KeyPresence(chte: true, chie: true, ch0b: false),
             processHits: [],
             btmState: .running, btmProbeAttempted: true,
             versionMatrix: VersionMatrix(
-                cliVersion: "0.3.1-alpha", daemonVersion: "0.3.1-alpha", appVersion: "0.3.1-alpha"
+                cliVersion: "0.5.0-alpha", daemonVersion: "0.5.0-alpha", appVersion: "0.5.0-alpha"
             ),
-            dischargeProbe: DischargeProbe(supported: true, chieState: true, readFailed: false)
+            dischargeProbe: DischargeProbe(supported: true, chieState: true, readFailed: false),
+            fanProbe: FanDoctorProbe(
+                keysPresent: ["F0Tg", "F0Md", "F0Ac", "F0Mn", "F0Mx"],
+                mdValue: 0, tgRPM: 1350, config: nil
+            )
         )
         let report = DoctorReportGenerator.generate(full)
-        check(report.checks.count == 11, "医生-6", "全探测输入 → 11 项（7 基础 + daemon + BTM + 版本 + 放电）")
+        check(report.checks.count == 12, "医生-6", "全探测输入 → 12 项（7 基础 + daemon + BTM + 版本 + 放电 + 风扇）")
         check(report.checks[8].name == "守护进程注册" && report.checks[9].name == "版本矩阵"
-                && report.checks[10].name == "放电能力",
-              "医生-6", "新增三项追加在既有 8 项之后（编号 9/10/11）")
+                && report.checks[10].name == "放电能力" && report.checks[11].name == "风扇控制",
+              "医生-6", "新增四项追加在既有 8 项之后（编号 9/10/11/12）")
         check(report.checks[10].status == .pass, "医生-6", "放电能力：无动作 + CHIE 使能 → PASS（全绿样本）")
+        check(report.checks[11].status == .pass, "医生-6", "风扇控制：键在位 + F0Md=0 → PASS（全绿样本）")
         check(report.worstStatus == .pass && report.exitCode == 0, "医生-6", "全绿样本不抬升退出码")
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import CellarCore
 import SwiftUI
 
 // MARK: - 功率流向可视化（WP2' §4.2；下沉 CellarUI，组件层零风格分支词元——G1）
@@ -31,12 +32,19 @@ public struct PowerFlowView: View {
     /// 无公开数据源——WP1.5 §7.5 标定结论）。nil/漂浮态（电池电流≈0，显示 0W 会
     /// 误导「系统未耗电」）不显示功率数字。
     public let batteryPowerW: Double?
+    /// Phase 5 v1.1：daemon 风扇状态（nil = 不渲染风扇行；仅 enabled ∧ boost/
+    /// hold 时显示——off 完全隐形，方案 §7 面板行）。
+    public let fanStatus: FanStatus?
     @Environment(\.cellarTheme) private var theme
 
-    public init(externalConnected: Bool?, isCharging: Bool?, batteryPowerW: Double? = nil) {
+    public init(
+        externalConnected: Bool?, isCharging: Bool?, batteryPowerW: Double? = nil,
+        fanStatus: FanStatus? = nil
+    ) {
         self.externalConnected = externalConnected
         self.isCharging = isCharging
         self.batteryPowerW = batteryPowerW
+        self.fanStatus = fanStatus
     }
 
     public var body: some View {
@@ -65,6 +73,41 @@ public struct PowerFlowView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(axLabel(for: flow))
+            // Phase 5 v1.1 风扇行：boost/hold（介入中）呈现；off/静息完全隐形——
+            // 与功率流向行同宽布局（窄行：符号 + 状态词 + 目标 rpm）。
+            if let fan = fanStatus, fan.enabled,
+               fan.state == .boost || fan.state == .hold {
+                HStack(spacing: 6) {
+                    Image(systemName: fanSymbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(fan.state == .boost ? theme.accent : theme.secondaryText)
+                    Text(fanPanelWord(fan))
+                        .font(.caption2)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                .accessibilityElement(children: .ignore)
+            }
+        }
+    }
+
+    /// 风扇行符号（运行时存在性兜底：SF Symbol 候选表在 macOS 26 上不可靠）。
+    private var fanSymbol: String {
+        NSImage(systemSymbolName: "fan.fill", accessibilityDescription: nil) != nil
+            ? "fan.fill" : "fan"
+    }
+
+    /// 风扇行文案（boost → 「加速 →N rpm」；hold → 「保持」——公开文案零品牌词）。
+    private func fanPanelWord(_ fan: FanStatus) -> String {
+        switch fan.state {
+        case .boost:
+            if let target = fan.targetRPM {
+                return CellarL10n.s("fan.panel.boost", "\(Int(target.rounded()))")
+            }
+            return CellarL10n.s("fan.panel.boost", "?")
+        case .hold:
+            return CellarL10n.s("fan.panel.hold")
+        default:
+            return ""
         }
     }
 

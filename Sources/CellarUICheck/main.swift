@@ -38,9 +38,9 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 76：组件 × 风格(2) × 外观(2) × 态；
+// MARK: - 矩阵案例定义（§3.3 N = 84：组件 × 风格(2) × 外观(2) × 态；
 // WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增；
-// WP3 自 64 扩 76——校准区 3 态 12 新增）
+// WP3 自 64 扩 76——校准区 3 态 12 新增；Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -132,8 +132,9 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 76 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
-// WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增）
+// MARK: 84 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
+// Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -275,6 +276,37 @@ private func buildCases() -> [SnapshotCase] {
             for (stateName, section) in calibrations {
                 cases.append(SnapshotCase(
                     name: "Calibration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // Phase 5 v1.1 风扇区 2 态（关闭/两级分段开启）×4（76 → 84，新增 8 张）：
+            // 参数驱动组件直接构造（onApply 空闭包——渲染无副作用；on 态钉死
+            // twoStage——滑杆参数显形的代表形态 + 状态行「自动」）。
+            let fanSections: [(String, FanSectionView)] = [
+                ("off", FanSectionView(
+                    fan: FanStatus(
+                        enabled: false, strategy: .constantSpeed, state: .off,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false
+                    ),
+                    busy: false, onApply: { _ in })),
+                ("on", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .twoStage, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300
+                    ),
+                    busy: false, onApply: { _ in })),
+            ]
+            for (stateName, section) in fanSections {
+                cases.append(SnapshotCase(
+                    name: "FanSection_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {

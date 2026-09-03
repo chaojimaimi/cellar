@@ -29,6 +29,10 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// WP2' 自动放电开关（daemon 每次 buildStatusLocked 从 policy 填充）；
     /// 可选字段 + 合成 Codable——旧 daemon 回包缺席 → nil 天然兼容。
     public var autoDischargeEnabled: Bool?
+    /// Phase 5 v1.1 风扇状态载荷（daemon 每次 buildStatusLocked 从风扇运行时
+    /// 状态组装；可选字段 + 合成 Codable decodeIfPresent——旧 daemon 回包缺席
+    /// → nil，App 提示升级，照 autoDischargeEnabled 先例，方案 §8）。
+    public var fan: FanStatus?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -44,6 +48,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         action: OneShotAction? = nil,
         capabilities: [String]? = nil,
         autoDischargeEnabled: Bool? = nil,
+        fan: FanStatus? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -57,6 +62,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.action = action
         self.capabilities = capabilities
         self.autoDischargeEnabled = autoDischargeEnabled
+        self.fan = fan
         self.timestamp = timestamp
     }
 }
@@ -83,7 +89,10 @@ public enum DaemonXPC {
     // 重装验证，本包为 0.3.1（发布归宿 0.3.1-alpha，防版本回退）。
     // WP1（0.4.0-alpha）：常规执法路径介入充电侧温度守卫 + 放电恢复路径传温，
     // 行为变更第四次破例 bump（doctor 版本矩阵三方一致）。
-    public static let daemonVersion = "0.4.0-alpha"
+    // Phase 5 v1.1（0.5.0-alpha）：新增 setFan 命令 + DaemonStatus.fan 字段
+    // （风扇智能降温，行为变更第五次破例 bump——install 后 getStatus 版本核对
+    // 同置，防 CLI 对 stale daemon）。
+    public static let daemonVersion = "0.5.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -116,9 +125,11 @@ public enum DaemonXPC {
     // MARK: - 请求/回包构造与校验（服务端与客户端共用）
 
     /// 构造请求字典（⚠️ Swift 的 ARC 自动管理 xpc 对象引用计数——调用方不得手动
-    /// xpc_retain/xpc_release，否则双重释放崩溃）。auto 缺省 = 不发键（daemon 缺席保持）。
+    /// xpc_retain/xpc_release，否则双重释放崩溃）。auto/fan 缺省 = 不发键
+    /// （daemon 缺席保持语义，照 auto 键先例；FanWire 内 nil 字段亦不发键）。
     public static func makeMessage(
-        cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil
+        cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil,
+        fan: FanWire? = nil
     ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
@@ -127,6 +138,15 @@ public enum DaemonXPC {
         if let auto {
             xpc_dictionary_set_uint64(message, autoKey, auto)
         }
+        if let fan {
+            if let enabled = fan.enabled { xpc_dictionary_set_uint64(message, FanWireKeys.enabled, enabled) }
+            if let strategy = fan.strategy { xpc_dictionary_set_uint64(message, FanWireKeys.strategy, strategy) }
+            if let threshold = fan.threshold { xpc_dictionary_set_uint64(message, FanWireKeys.threshold, threshold) }
+            if let hysteresis = fan.hysteresis { xpc_dictionary_set_uint64(message, FanWireKeys.hysteresis, hysteresis) }
+            if let speed = fan.speed { xpc_dictionary_set_uint64(message, FanWireKeys.speed, speed) }
+            if let stage2 = fan.stage2 { xpc_dictionary_set_uint64(message, FanWireKeys.stage2, stage2) }
+            if let stage2Rise = fan.stage2Rise { xpc_dictionary_set_uint64(message, FanWireKeys.stage2Rise, stage2Rise) }
+        }
         return message
     }
 
@@ -134,9 +154,13 @@ public enum DaemonXPC {
     /// upper/hysteresis 若出现必须为 UINT64；缺 cmd / 类型混淆 / 超长 → nil
     /// （调用方回错误包，不崩溃）。upper/hysteresis 缺席按 0 处理；auto 缺席 → nil
     /// （值域校验（0/1）由 XPCServer 臂负责——与 upper/hysteresis 同纪律）。
+    /// Phase 5 v1.1：setFan 七键（fanEnabled/fanStrategy/fanThreshold/fanHysteresis/
+    /// fanSpeed/fanStage2/fanStage2Rise）全 UINT64 白名单——任一出现但类型混淆
+    /// → 整包拒绝；全部缺席 → fan == nil（非 setFan 命令天然兼容）。值域校验
+    /// （validFan*）由 XPCServer 臂负责（与 auto 同纪律）。
     public static func validateRequest(
         _ msg: xpc_object_t
-    ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?)? {
+    ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -161,7 +185,26 @@ public enum DaemonXPC {
             guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
             auto = xpc_dictionary_get_uint64(msg, autoKey)
         }
-        return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis, auto: auto)
+        // 风扇七键：出现即必须 UINT64（STRING/BOOL 混入 → 整包拒绝）；缺席保持 nil。
+        var fan = FanWire()
+        for (key, kind) in [
+            (FanWireKeys.enabled, \FanWire.enabled),
+            (FanWireKeys.strategy, \FanWire.strategy),
+            (FanWireKeys.threshold, \FanWire.threshold),
+            (FanWireKeys.hysteresis, \FanWire.hysteresis),
+            (FanWireKeys.speed, \FanWire.speed),
+            (FanWireKeys.stage2, \FanWire.stage2),
+            (FanWireKeys.stage2Rise, \FanWire.stage2Rise),
+        ] {
+            if let value = xpc_dictionary_get_value(msg, key) {
+                guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+                fan[keyPath: kind] = xpc_dictionary_get_uint64(msg, key)
+            }
+        }
+        let anyFanKeyPresent = fan.enabled != nil || fan.strategy != nil || fan.threshold != nil
+            || fan.hysteresis != nil || fan.speed != nil || fan.stage2 != nil || fan.stage2Rise != nil
+        return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis,
+                auto: auto, fan: anyFanKeyPresent ? fan : nil)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -260,6 +303,13 @@ public struct DaemonXPCClient: Sendable {
         try exchange(cmd: "cancelCalibration")
     }
 
+    /// Phase 5 v1.1：设置风扇策略（可选字段缺席 = daemon 保持现值；minRaise →
+    /// daemonError 原文「该策略在当前版本暂未开放」）。**不改 mode**（与
+    /// setLimits 的「更新即切 active」语义正交）；boost 期立即按新配置重算重写。
+    public func setFan(_ fan: FanWire) throws -> DaemonStatus {
+        try exchange(cmd: FanWireKeys.command, upper: 0, hysteresis: 0, auto: nil, fan: fan)
+    }
+
     // MARK: - 内部
 
     /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
@@ -267,12 +317,13 @@ public struct DaemonXPCClient: Sendable {
     /// - 超时无回包 → .timeout
     /// - ok=false → .daemonError(原文)
     private func exchange(
-        cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil
+        cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil,
+        fan: FanWire? = nil
     ) throws -> DaemonStatus {
         // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
         // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
         let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
-        let message = DaemonXPC.makeMessage(cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto)
+        let message = DaemonXPC.makeMessage(cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto, fan: fan)
         let waiter = ReplyWaiter()
 
         xpc_connection_set_event_handler(connection) { object in
