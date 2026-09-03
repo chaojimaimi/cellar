@@ -20,6 +20,24 @@ jobs:
       - name: Build (release)
         run: swift build -c release
 
+      - name: README structural sync (zh/en)
+        run: |
+          zh=$(grep -c '^## ' README.md); en=$(grep -c '^## ' README.en.md)
+          echo "README.md: ${zh} 个二级标题 / README.en.md: ${en} 个"
+          [ "$zh" = "$en" ] || { echo "::error::双语 README 二级标题数不一致（漏节/多节）"; exit 1; }
+
+  # 状态机覆盖率门禁（Phase 4 v1.0 收口批项 A）：圈定 Sources/CellarCore/{Control,
+  # Daemon}/ 纯逻辑文件集（排除 SMC/Monitor/Diagnostics 硬件耦合——mock 场景不可
+  # 达），line ≥80%（llvm-cov TOTAL 行解析；Xcode 工具链无 -fail-under-lines）。
+  # 与 verify 同机并列无依赖；插桩构建增量约 2-4 分钟。
+  coverage:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Coverage gate (state machine line ≥ 80%)
+        run: bash Tools/coverage.sh 80
+
   # App bundle 门禁（Phase 2 WP6 §2.2）：App/ 15 个 Swift 文件零自动化验证的
   # 现状收口。必绿门禁——不设 continue-on-error，ad-hoc 签名与发布产物同形态
   # （不设 CODE_SIGNING_ALLOWED=NO）。与 SPM job 并列无依赖。

@@ -21,6 +21,8 @@ App/.build-xcode/
 PRIVATE-NOTES.md
 docs/*
 !docs/DEVICES.md
+!docs/FAQ.md
+!docs/SMC-PROTOCOL.md
 Tests/
 PLAN.md
 

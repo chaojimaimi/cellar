@@ -307,6 +307,13 @@ enum DaemonInstaller {
             let template = try String(contentsOfFile: plistSource, encoding: .utf8)
             try fileManager.createDirectory(atPath: logDirectory, withIntermediateDirectories: true)
             try fileManager.createDirectory(atPath: policyDirectory, withIntermediateDirectories: true)
+            // 0.4.1 安全审计 F-3（纵深防御）：数据目录须 root 属主且无组/其他可写位
+            // （对齐上方 PrivilegedHelperTools 的属主校验纪律），不合规即中止安装。
+            for directory in [logDirectory, policyDirectory]
+            where !verifyRootOwnedDirectory(path: directory) {
+                print("❌ 数据目录属主/权限校验失败（须 root:root 且无组/其他可写位）：\(directory)")
+                throw ExitCode(1)
+            }
             try template.write(toFile: plistPath, atomically: true, encoding: .utf8)
             chown(plistPath, 0, 0)
             chmod(plistPath, 0o644)

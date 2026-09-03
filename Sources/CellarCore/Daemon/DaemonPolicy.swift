@@ -67,6 +67,8 @@ public struct PolicyStore: Sendable {
     }
 
     /// 原子读 + 强校验（评审 A-2）：任何非法形态 → nil，绝不回落"半合法"策略。
+    /// ⚠️ 0.4.1 安全审计 F-1：autoDischargeEnabled 必须透传 validated——缺失会让
+    /// daemon 重启/SIGHUP 后自动放电开关静默复位（持久化回流完整性）。
     public func load() -> DaemonPolicy? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let decoded = try? JSONDecoder().decode(DaemonPolicy.self, from: data) else {
@@ -75,7 +77,8 @@ public struct PolicyStore: Sendable {
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
-            hysteresis: decoded.hysteresis
+            hysteresis: decoded.hysteresis,
+            autoDischargeEnabled: decoded.autoDischargeEnabled
         )
     }
 

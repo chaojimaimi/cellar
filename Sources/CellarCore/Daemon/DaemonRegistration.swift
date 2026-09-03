@@ -105,3 +105,17 @@ public func daemonRoute(programPath: String) -> DaemonRoute {
 public enum DaemonRegistration {
     public static let daemonLockPath = "/var/run/com.cellar.daemon.lock"
 }
+
+// MARK: - 数据目录属主校验（0.4.1 安全审计 F-3，纵深防御）
+
+/// 校验目录为 root 属主/属组且无组/其他可写位（owner==0 ∧ gid==0 ∧ mode & 0o022 == 0）。
+/// 数据目录若可被非 root 预创建或改属主，固定名临时文件（.policy.json.tmp）的
+/// symlink 竞态即成为 root 写原语（CWE-59/61）——macOS 26 实测 /Library 系目录均
+/// root 属主（攻击前提不成立），本校验为假设失效场景的 fail-secure（对齐
+/// PrivilegedHelperTools 的既有属主校验纪律）。stat 失败 → false。
+public func verifyRootOwnedDirectory(path: String) -> Bool {
+    var st = stat()
+    guard stat(path, &st) == 0 else { return false }
+    guard st.st_uid == 0, st.st_gid == 0 else { return false }
+    return (st.st_mode & S_IWGRP) == 0 && (st.st_mode & S_IWOTH) == 0
+}

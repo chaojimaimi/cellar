@@ -34,6 +34,7 @@
 
 | 收录 | 机型 | 芯片 | macOS | 实测行 |
 |---|---|---|---|---|
+| ✅ 开发机（端到端验收基线） | Mac14,6 | Apple M2 Max | 26.6.2 | `device.model=Mac14,6 device.chip=Apple_M2_Max device.macos=26.6.2_(25G83) device.firmware=unknown device.backend=tahoe device.keys.chte=yes device.keys.chie=yes device.keys.ch0b=no device.discharge=yes device.limit.verify=pass device.discharge.verify=pass` |
 | 待收录 | — | — | — | — |
 
 ## 隐私与提交提醒

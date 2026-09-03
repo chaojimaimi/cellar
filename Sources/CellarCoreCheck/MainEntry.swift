@@ -1427,6 +1427,16 @@ struct Main {
             try store.save(DaemonPolicy(mode: "disabled", upperLimit: 90, hysteresis: 5))
             check(store.load() == DaemonPolicy(mode: "disabled", upperLimit: 90, hysteresis: 5),
                   "用例74", "合法策略正常读回（对照组）")
+
+            // 0.4.1 安全审计 F-1：load 透传 autoDischargeEnabled（缺失 → 重启/SIGHUP
+            // 后开关静默复位）。
+            let autoOn = #"{"mode":"active","upperLimit":80,"hysteresis":2,"autoDischargeEnabled":true}"#
+            try autoOn.write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load()? .autoDischargeEnabled == true,
+                  "用例74", "autoDischargeEnabled=true 持久化读回（F-1 回归）")
+            try #"{"mode":"active","upperLimit":80,"hysteresis":2}"#.write(to: store.url, atomically: true, encoding: .utf8)
+            check(store.load()? .autoDischargeEnabled == nil,
+                  "用例74", "旧格式无键 → nil（decodeIfPresent 兼容）")
         }
 
         // 用例 75：makeMessage/okReply/errorReply 结构——键存在、类型正确（xpc_get_type）、

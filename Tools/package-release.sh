@@ -34,7 +34,8 @@ mkdir -p dist
 rm -f "$ZIP_PATH"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
 
-echo "==> 5/5 产物清单"
+echo "==> 5/5 产物清单与 SHA-256 校验和"
 ls -lh "$ZIP_PATH"
 ls -ld "$APP_PATH"
+shasum -a 256 "$ZIP_PATH"
 echo "完成：$ZIP_PATH"

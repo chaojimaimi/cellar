@@ -57,6 +57,13 @@ do {
 } catch {
     lifecycleLog.error("自举策略目录失败（\(error)）——策略持久化将不可用（内存策略继续生效）")
 }
+// 0.4.1 安全审计 F-3（纵深防御）：数据目录须 root 属主/属组且无组/其他可写位——
+// 固定名临时文件（.policy.json.tmp）的 symlink 竞态在目录可被非 root 预创建时
+// 成为 root 写原语。不合规 → fault 退出（fail-secure；launchd KeepAlive 节流重试）。
+if !verifyRootOwnedDirectory(path: "/Library/Application Support/Cellar") {
+    lifecycleLog.fault("数据目录属主/权限校验失败（须 root:root 且无组/其他可写位）——fail-secure 退出")
+    exit(1)
+}
 
 // 1/2. 单一属主 + 启动即校对（失败只记日志，绝不退出）。
 // daemonCore 为 nonisolated(unsafe) 全局：信号/C 回调等非隔离上下文经它访问属主。

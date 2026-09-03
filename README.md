@@ -1,3 +1,5 @@
+[English](README.en.md) | [简体中文](README.md)
+
 # Cellar（芯仓）
 
 > Cell（电芯）+ Cellar（酒窖）——给 MacBook 电池一个"恒温恒湿"的储存环境。
@@ -138,9 +140,10 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 149+ 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
+swift run CellarCoreCheck   # 246 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
                             # 放电安全门控、本地化完整性
+bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 86.45%）
 swift run CellarUICheck     # 76 张界面快照对比 + 本地化完整性门
 ```
 
