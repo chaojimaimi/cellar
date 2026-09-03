@@ -1,13 +1,13 @@
 import Foundation
 
-/// WP5 §2.1 检查 9–11 类型 + BTM 注册态解析（CellarCore 纯函数层，可测）。
+/// WP5 §2.1 检查 9–11 类型 + daemon 注册态解析（CellarCore 纯函数层，可测）。
 ///
 /// 兼容性约束（方案 §2 评审 P0-3）：DoctorInputs 新字段全带缺省值，新增检查仅在
 /// 对应探测字段非缺省时渲染——用例 65（count==7）/69（count==8）零改动成立。
 /// 子进程调用（launchctl print）在 CLI 收集层，本文件只含解析/判定纯函数（评审
 /// P2-1 分层）。
 
-// MARK: - 检查 9：BTM 注册态
+// MARK: - 检查 9：守护进程注册态（launchctl print 同域可见 BTM/手工两路线——标签按语义命名）
 
 /// daemon 注册态（`launchctl print system/com.cellar.daemon` 解析结果）。
 public enum BTMState: Equatable, Sendable {
@@ -116,7 +116,7 @@ public struct DischargeProbe: Equatable, Sendable {
 // MARK: - 检查 9/10/11 生成器（DoctorReportGenerator 跨文件扩展）
 
 extension DoctorReportGenerator {
-    /// 检查 9：daemon BTM 注册态。已探测（btmProbeAttempted）才渲染：
+    /// 检查 9：daemon 注册态。已探测（btmProbeAttempted）才渲染：
     /// running=PASS；spawnFailed=FAIL（附 README「更新 App」节恢复指引）；
     /// unregistered=INFO（双路线文案：手工路线正常形态 / 托管路线注册掉落）；
     /// 解析失败=INFO（不误报）。
@@ -124,20 +124,20 @@ extension DoctorReportGenerator {
         guard inputs.btmProbeAttempted else { return nil }
         switch inputs.btmState {
         case .running:
-            return DoctorCheck(name: "BTM 注册", status: .pass, detail: "daemon 已注册且运行中")
+            return DoctorCheck(name: "守护进程注册", status: .pass, detail: "daemon 已注册且运行中")
         case .spawnFailed:
             return DoctorCheck(
-                name: "BTM 注册", status: .fail,
+                name: "守护进程注册", status: .fail,
                 detail: "daemon 注册存在但启动失败（更新 App 后 BTM 缓存失效的典型形态）——见 README「更新 App」节：重启或 sudo cellar install 恢复"
             )
         case .unregistered:
             return DoctorCheck(
-                name: "BTM 注册", status: .info,
+                name: "守护进程注册", status: .info,
                 detail: "daemon 未注册——手工路线为正常形态（sudo cellar install 安装）；托管路线为注册掉落（请在面板重装或重启系统）"
             )
         case nil:
             return DoctorCheck(
-                name: "BTM 注册", status: .info,
+                name: "守护进程注册", status: .info,
                 detail: "注册态解析失败（launchctl print 输出不可识别）——以 XPC 连通性（检查 8）为准"
             )
         }

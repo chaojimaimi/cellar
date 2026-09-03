@@ -12,7 +12,7 @@ import Foundation
 func runDoctorExtendedDomainScenarios() {
     let snapshot = try? BatterySnapshotParser.parse(batteryProps(), timestamp: Date())
 
-    // ---- 检查 9：BTM 注册态解析（纯函数）----
+    // ---- 检查 9：守护进程注册态解析（纯函数；launchctl print 同域可见两路线）----
 
     /// spawn failed 样本（2026-09-02 今日实测摘录；「更新 App 后 BTM 缓存失效」
     /// 事故同形态：job state = spawn failed + last exit code 78）。
@@ -191,7 +191,7 @@ func runDoctorExtendedDomainScenarios() {
 
     // 医生-3：检查 9 四态 + 条件不渲染。
     func btmCheck(_ inputs: DoctorInputs) -> DoctorCheck {
-        DoctorReportGenerator.generate(inputs).checks.first { $0.name == "BTM 注册" }!
+        DoctorReportGenerator.generate(inputs).checks.first { $0.name == "守护进程注册" }!
     }
     check(btmCheck(btmInputs(state: .running)).status == .pass, "医生-3", "BTM running → PASS")
     check(btmCheck(btmInputs(state: .spawnFailed)).status == .fail
@@ -324,7 +324,7 @@ func runDoctorExtendedDomainScenarios() {
         )
         let report = DoctorReportGenerator.generate(full)
         check(report.checks.count == 11, "医生-6", "全探测输入 → 11 项（7 基础 + daemon + BTM + 版本 + 放电）")
-        check(report.checks[8].name == "BTM 注册" && report.checks[9].name == "版本矩阵"
+        check(report.checks[8].name == "守护进程注册" && report.checks[9].name == "版本矩阵"
                 && report.checks[10].name == "放电能力",
               "医生-6", "新增三项追加在既有 8 项之后（编号 9/10/11）")
         check(report.checks[10].status == .pass, "医生-6", "放电能力：无动作 + CHIE 使能 → PASS（全绿样本）")

@@ -9,7 +9,7 @@ jobs:
   verify:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build (debug)
         run: swift build
@@ -26,7 +26,7 @@ jobs:
   app-build:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode 26.6
         # 显式 pin 防镜像默认工具链漂移。macos-26 镜像默认即 Xcode 26.6
@@ -47,7 +47,7 @@ jobs:
             -configuration Release -derivedDataPath App/.ci-build build
 
       - name: Upload Cellar.app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Cellar.app
           path: App/.ci-build/Build/Products/Release/Cellar.app
@@ -58,7 +58,7 @@ jobs:
   snapshot:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode 26.6
         run: |
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload diff artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: snapshot-diff
           path: Snapshots/
@@ -92,7 +92,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode 26.6
         run: |
@@ -113,7 +113,7 @@ jobs:
         run: swift run CellarUICheck --snapshot --regen
 
       - name: Upload regenerated goldens
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: goldens-regen
           path: Snapshots/Goldens/

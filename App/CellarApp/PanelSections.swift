@@ -91,10 +91,18 @@ struct ActionSectionView: View {
     private var dischargeSection: some View {
         let capabilities = statusController.capabilities
         if capabilities == nil {
-            // 旧 daemon 未上报能力：升级提示（stale 版本比对另有横幅通道）。
-            Text(CellarL10n.s("panel.action.needUpgrade"))
-                .font(.caption)
-                .foregroundStyle(theme.secondaryText)
+            // nil 双语义细分（0.3.2）：当前版本 daemon 理应已上报——nil = 启动探测
+            // 瞬态（establishBackendLocked 前的短暂窗口），显示「探测中」而非误导性
+            // 升级提示；旧版本 daemon 的 nil 才是真正的升级提示。
+            if statusController.daemonStatus?.version == DaemonXPC.daemonVersion {
+                Text(CellarL10n.s("panel.action.probing"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            } else {
+                Text(CellarL10n.s("panel.action.needUpgrade"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
         } else if capabilities?.contains(DaemonXPC.capabilityDischarge) != true {
             // 已上报但不含 discharge（Legacy 后端 / CHIE 缺席机器 / 探测失败）。
             Text(CellarL10n.s("panel.action.unsupported"))

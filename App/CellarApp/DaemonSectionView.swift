@@ -58,6 +58,17 @@ struct DaemonSectionView: View {
                     || installer.registration == .pending
                     || installer.guidance == .migrateFromLegacy
             )
+
+            // pending 态残留注册出口（0.3.2，BTM 事故缺口）：待授权记录损坏时
+            // （反复授权后仍 spawn 失败），用户此前无任何出口——本按钮注销 SMAppService
+            // 记录回到 notRegistered，可重装。正常授权流程不受影响（按钮独立于主按钮）。
+            if installer.registration == .pending {
+                Button(CellarL10n.s("panel.daemon.removeResidual"), role: .destructive) {
+                    installer.uninstall()
+                }
+                .controlSize(.small)
+                .disabled(installer.busy)
+            }
         }
     }
 
