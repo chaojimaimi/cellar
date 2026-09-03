@@ -102,8 +102,15 @@ final class XPCServer: @unchecked Sendable {
                 send(errorReply("上限/滞回参数越界"), to: peer.connection)
                 return
             }
+            // WP2' 自动放电：auto 键值域校验（UINT64 类型混淆已由 validateRequest
+            // 整包拒绝；值 0/1 之外拒绝——validAutoFlag 与 CellarCoreCheck 同源，
+            // 仿 Int(exactly) 拒绝风格）。
+            if let auto = request.auto, !Discharge.validAutoFlag(auto) {
+                send(errorReply("自动放电参数越界"), to: peer.connection)
+                return
+            }
             do {
-                let status = try core.setLimits(upper: upper, hys: hysteresis)
+                let status = try core.setLimits(upper: upper, hys: hysteresis, auto: request.auto)
                 sendStatus(status, to: peer)
             } catch {
                 // LimitPolicyError（含 60 地板）等 → 原文回传（CLI 打印原文 + 退出 1）。

@@ -101,12 +101,17 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             return CellarL10n.s("notification.dischargeCancelled")
         case .actionInterrupted(let kind):
             return kind == dischargeKind ? CellarL10n.s("notification.dischargeInterrupted") : CellarL10n.s("notification.actionInterrupted")
+        case .autoDischargeStarted(let upperLimit):
+            // WP2' 自动放电启动（触发时用户不在场；目标 = 触发时刻策略上限）。
+            return CellarL10n.s("notification.autoDischargeStarted", upperLimit)
         }
     }
 
     /// 通知 identifier（同类型复用，冷却范围内重复投递被跳过）。
     /// WP2 动作终态：`action.<kind>.<终态>.<epoch>`（epoch = 投递时刻，
     /// identifier 全局唯一 + 豁免冷却；§1.7 定版；WP2' discharge 同款）。
+    /// WP2' 自动放电启动：同款独立 identifier + epoch——不走 10 分钟同型冷却
+    /// （触发本身有 30 分钟 daemon 侧冷却，双冷却叠加会压掉启动可见性）。
     private nonisolated static func identifier(for event: CellarNotificationEvent, now: Date) -> String {
         switch event {
         case .limitReached: return "cellar.limit-reached"
@@ -117,6 +122,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         case .actionInterrupted(let kind): return "action.\(kind).interrupted.\(Int(now.timeIntervalSince1970))"
         case .actionSafetyTerminated(let kind): return "action.\(kind).safety.\(Int(now.timeIntervalSince1970))"
         case .actionCancelled(let kind): return "action.\(kind).cancelled.\(Int(now.timeIntervalSince1970))"
+        case .autoDischargeStarted: return "action.\(Discharge.dischargeToLimitKind).autostart.\(Int(now.timeIntervalSince1970))"
         }
     }
 

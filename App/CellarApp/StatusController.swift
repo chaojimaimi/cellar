@@ -240,11 +240,17 @@ final class StatusController: ObservableObject {
 
     // MARK: - 控制操作（规格 §2.3；全部 XPC 后台）
 
-    /// 应用上限/滞回。成功 → 回包更新 daemonStatus + onLimitsApplied 同步滑杆。
-    func applyLimits(upperLimit: Int, hysteresis: Int) {
+    /// 应用上限/滞回（WP2'：autoDischarge 可选键——nil = 不发键，daemon 缺席保持）。
+    /// 唯一显式传 true/false 的调用点是设置窗自动放电开关（其余三调用点走默认 nil，
+    /// 防 60s 轮询窗口内用旧值覆写 CLI 刚改的限值，R1 P3）。
+    func applyLimits(upperLimit: Int, hysteresis: Int, autoDischarge: Bool? = nil) {
         runControl(
             attempt: .setLimits(upperLimit: upperLimit, hysteresis: hysteresis),
-            operation: { try DaemonXPCClient().setLimits(upperLimit: upperLimit, hysteresis: hysteresis) },
+            operation: {
+                try DaemonXPCClient().setLimits(
+                    upperLimit: upperLimit, hysteresis: hysteresis, autoDischarge: autoDischarge
+                )
+            },
             successFeedback: CellarL10n.s("status.applied", upperLimit, hysteresis)
         ) { [weak self] status in
             self?.onLimitsApplied?(status.upperLimit, status.hysteresis)

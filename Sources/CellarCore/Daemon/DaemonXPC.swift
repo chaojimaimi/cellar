@@ -26,6 +26,9 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// nil = 旧 daemon 未上报（App 提示升级）；[] = 已上报但不含 discharge（机型不支持）。
     /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容（评审 P2-5）。
     public var capabilities: [String]?
+    /// WP2' 自动放电开关（daemon 每次 buildStatusLocked 从 policy 填充）；
+    /// 可选字段 + 合成 Codable——旧 daemon 回包缺席 → nil 天然兼容。
+    public var autoDischargeEnabled: Bool?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -40,6 +43,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         lastChargingEnabled: Bool? = nil,
         action: OneShotAction? = nil,
         capabilities: [String]? = nil,
+        autoDischargeEnabled: Bool? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -52,6 +56,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.lastChargingEnabled = lastChargingEnabled
         self.action = action
         self.capabilities = capabilities
+        self.autoDischargeEnabled = autoDischargeEnabled
         self.timestamp = timestamp
     }
 }
@@ -84,12 +89,17 @@ public enum DaemonXPC {
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
     /// 重装）；[] = 当前机型不支持放电。
     public static let capabilityDischarge = "discharge"
+    /// WP2' 自动放电能力字面量（与 discharge 同批上报——自动放电是策略能力非硬件
+    /// 能力；App 按三态显隐开关：nil = 需升级 / 缺席 = 不支持 / 含 = 可用）。
+    public static let capabilityAutoDischarge = "autoDischarge"
 
     // MARK: - 线格式键与常量
 
     public static let cmdKey = "cmd"
     public static let upperKey = "upper"
     public static let hysteresisKey = "hysteresis"
+    /// WP2' 自动放电键（UINT64，0/1；缺席 = 保持现值——旧 daemon/CLI 天然兼容）。
+    public static let autoKey = "auto"
     public static let okKey = "ok"
     public static let statusKey = "status"
     public static let errorKey = "error"
@@ -103,19 +113,27 @@ public enum DaemonXPC {
     // MARK: - 请求/回包构造与校验（服务端与客户端共用）
 
     /// 构造请求字典（⚠️ Swift 的 ARC 自动管理 xpc 对象引用计数——调用方不得手动
-    /// xpc_retain/xpc_release，否则双重释放崩溃）。
-    public static func makeMessage(cmd: String, upper: UInt64, hysteresis: UInt64) -> xpc_object_t {
+    /// xpc_retain/xpc_release，否则双重释放崩溃）。auto 缺省 = 不发键（daemon 缺席保持）。
+    public static func makeMessage(
+        cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil
+    ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
         xpc_dictionary_set_uint64(message, upperKey, upper)
         xpc_dictionary_set_uint64(message, hysteresisKey, hysteresis)
+        if let auto {
+            xpc_dictionary_set_uint64(message, autoKey, auto)
+        }
         return message
     }
 
     /// 请求结构校验（评审 A-4/P0）：xpc_get_type 白名单——cmd 必须为 STRING 且 ≤32 字节、
     /// upper/hysteresis 若出现必须为 UINT64；缺 cmd / 类型混淆 / 超长 → nil
-    /// （调用方回错误包，不崩溃）。upper/hysteresis 缺席按 0 处理。
-    public static func validateRequest(_ msg: xpc_object_t) -> (cmd: String, upper: UInt64, hysteresis: UInt64)? {
+    /// （调用方回错误包，不崩溃）。upper/hysteresis 缺席按 0 处理；auto 缺席 → nil
+    /// （值域校验（0/1）由 XPCServer 臂负责——与 upper/hysteresis 同纪律）。
+    public static func validateRequest(
+        _ msg: xpc_object_t
+    ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -135,7 +153,12 @@ public enum DaemonXPC {
             guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
             hysteresis = xpc_dictionary_get_uint64(msg, hysteresisKey)
         }
-        return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis)
+        var auto: UInt64?
+        if let value = xpc_dictionary_get_value(msg, autoKey) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            auto = xpc_dictionary_get_uint64(msg, autoKey)
+        }
+        return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis, auto: auto)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -183,11 +206,16 @@ public struct DaemonXPCClient: Sendable {
 
     /// ⚠️ 60 地板双重复核的一侧：CLI 侧已用 LimitPolicy 构造校验；daemon 侧 setLimits 再核验一次。
     /// 负数经 clamping 收敛为 0（不会是合法策略，daemon 侧报地板错误；防 UInt64 转换崩溃）。
-    public func setLimits(upperLimit: Int, hysteresis: Int) throws -> DaemonStatus {
+    /// autoDischarge：nil = 不发键（daemon 缺席保持——非开关调用点一律传 nil，
+    /// 防 60s 轮询窗口内用旧值覆写 CLI 刚改的限值）。
+    public func setLimits(
+        upperLimit: Int, hysteresis: Int, autoDischarge: Bool? = nil
+    ) throws -> DaemonStatus {
         try exchange(
             cmd: "setLimits",
             upper: UInt64(clamping: upperLimit),
-            hysteresis: UInt64(clamping: hysteresis)
+            hysteresis: UInt64(clamping: hysteresis),
+            auto: autoDischarge.map { $0 ? 1 : 0 }
         )
     }
 
@@ -223,11 +251,13 @@ public struct DaemonXPCClient: Sendable {
     /// - 连接无效事件（daemon 未运行/未安装）→ .connectionFailed
     /// - 超时无回包 → .timeout
     /// - ok=false → .daemonError(原文)
-    private func exchange(cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0) throws -> DaemonStatus {
+    private func exchange(
+        cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil
+    ) throws -> DaemonStatus {
         // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
         // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
         let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
-        let message = DaemonXPC.makeMessage(cmd: cmd, upper: upper, hysteresis: hysteresis)
+        let message = DaemonXPC.makeMessage(cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto)
         let waiter = ReplyWaiter()
 
         xpc_connection_set_event_handler(connection) { object in

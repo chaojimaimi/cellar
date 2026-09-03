@@ -65,6 +65,18 @@ final class DaemonCore: @unchecked Sendable {
     var actionTrack = OneShotTrack()
     /// 动作持久化（action.json；独立于 policy.json，格式红线不动）。
     let actionStore: ActionStore
+    /// WP2' 自动放电冷却态（锁内普通变量，不持久化；崩溃重启即清零——重启后由
+    /// 崩溃恢复完成记录补记冷却，§3.7）。最近一次放电动作终止/取消时刻。
+    var lastAutoDischargeCompletedAt: Date?
+    /// WP2' 适配器翻转门（完成后见过外接状态翻转才可重触发；初值 true = 从未完成
+    /// 时判定直通，门只在完成记录存在后参与判定）。
+    var adapterCycleSinceAutoCompletion = true
+    /// WP2' 翻转门武装位（code-review P1：放电稳态遥测 ext=false，终止恢复 CHIE 后
+    /// 1-2 tick 内回跳 true——该回跳是放电自身的恢复痕迹而非物理重插，直接开门会
+    /// 击穿翻转门）。终止即 disarm；disarm 态的 false→true 回跳仅重新武装不开门；
+    /// 武装后的转移（真实拔/插）才开门。首 tick lastStatus nil 的恒真比较同理被
+    /// disarm 吸收（崩溃恢复已记冷却关门）。
+    var adapterCycleArmed = true
 
     // MARK: - 生命周期
 
@@ -116,6 +128,9 @@ final class DaemonCore: @unchecked Sendable {
         if let pending = actionStore.load() {
             try? actionStore.delete()
             if pending.kind == Discharge.dischargeToLimitKind {
+                // 统一完成记录（五落点之五）：崩溃恢复终止即记冷却——顺带给 daemon
+                // 重启后 30min 冷却 + 翻转门关闭（叠加 §3.7 良性分析）。
+                noteDischargeTerminatedLocked(now: Date())
                 if let backend, backend.adapterControlSupported {
                     let restoreError = DischargeAdapterControl.restoreEnabled(
                         backend: backend, attempts: Discharge.terminalRestoreAttempts
@@ -286,10 +301,17 @@ final class DaemonCore: @unchecked Sendable {
 
     /// setLimits：更新上限并切回 active（规格 §0.4）→ 持久化（失败仅记日志）→
     /// policyChanged 全量重评估 → 返回状态。LimitPolicy 构造失败（含 60 地板）原样上抛。
-    func setLimits(upper: Int, hys: Int) throws -> DaemonStatus {
+    /// WP2'：auto == nil → 保持内存策略现值（缺席保持——CLI 不带键不重置开关）；
+    /// 0/1 → 更新 flag；**flag 自非 1 翻转为 1 时清空两门**（R2 P2-A：重新 opt-in =
+    /// 新意图；解决常插电设备「一适配器会话只触发一次」的窄口）。
+    func setLimits(upper: Int, hys: Int, auto: UInt64? = nil) throws -> DaemonStatus {
         _ = try LimitPolicy(upperLimit: upper, hysteresis: hys)
         var events: [LogEvent] = []
         lock.lock()
+        var autoFlag = policy.autoDischargeEnabled
+        if let auto {
+            autoFlag = auto == 1
+        }
         // WP2 门控：动作活跃 → 隐式取消（恢复限充语义）→ 再设新限并立即 enforce。
         // 审查 M3：daemon 发起取消 → 锁存 cancel 字面量（App 轮询必见终态/通知必发）。
         if actionTrack.isActive {
@@ -298,7 +320,18 @@ final class DaemonCore: @unchecked Sendable {
             // 用户动作清除终态锁存（P0-2：setLimits/enable/disable/fullOnce 重启）。
             actionTrack.clearUserActionLatch()
         }
-        applyPolicyLocked(DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys), events: &events)
+        // **flag 自非 1 翻转为 1 时清空两门**（R2 P2-A：重新 opt-in = 新意图；解决
+        // 常插电设备「一适配器会话只触发一次」的窄口）。置于隐式取消之后（code-review
+        // P2：取消会经完成记录重新关门——清门必须后置才能兑现「新意图」语义）。
+        if autoFlag == true && policy.autoDischargeEnabled != true {
+            lastAutoDischargeCompletedAt = nil
+            adapterCycleSinceAutoCompletion = true
+            adapterCycleArmed = true
+        }
+        applyPolicyLocked(
+            DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys, autoDischargeEnabled: autoFlag),
+            events: &events
+        )
         persistPolicyLocked(events: &events)
         performTickLocked(events: &events)
         let status = buildStatusLocked()
@@ -348,7 +381,10 @@ final class DaemonCore: @unchecked Sendable {
         }
 
         applyPolicyLocked(
-            DaemonPolicy(mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis),
+            DaemonPolicy(
+                mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
+                autoDischargeEnabled: policy.autoDischargeEnabled
+            ),
             events: &events
         )
         persistPolicyLocked(events: &events)
@@ -374,7 +410,10 @@ final class DaemonCore: @unchecked Sendable {
         // 用户动作清除终态锁存（P0-2：enable 是锁存终止事件之一）。
         actionTrack.clearUserActionLatch()
         applyPolicyLocked(
-            DaemonPolicy(mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis),
+            DaemonPolicy(
+                mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
+                autoDischargeEnabled: policy.autoDischargeEnabled
+            ),
             events: &events
         )
         persistPolicyLocked(events: &events)
@@ -538,6 +577,17 @@ final class DaemonCore: @unchecked Sendable {
             ))
             lastPercent = snapshot.percent
         }
+        // WP2' 适配器翻转检测（code-review P1 armed 语义）：终止后 disarm——放电稳态
+        // 遥测 ext=false、恢复 CHIE 后 1-2 tick 内回跳 true 是放电自身恢复痕迹，仅
+        // 重新武装不开门；武装后的转移（真实拔/插）才开重插门。首 tick lastStatus nil
+        // 的恒真比较被 disarm 吸收（崩溃恢复已记冷却关门，不误开）。
+        if snapshot.externalConnected != lastStatus?.lastExternalConnected {
+            if adapterCycleArmed {
+                adapterCycleSinceAutoCompletion = true
+            } else if snapshot.externalConnected {
+                adapterCycleArmed = true   // 放电后回跳：仅武装
+            }
+        }
 
         // 5) 策略执行：动作活跃 → 维护分支（规格 §1.1 tick 行——采样/控制键读取/percent
         // 事件（步骤 2/3/4）保留，仅「enforce」替换为完成判定 + 保活）；其余原样。
@@ -572,6 +622,40 @@ final class DaemonCore: @unchecked Sendable {
             if let patrolLiteral = patrolCHIEResidualLocked(backend: backend, events: &events) {
                 actionName = patrolLiteral
             } else {
+                // WP2' 自动触发插桩（优先序钉死：巡检命中 > 自动触发 > enforce，R1
+                // P2-3——巡检命中 tick 到此为止，无「恢复 0x00 后同 tick 又写 0x8」乒乓）。
+                // 判定链全过 → 锁内启动（locked 内部不 tick）；catch 记 warn 后落回
+                // 下方既有 enforce 块（不重入 performTickLocked——失败臂已做 CHIE
+                // 恢复/回滚，残留无约束窗口 ≤1 tick，下 tick 全量收敛，R1 P1-1）。
+                var autoStarted = false
+                let tickNow = Date()
+                if Discharge.autoTriggerReady(
+                    enabled: policy.autoDischargeEnabled,
+                    mode: policy.mode,
+                    externalConnected: snapshot.externalConnected,
+                    percent: snapshot.percent,
+                    upperLimit: policy.upperLimit,
+                    actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
+                    dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
+                    now: tickNow,
+                    lastAutoCompletion: lastAutoDischargeCompletedAt,
+                    adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion
+                ) {
+                    do {
+                        if try dischargeToLimitLocked(now: tickNow, initiator: .auto, events: &events) == .started {
+                            autoStarted = true
+                            actionName = maintainDischargeLocked(
+                                now: tickNow, snapshot: snapshot, backend: backend, events: &events
+                            )
+                        }
+                    } catch {
+                        events.append(LogEvent(
+                            category: .control, level: .warn,
+                            message: "自动放电触发失败：\(error)"
+                        ))
+                    }
+                }
+                if !autoStarted {
                 do {
                     // WP1：温度守卫介入常规执法——decide → ThermalGuard.guarded →
                     // perform（noop 不触碰 backend；enable/disable 经写后回读校验，
@@ -610,6 +694,7 @@ final class DaemonCore: @unchecked Sendable {
                     actionName = "enforce:error"
                     noteControlFailureLocked(error, events: &events, context: "策略执行")
                 }
+                }   // if !autoStarted（未自动启动才落常规 enforce 块）
             }
         } else {
             // disabled 档同样巡检（不变式无条件：CHIE=0x8 仅允许在动作活跃期存在）。
@@ -671,7 +756,7 @@ final class DaemonCore: @unchecked Sendable {
         smcClient = client
         backend = detected
         capabilities = RuntimeProbe.supportsDischarge(backend: detected, client: client)
-            ? [DaemonXPC.capabilityDischarge]
+            ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge]
             : []
         events.append(LogEvent(
             category: .control, level: .info,
@@ -747,6 +832,7 @@ final class DaemonCore: @unchecked Sendable {
         status.mode = policy.mode
         status.upperLimit = policy.upperLimit
         status.hysteresis = policy.hysteresis
+        status.autoDischargeEnabled = policy.autoDischargeEnabled
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

@@ -477,6 +477,23 @@
         }
       }
     },
+    "notification.autoDischargeStarted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto discharge started (target %lld%%)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动放电已启动（目标 %lld%%）"
+          }
+        }
+      }
+    },
     "notification.conflictSuspected" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1833,6 +1850,91 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "外观"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto Discharge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动放电"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm Auto Discharge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认开启"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When the battery is above the limit, discharge it back to the limit automatically"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电量高于上限时，自动放电回到上限"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge.unsupported" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto discharge is not supported on this model or daemon version"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前机型或守护进程版本不支持自动放电"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge.warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1. Discharging consumes battery cycle count\n2. External devices may lose power during discharge (the adapter is disabled)\n3. When the trigger condition is met, a full charge will also be discharged back to the limit\n4. Discharge can be stopped anytime by unplugging, sleep, or the thermal safeguard"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1. 放电会消耗电池循环计数\n2. 放电期间外接设备可能断电（适配器被禁用）\n3. 满足触发条件时，充满一次完成后的电量也会被自动放回上限\n4. 放电可随时被拔电、睡眠或温度安全机制中止"
           }
         }
       }

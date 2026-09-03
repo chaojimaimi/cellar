@@ -36,6 +36,45 @@ public enum Discharge {
     public static let chieEnabledBytes: [UInt8] = [0x00]
     public static let chieDisabledBytes: [UInt8] = [0x08]
 
+    /// WP2' 自动放电触发 margin（percent ≥ 上限 + 2 才触发——防 1% 抖动乒乓）。
+    public static let autoDischargeTriggerMarginPercent = 2
+    /// WP2' 自动放电冷却期（完成/终止后 30 分钟两门之一；防乒乓）。
+    public static let autoDischargeCooldown: TimeInterval = 30 * 60
+
+    /// setLimits auto 键值域（0/1 合法；其余拒绝——XPCServer 校验臂与测试同源）。
+    public static func validAutoFlag(_ raw: UInt64) -> Bool { raw <= 1 }
+
+    /// WP2' 自动放电触发判定（方案 §2.1 判定链，全部前置 AND；纯函数无记忆——
+    /// 冷却/翻转门状态由 daemon 锁内变量经参数传入）：
+    /// `enabled == true` ∧ active 模式 ∧ 外接 ∧ 无在轨动作 ∧ 放电能力在位
+    /// ∧ `percent ≥ upperLimit + 2` ∧ 冷却（从未完成 ∨ 距完成 ≥ 30min）
+    /// ∧ 重插（从未完成 ∨ 完成后见过适配器翻转）。
+    public static func autoTriggerReady(
+        enabled: Bool?,
+        mode: String,
+        externalConnected: Bool,
+        percent: Int,
+        upperLimit: Int,
+        actionActive: Bool,
+        dischargeCapable: Bool,
+        now: Date,
+        lastAutoCompletion: Date?,
+        adapterCycleSinceCompletion: Bool
+    ) -> Bool {
+        let cooldownPassed = lastAutoCompletion.map {
+            now.timeIntervalSince($0) >= autoDischargeCooldown
+        } ?? true
+        let replugPassed = lastAutoCompletion == nil || adapterCycleSinceCompletion
+        return enabled == true
+            && mode == "active"
+            && externalConnected
+            && !actionActive
+            && dischargeCapable
+            && percent >= upperLimit + autoDischargeTriggerMarginPercent
+            && cooldownPassed
+            && replugPassed
+    }
+
     /// 创建放电动作（deadline = now + 2h；targetPercent = 启动时策略上限快照）。
     public static func start(
         now: Date,

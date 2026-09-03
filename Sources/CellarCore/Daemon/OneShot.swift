@@ -100,6 +100,9 @@ public enum OneShotLiteral {
     public static func cancelCrashRecovery(kind: String = OneShot.fullOnceKind) -> String { "\(kind):cancel(crash-recovery)" }
     /// WP2' 安全终止字面量（温度/地板/监护缺失/CHIE 残留巡检共用；§2.5 定版族）。
     public static func safety(kind: String = OneShot.fullOnceKind) -> String { "\(kind):safety" }
+    /// WP2' 自动放电启动字面量（daemon 自动触发专用）。**无默认参数**（R1 P3：
+    /// 防 fullOnce:autostart 误用——调用点必须显式传放电 kind）。
+    public static func autoStart(kind: String) -> String { "\(kind):autostart" }
 }
 
 // MARK: - 启动前置（纯函数，规格 §1.1/§1.3）
@@ -274,6 +277,15 @@ public struct OneShotTrack: Equatable, Sendable {
         debounceTicks = 0
         resetDischargeCounters()
         return cancelForCrashRecovery()
+    }
+
+    /// WP2' 自动放电启动锁存（daemon 发起事件 = 必须锁存，M3 判例同取消）：
+    /// `effectiveLastAction = latchedLiteral ?? constructed`——autostart 不锁存会被
+    /// 前一个终态锁存（如 fullOnce:done，活到下次用户动作）遮蔽，App 轮询永远
+    /// 看不到自动启动 → 通知漏发。纯锁存字面量，不影响动作轨道（启动已由
+    /// startIfIdle 接管并清过锁存）；用户动作清除后回落常规字面量。
+    public mutating func latchAutoStart(_ literal: String) {
+        latchedLiteral = literal
     }
 
     /// SIGHUP 重载语义（P1-1）：cancelled（重载后 mode == "disabled"）→ 取消动作；

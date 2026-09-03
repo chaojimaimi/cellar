@@ -88,6 +88,9 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     /// 静默不同：放电取消具安全显著性——适配器供电状态被变更，需用户知情，§2.3
     /// 统一 cancel → 通知）。
     case actionCancelled(kind: String)
+    /// WP2' 自动放电启动（lastAction 转移 dischargeToLimit:autostart——daemon
+    /// 自动触发时用户不在场，必须发通知；upperLimit = 触发时刻策略上限）。
+    case autoDischargeStarted(upperLimit: Int)
 }
 
 /// 通知分类纯函数（§2.3 定版）。
@@ -164,6 +167,10 @@ public func notificationEvents(
         return [.actionInterrupted(kind: dischargeKind)]
     case OneShotLiteral.cancel(kind: dischargeKind):
         return [.actionCancelled(kind: dischargeKind)]
+    case OneShotLiteral.autoStart(kind: dischargeKind):
+        // WP2' 自动放电启动（触发发生在 daemon 运行期，App 轮询必见转移——
+        // 首样本臂不破例；upperLimit 取 current 现值）。
+        return [.autoDischargeStarted(upperLimit: current.upperLimit)]
     default:
         return []
     }

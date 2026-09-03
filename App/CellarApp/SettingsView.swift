@@ -26,9 +26,12 @@ struct SettingsView: View {
 
 private struct GeneralTab: View {
     @EnvironmentObject private var loginItems: LoginItemController
+    @EnvironmentObject private var statusController: StatusController
     @Environment(\.cellarTheme) private var theme
     /// 通知授权态（nil = 查询中；getNotificationSettings 异步回主线程刷新）。
     @State private var notificationAuthorized: Bool?
+    /// 自动放电开启两步内嵌确认块（nil = 未展开；确认/取消后关闭）。
+    @State private var autoDischargeConfirming = false
 
     var body: some View {
         Form {
@@ -37,6 +40,42 @@ private struct GeneralTab: View {
                 set: { loginItems.toggle($0) }
             ))
             .disabled(loginItems.busy)
+
+            // WP2' 自动放电组（登录项下方）：开关绑定 daemonStatus 单一真相（daemon
+            // 确认后状态回传翻转）；开启两步内嵌确认块，关闭直通（关是安全方向）。
+            Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
+                get: { statusController.daemonStatus?.autoDischargeEnabled == true },
+                set: { toggleAutoDischarge($0) }
+            ))
+            .disabled(autoDischargeCapabilityAvailable == false)
+
+            // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
+            Text(CellarL10n.s("settings.autoDischarge.desc"))
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+
+            // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
+            // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
+            if let hint = autoDischargeGateHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
+
+            // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
+            // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
+            if autoDischargeConfirming {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(CellarL10n.s("settings.autoDischarge.warning"))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                    HStack {
+                        Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
+                            .disabled(statusController.busy)
+                        Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
+                    }
+                }
+            }
 
             LabeledContent(CellarL10n.s("settings.registrationStatus")) {
                 HStack {
@@ -66,6 +105,57 @@ private struct GeneralTab: View {
             loginItems.refreshRegistration()
             queryNotificationAuthorization()
         }
+    }
+
+    // MARK: - WP2' 自动放电
+
+    /// 能力门控：capabilities 含 autoDischarge 才可用（nil = 旧 daemon 未上报，
+    /// [] = 已上报但不含能力）。
+    private var autoDischargeCapabilityAvailable: Bool {
+        statusController.capabilities?.contains(DaemonXPC.capabilityAutoDischarge) == true
+    }
+
+    /// 禁用态提示（nil = 可用，无提示）。capabilities == nil → 需升级守护进程
+    /// （复用面板既有 needUpgrade 文案 key——同三态惯例）；缺能力 → 不支持。
+    private var autoDischargeGateHint: String? {
+        guard !autoDischargeCapabilityAvailable else { return nil }
+        if statusController.capabilities == nil {
+            return CellarL10n.s("panel.action.needUpgrade")
+        }
+        return CellarL10n.s("settings.autoDischarge.unsupported")
+    }
+
+    /// 开关动作：开启 → 先刷新一次 status（缩窗）再展开确认块；关闭直通。
+    private func toggleAutoDischarge(_ enabled: Bool) {
+        guard autoDischargeCapabilityAvailable else { return }
+        if enabled {
+            statusController.refreshNow()
+            autoDischargeConfirming = true
+        } else {
+            autoDischargeConfirming = false
+            applyAutoDischarge(false)
+        }
+    }
+
+    /// 确认开启：upper/hys 取 daemonStatus 现值（单一真相），auto 显式 true。
+    private func confirmAutoDischarge() {
+        guard let status = statusController.daemonStatus else {
+            autoDischargeConfirming = false
+            return
+        }
+        autoDischargeConfirming = false
+        statusController.applyLimits(
+            upperLimit: status.upperLimit, hysteresis: status.hysteresis, autoDischarge: true
+        )
+    }
+
+    /// 关闭直通（经 setLimits auto=0 持久化；daemon 缺席保持语义下显式传 false
+    /// 即关——在轨自动放电不被打断，属设计）。
+    private func applyAutoDischarge(_ enabled: Bool) {
+        guard let status = statusController.daemonStatus else { return }
+        statusController.applyLimits(
+            upperLimit: status.upperLimit, hysteresis: status.hysteresis, autoDischarge: enabled
+        )
     }
 
     private var registrationText: String {

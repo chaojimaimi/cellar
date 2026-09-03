@@ -317,6 +317,9 @@ struct Main {
         runDeviceInfoDomainScenarios()
         // WP1：热守卫场景域（充电侧温度暂停，方案 §4.1 九项穷举）。
         try runThermalGuardDomainScenarios()
+        // Phase 4 WP2：自动放电（opt-in）场景域（方案 §4.1 九项：触发矩阵/Codable
+        // 兼容/线格式/字面量锁存/值域/通知矩阵/事件承载）。
+        try runAutoDischargeDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

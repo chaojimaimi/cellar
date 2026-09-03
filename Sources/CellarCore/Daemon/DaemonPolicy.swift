@@ -16,23 +16,37 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     public var upperLimit: Int
     /// 滞回幅度（1...20）；恢复阈值 = upperLimit - hysteresis。
     public var hysteresis: Int
+    /// WP2' 自动放电开关（nil = 未设置，视为 false；daemon 构造点必须显式携带
+    /// 当前值——防「改上限/启停用把开关静默重置」）。合成 Codable 的
+    /// decodeIfPresent/encodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    public var autoDischargeEnabled: Bool?
 
-    public init(mode: String, upperLimit: Int, hysteresis: Int) {
+    public init(
+        mode: String, upperLimit: Int, hysteresis: Int,
+        autoDischargeEnabled: Bool? = nil
+    ) {
         self.mode = mode
         self.upperLimit = upperLimit
         self.hysteresis = hysteresis
+        self.autoDischargeEnabled = autoDischargeEnabled
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
 
     /// 校验：mode ∈ {active, disabled}；`try LimitPolicy(upperLimit:hysteresis:)` 成功。
     /// 任何非法（含 upperLimit=30 这类可绕过 60 地板的持久化回流）→ nil（评审 A-2/P0）。
-    public static func validated(mode: String, upperLimit: Int, hysteresis: Int) -> DaemonPolicy? {
+    public static func validated(
+        mode: String, upperLimit: Int, hysteresis: Int,
+        autoDischargeEnabled: Bool? = nil
+    ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
             return nil
         }
-        return DaemonPolicy(mode: mode, upperLimit: upperLimit, hysteresis: hysteresis)
+        return DaemonPolicy(
+            mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
+            autoDischargeEnabled: autoDischargeEnabled
+        )
     }
 }
 

@@ -11,15 +11,25 @@ import CellarCore
 /// 只做副作用（写 CHTE/CHIE、删文件、终态字面量落状态）与日志——判定链经
 /// CellarCoreCheck 矩阵穷举钉死，daemon 运行时与测试同源。
 extension DaemonCore {
-    /// dischargeToLimit XPC（方案 §2.3 启动序列）：
-    /// 门控（mode/ext/percent>目标/无在轨动作/能力）→ **先写 CHTE=00000000
-    /// （enforce 撤停充，§1.1 E6 未测胞消除）→ 再写 CHIE=0x8 → 回读校验** →
-    /// ActionState 落盘 → 即时 tick 切动作模式。
+    /// 放电启动发起方（§2.2 拆分判别）：manual = XPC 用户动作；auto = tick 内自动触发。
+    enum Initiator {
+        case manual, auto
+    }
+
+    /// dischargeToLimit 锁内启动结果（幂等分支零副作用：动作已在轨 → .alreadyActive，
+    /// 调用方仅 .started 才执行后续副作用）。
+    enum DischargeStartOutcome {
+        case started, alreadyActive
+    }
+
+    /// dischargeToLimit XPC（方案 §2.3 启动序列，§2.2 拆分定稿）：
+    /// 取锁 → locked(.manual) → **仅 .started 才 performTickLocked**（即时 tick，
+    /// M2 语义）→ buildStatusLocked。
     ///
-    /// 失败路径（不静默，红线 5）：
-    /// - CHTE/CHIE 写失败 → 上抛原文 + 告警，**不进入动作态**（CHTE 已被写 0 →
-    ///   立即走常规 enforce 恢复）；
-    /// - action.json 写失败 → **立即写 CHIE=0x0 恢复 + 上抛**（评审轮 2 注记 2）。
+    /// catch（R1 P1-1 + R2 P3 注记）：手动路径在 catch 中先补一次常规 tick 再上抛
+    /// ——覆盖面大于原两臂（前置/能力拒绝、CHTE 写失败原先不 tick，现也补一次
+    /// enforce：良性、幂等）；原 CHIE 校验/save 失败两臂的 M2 即时收敛语义由本
+    /// catch 等价承接。locked 内任何路径不 tick（递归不可能）。
     func dischargeToLimit() throws -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
@@ -28,16 +38,47 @@ extension DaemonCore {
             emit(events)
         }
 
-        // 幂等：动作已在轨（任意类型）→ 回当前状态（非错误——App 按钮随状态消失）。
-        if actionTrack.isActive {
+        let outcome: DischargeStartOutcome
+        do {
+            outcome = try dischargeToLimitLocked(now: Date(), initiator: .manual, events: &events)
+        } catch {
+            performTickLocked(events: &events)
+            throw error
+        }
+        if outcome == .started {
+            performTickLocked(events: &events)
+        }
+        return buildStatusLocked()
+    }
+
+    /// dischargeToLimit 锁内启动（唯一副作用序列；失败臂按臂注记，**全程不 tick**）：
+    /// 幂等检查（动作在轨 → .alreadyActive，零副作用直接返回）→ 能力守卫 → 前置
+    /// 快照+startPrecondition → CHTE=0（撤停充）→ CHIE=0x8 写+回读 → startIfIdle
+    /// (timeout: 2h) → actionStore.save → .started。
+    ///
+    /// 失败臂（R1 P1-1 + R2 P3 按臂注记）：
+    /// - 前置/能力拒绝与 CHTE 写失败臂：无副作用、无 tick（与现实现一致）；
+    /// - CHIE 回读校验失败臂：仅事件记录 + 上抛，**不做 CHIE 恢复**（写入态未知，
+    ///   恢复交 §2.4 CHIE 残留不变量巡检——与现实现一致），无 tick；
+    /// - actionStore.save 失败臂：restoreEnabled（CHIE 恢复重试阶梯）+ cancel 回滚
+    ///   + 事件记录，无 tick（R2 P2-B：此回滚**不记**冷却——启动失败非「已建立
+    ///   动作的终止」，动作从未持久化/可见；失败重试节奏 = 每 tick 判定重判）。
+    ///
+    /// initiator == .auto 且 .started → latchAutoStart（锁存在 save 成功之后——与
+    /// startIfIdle 清锁存时序自洽）；manual 不锁存（用户刚点过按钮，XPC 回包即知）。
+    func dischargeToLimitLocked(
+        now: Date, initiator: Initiator, events: inout [LogEvent]
+    ) throws -> DischargeStartOutcome {
+        // 幂等：动作已在轨（任意类型）→ .alreadyActive（非错误——App 按钮随状态消失）。
+        guard !actionTrack.isActive else {
             events.append(LogEvent(
                 category: .control, level: .info,
                 message: "dischargeToLimit 重复请求：动作已在进行中，回当前状态（幂等）"
             ))
-            return buildStatusLocked()
+            return .alreadyActive
         }
-        // 能力纵深防御（App 已按 capabilities 隐藏按钮；XPC 侧独立核验，评审 P1-1
-        // fail-closed）：Legacy 后端/CHIE 缺席/探测失败 → 拒绝。
+        // 能力纵深防御（App 已按 capabilities 隐藏按钮/开关；XPC 侧独立核验，评审
+        // P1-1 fail-closed）：Legacy 后端/CHIE 缺席/探测失败 → 拒绝。
         guard let backend, backend.adapterControlSupported else {
             events.append(LogEvent(
                 category: .control, level: .error,
@@ -88,10 +129,8 @@ extension DaemonCore {
         } catch {
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "dischargeToLimit 启动：CHIE=0x08 写入/回读校验失败（\(error)）——不进入动作态，CHTE 走常规 enforce 恢复"
+                message: "dischargeToLimit 启动：CHIE=0x08 写入/回读校验失败（\(error)）——不进入动作态，CHTE 走常规 enforce 恢复（CHIE 残留交 §2.4 巡检）"
             ))
-            // 此路径 CHTE 已被写 0 且未进入动作态：立即常规 enforce 收敛（§1.1）。
-            performTickLocked(events: &events)
             throw error
         }
 
@@ -99,7 +138,7 @@ extension DaemonCore {
         // ⚠️ timeout 必须显式传 discharge 2h 窗口（startIfIdle 默认是 fullOnce 的 4h——
         // 各动作族超时窗口不得混用，§2.3 超时终止语义按 2h 算术注记）。
         _ = actionTrack.startIfIdle(
-            now: Date(),
+            now: now,
             kind: Discharge.dischargeToLimitKind,
             targetPercent: target,
             timeout: Discharge.dischargeTimeout
@@ -121,18 +160,17 @@ extension DaemonCore {
                 category: .control, level: .error,
                 message: "dischargeToLimit 启动失败：action.json 写入失败（\(error)）"
             ))
-            // 审查 M2：回滚后立即常规 enforce 收敛 CHTE（本路径已写 CHTE=0 放行
-            // 充电，动作又未在轨——不等下 tick 30s，直接收敛「恢复限充」语义）。
-            performTickLocked(events: &events)
             throw DischargeStartRejection.persistenceFailed
         }
         events.append(LogEvent(
             category: .control, level: .info,
             message: "dischargeToLimit 已启动：目标 \(target)%（2 小时超时）"
         ))
-        // 即时 tick：CHIE 保活 + 首样本（lastStatus 不冻结，P1-2）。
-        performTickLocked(events: &events)
-        return buildStatusLocked()
+        if initiator == .auto {
+            // 自动启动必须锁存（App 轮询必见 autostart → 通知必发；M3 判例同取消）。
+            actionTrack.latchAutoStart(OneShotLiteral.autoStart(kind: Discharge.dischargeToLimitKind))
+        }
+        return .started
     }
 
     /// 放电动作维护分支（performTickLocked 第 5 步放电分支；方案 §2.3 判定次序在
@@ -179,6 +217,9 @@ extension DaemonCore {
 
         switch outcome {
         case .completed, .timedOut, .safetyTerminated:
+            // 统一完成记录（五落点之一）：终态即记冷却 + 关翻转门（R1 P1-2——
+            // 完成/超时/安全终止后不再被下一 tick 立即重触发）。
+            noteDischargeTerminatedLocked(now: now)
             let terminal: String
             switch outcome {
             case .completed: terminal = "完成"
@@ -197,6 +238,9 @@ extension DaemonCore {
             deleteActionFileLocked(events: &events)
             return actionTrack.latchedLiteral ?? fallbackLiteral(for: outcome)
         case .cancelled(let reason, let literal):
+            // 统一完成记录（五落点之一）：取消即记——修复「用户取消后被立即重触发」
+            // 漏洞（R1 P1-2；过度抑制无害：完成后 percent ≤ 目标本就不满足触发门）。
+            noteDischargeTerminatedLocked(now: now)
             // 统一取消：恢复 CHIE（重试阶梯 + 告警）→ enforce CHTE（恢复限充语义）。
             restoreDischargeAdapterLocked(backend: backend, terminal: "取消(\(reason))", events: &events)
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
@@ -220,6 +264,20 @@ extension DaemonCore {
         case .safetyTerminated: return OneShotLiteral.safety(kind: kind)
         default: return OneShotLiteral.cancel(kind: kind)
         }
+    }
+
+    /// 统一完成记录（方案 §2.2，R1 P1-2 定稿）：凡 dischargeToLimit 动作终止/取消
+    /// 一律调用——置冷却时刻 + 关适配器翻转门。不区分 manual/auto 起源（过度抑制
+    /// 无害：完成后 percent ≤ 目标本就不满足触发门）。落点全集 = maintain 四终态/
+    /// 取消、睡眠取消、cancelAction 放电分支、监护缺失终止、启动崩溃恢复。
+    /// ⚠️ locked 自身 save 失败回滚**不**调用（R2 P2-B：启动失败非「已建立动作的
+    /// 终止」——动作从未持久化/可见；误记会退化为每 30min 才重试）。
+    func noteDischargeTerminatedLocked(now: Date) {
+        lastAutoDischargeCompletedAt = now
+        adapterCycleSinceAutoCompletion = false
+        // code-review P1：终止同时 disarm——放电后的 ext false→true 回跳是恢复痕迹
+        // 而非物理重插，仅重新武装后（disarm 态回跳触发）的后续转移才开门。
+        adapterCycleArmed = false
     }
 
     /// 终态/取消恢复 CHIE=0x0（写 + 回读校验重试阶梯 —— 取消写失败 ≠ 取消完成，
@@ -352,6 +410,8 @@ extension DaemonCore {
             return
         }
         guard let literal = actionTrack.terminateMonitoringLoss() else { return }
+        // 统一完成记录（五落点之四）：监护缺失终止即记冷却（R1 P1-2 全集成员）。
+        noteDischargeTerminatedLocked(now: Date())
         if let backend, backend.adapterControlSupported {
             let restoreError = DischargeAdapterControl.restoreEnabled(
                 backend: backend, attempts: Discharge.terminalRestoreAttempts
@@ -383,6 +443,9 @@ extension DaemonCore {
     /// 通知必发（不锁存会被下一常规 tick 的 enforce:xxx 覆盖，60s 轮询档漏发）。
     func cancelDischargeForSleepLocked(events: inout [LogEvent]) {
         guard actionTrack.action?.kind == Discharge.dischargeToLimitKind else { return }
+        // 统一完成记录（五落点之二）：睡眠取消即记冷却——唤醒后再触发需冷却
+        // 30min ∧ 适配器翻转，两门皆过才可（R1 P1-2 修订）。
+        noteDischargeTerminatedLocked(now: Date())
         let literal = actionTrack.cancelLatched() ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
         if let backend, backend.adapterControlSupported {
             let restoreError = DischargeAdapterControl.restoreEnabled(

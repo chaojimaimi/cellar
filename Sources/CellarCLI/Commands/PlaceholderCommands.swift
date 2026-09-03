@@ -77,6 +77,10 @@ enum DaemonCommandHelpers {
         let modeText = status.mode == "active" ? "限充管理中" : "已停用"
         print("daemon：运行中 · 模式：\(modeText)")
         print("策略：上限 \(status.upperLimit)% · 滞回 \(status.hysteresis)%（恢复阈值 \(status.upperLimit - status.hysteresis)%）")
+        // WP2' 自动放电行（flag == nil = 旧 daemon 未上报，不渲染该行）。
+        if let autoDischargeEnabled = status.autoDischargeEnabled {
+            print("自动放电：\(autoDischargeEnabled ? "已开启" : "已关闭")")
+        }
         if let action = status.lastAction {
             print("最近动作：\(action)")
         }

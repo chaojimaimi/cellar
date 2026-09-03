@@ -110,6 +110,10 @@ extension DaemonCore {
         }
         guard let literal else { return }
         if kind == Discharge.dischargeToLimitKind {
+            // 统一完成记录（五落点之三）：XPC cancelAction / setLimits·disable·SIGHUP·
+            // SIGTERM 隐式取消一律记冷却 + 关翻转门（R1 P1-2——取消后被下一 tick
+            // 立即重触发的漏洞修复）。
+            noteDischargeTerminatedLocked(now: Date())
             // 放电统一取消：恢复 CHIE（重试阶梯）+ enforce CHTE（恢复限充语义）。
             if let backend, backend.adapterControlSupported {
                 let restoreError = DischargeAdapterControl.restoreEnabled(
