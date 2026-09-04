@@ -2013,13 +2013,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "About"
+            "value": "Appearance & About"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "关于"
+            "value": "外观与关于"
           }
         }
       }
@@ -5556,23 +5556,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "通用"
-          }
-        }
-      }
-    },
-    "main.page.appearance": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Appearance"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "外观"
           }
         }
       }

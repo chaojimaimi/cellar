@@ -3,15 +3,16 @@ import CellarUI
 import SwiftUI
 
 /// 主窗口（Phase 5 v1.2 §2.1/§2.2；M3.5 修复 + 用户决策「设置窗退役」；
-/// v1.3 统计实页化）：**HStack 自绘侧栏**——替换
+/// v1.3 统计实页化；v1.5 侧栏打磨——品牌区 + 三段导航组 + 全行命中 + 括号
+/// 指示条 + 外观关于合并页）：**HStack 自绘侧栏**——替换
 /// NavigationSplitView + List(selection:)（系统组件在切页/全屏/最小化时侧栏
-/// 空白、选中行蓝块跳出窗顶的怪癖）；左列定宽 216（VStack：两导航组 + footer
-/// daemon 状态行）+ Divider + 右侧 detail 切页。
+/// 空白、选中行蓝块跳出窗顶的怪癖）；左列定宽 216（VStack：品牌区 + 三导航
+/// 组 + footer daemon 状态行）+ Divider + 右侧 detail 切页。
 ///
-/// 路由八页（工单 4）：主组（仪表板/充电控制/通用/外观/关于）+ 规划组（统计
-/// v1.3 实页 / 校准 v1.4 / 自动化 v1.6 占位）；通用/外观/关于页消费共享内容
-/// 子视图（GeneralSections/AppearanceSections/AboutSections，设置窗内容统一
-/// 并入，双入口收敛为单入口）。
+/// 路由七页：主组（仪表板/充电控制）→ 规划组（统计 v1.3 实页 / 校准 v1.4 /
+/// 自动化 v1.6 占位）→ 设置组（通用 / 外观与关于合并页）；设置组页消费共享
+/// 内容子视图（GeneralSections/AppearanceSections/AboutSections，设置窗内容
+/// 统一并入，双入口收敛为单入口）。
 /// 采样多表面仲裁：onAppear/onDisappear 对称上报主窗口表面（§2.3——最小化不
 /// 触发 onDisappear，视同可见属已登记可接受行为）。
 struct MainWindowView: View {
@@ -36,15 +37,24 @@ struct MainWindowView: View {
         .onDisappear { statusController.setMainWindowVisible(false) }
     }
 
-    // MARK: - 侧栏（自绘：品牌区省略 + 两导航组 + footer daemon 状态行）
+    // MARK: - 侧栏（自绘：品牌区 + 三段导航组 + footer daemon 状态行）
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(spacing: 2) {
-                ForEach(MainWindowPage.mainGroup) { navigationRow($0) }
-                // 组间小间距（规划组以版本徽章区分目标版本）。
-                Spacer().frame(height: 8)
-                ForEach(MainWindowPage.roadmapGroup) { navigationRow($0) }
+            VStack(alignment: .leading, spacing: 0) {
+                brandHeader
+                // 品牌区与导航组间距（spec 16-18pt，取 16——侧栏总高富余，
+                // footer 照旧钉在底部）。
+                Spacer().frame(height: 16)
+                // 三段导航组：组内行距 2 不变，组间 10pt 视觉分隔（主组实页 →
+                // 规划组版本徽章 → 设置组合并页）。
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(MainWindowPage.navigationGroups, id: \.self) { group in
+                        VStack(spacing: 2) {
+                            ForEach(group) { navigationRow($0) }
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 12)
@@ -54,11 +64,39 @@ struct MainWindowView: View {
         }
     }
 
+    /// 品牌区（v1.5 打磨，照 mock .brand）：accent 渐变圆角块内白色窖灯 +
+    /// 「芯仓」显示字体主文字色 + 「CELLAR」字距小字。SF Symbol lightbulb.fill
+    /// 替代 mock 自绘灯形（全 macOS 版本存在，无需运行时检查）；accent 无
+    /// ink token——主文字走默认 foregroundStyle（primary，G2 零字面量）。
+    private var brandHeader: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.accentGradient)
+                .frame(width: 34, height: 34)
+                .overlay {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("芯仓")
+                    .font(theme.displayFont)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                Text("CELLAR")
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.tertiaryText)
+                    .tracking(2)
+            }
+        }
+    }
+
     /// 单导航行：Button = 点击设 selection（无 List selection 系统行为）。
-    /// 选中态 = accent 12% 底 + accent 字 + 前缘 2.5pt accent 条（照 mock
-    /// .on 形态 / 用户裁决「accent 微底 + accent 字」——与面板 FooterLinks
-    /// hover 语汇同一强调 token）；hover 态 secondaryText→accent（面板 hover
-    /// 语汇。mock 的 ink 色无独立 token——G2 零字面量，取 accent 为强调体）。
+    /// 选中态 = accent 12% 底 + accent 字 + 前缘 3pt 括号形 accent 条（v1.5
+    /// 打磨：指示条随行圆角弧线成「(」左括号形，用户裁决「比竖线更美观」）；
+    /// hover 态 accent 字 + secondaryText 6% 微底（与选中底色互斥——选中行
+    /// 不叠加 hover 底）。mock 的 ink 色无独立 token——G2 零字面量，取 accent
+    /// 为强调体（与面板 FooterLinks hover 语汇同一 token）。
     private func navigationRow(_ page: MainWindowPage) -> some View {
         Button {
             selection = page
@@ -68,8 +106,8 @@ struct MainWindowView: View {
                     .frame(width: 16)
                 Text(pageTitle(page))
                 Spacer(minLength: 0)
-                // 版本徽章（mock nav small：统计/校准/自动化标注目标版本；
-                // 其余页无徽章）。
+                // 版本徽章（mock nav small：校准/自动化标注目标版本；
+                // 统计已 v1.3 实页化，其余页无徽章）。
                 if let badge = pageVersionBadge(page) {
                     Text(badge)
                         .font(.system(size: 9.5))
@@ -82,17 +120,25 @@ struct MainWindowView: View {
             .padding(.vertical, 8)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // 全行命中（v1.5 修复）：未选中行无背景填充，plain Button 命中区
+            // 只含不透明内容（图标+文字）——contentShape 把透明区域纳入可点区。
+            .contentShape(Rectangle())
             .background {
                 if selection == page {
                     RoundedRectangle(cornerRadius: 8).fill(theme.accent.opacity(0.12))
+                } else if hoveredPage == page {
+                    // hover 微底（背景三分支之二：选中 accent 12% / hover
+                    // secondaryText 6% / 常态无）。
+                    RoundedRectangle(cornerRadius: 8).fill(theme.secondaryText.opacity(0.06))
                 }
             }
             .overlay(alignment: .leading) {
                 if selection == page {
-                    RoundedRectangle(cornerRadius: 1.25)
+                    // 「(」左括号形：左缘上下 8pt 圆角随行圆角弧线 + 全行高
+                    // （无 vertical padding），替代旧 2.5pt 直条。
+                    UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8)
                         .fill(theme.accent)
-                        .frame(width: 2.5)
-                        .padding(.vertical, 4)
+                        .frame(width: 3)
                 }
             }
         }
@@ -183,7 +229,7 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: - 路由（八页：主组实页 + 规划组占位）
+    // MARK: - 路由（七页：主组/设置组实页 + 规划组占位）
 
     @ViewBuilder
     private var detailPage: some View {
@@ -194,9 +240,9 @@ struct MainWindowView: View {
             ControlPageView()
         case .general:
             GeneralPageView()
-        case .appearance:
-            AppearancePageView()
         case .about:
+            // v1.5 打磨：外观+关于合并页（AppearanceSections 在前 + AboutSections
+            // 在后），AppearancePageView 独立页退役。
             AboutPageView()
         case .stats:
             // v1.3 实页（方案 §3.0）：替换占位；侧栏徽章同步移除。
@@ -227,37 +273,37 @@ struct MainWindowView: View {
         switch page {
         case .calibration: return CellarL10n.s("main.page.calibration.version")
         case .automation: return CellarL10n.s("main.page.automation.version")
-        case .dashboard, .control, .general, .appearance, .about, .stats: return nil
+        case .dashboard, .control, .general, .about, .stats: return nil
         }
     }
 }
 
-/// 主窗口路由（工单 4 扩为八路由：dashboard/control/general/appearance/about/
-/// stats/calibration/automation——设置窗退役后通用/外观/关于并入侧栏）。
+/// 主窗口路由（工单 4 扩路由——设置窗退役后设置内容并入侧栏；v1.5 打磨：
+/// .appearance 独立页 case 删除，.about 承载「外观与关于」合并页；菜单顺序
+/// 重排三段组主组→规划组→设置组）。
 /// App 域枚举——CellarUICheck 不 import App target，无需下沉。
 enum MainWindowPage: String, CaseIterable, Identifiable {
-    case dashboard, control, general, appearance, about, stats, calibration, automation
+    case dashboard, control, general, about, stats, calibration, automation
 
     var id: String { rawValue }
 
-    /// 主组（本期实页）。
-    static var mainGroup: [MainWindowPage] {
-        [.dashboard, .control, .general, .appearance, .about]
+    /// 侧栏三段导航组（v1.5 打磨）：主组（本期实页）→ 规划组（占位页——版本
+    /// 徽章标注目标版本）→ 设置组（通用 + 外观与关于合并页）。
+    static var navigationGroups: [[MainWindowPage]] {
+        [
+            [.dashboard, .control],
+            [.stats, .calibration, .automation],
+            [.general, .about],
+        ]
     }
 
-    /// 规划组（占位页——版本徽章标注目标版本）。
-    static var roadmapGroup: [MainWindowPage] {
-        [.stats, .calibration, .automation]
-    }
-
-    /// 侧栏/占位页图标（SF Symbol——macOS 26 全存在：general/appearance/about
-    /// 沿用设置窗三 Tab 同款图标，入口语义延续）。
+    /// 侧栏/占位页图标（SF Symbol——macOS 26 全存在：general/about 沿用设置
+    /// 窗同款图标，入口语义延续；外观图标随独立页退役一并移除）。
     var icon: String {
         switch self {
         case .dashboard: return "square.grid.2x2"
         case .control: return "slider.horizontal.3"
         case .general: return "gearshape"
-        case .appearance: return "paintpalette"
         case .about: return "info.circle"
         case .stats: return "chart.bar"
         case .calibration: return "clock.arrow.circlepath"
