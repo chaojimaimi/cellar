@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0-alpha] - 2026-09-04
+
+### Changed
+
+- **面板页脚轻量化重设计**：「设置…」「退出」移至面板低角两端的纯文字轻量形态（悬停强调色反馈），替换原居中纵排的默认样式按钮；交互语义不变（设置仍先激活 App 再开窗口）。页脚组件化下沉 UI 组件库并纳入快照矩阵（界面快照 84 → 92 张，含悬停态）
+- **设置窗口高度自适应**：窗口高度跟随当前页内容（原固定 560pt，短页大块留白）——三页统一滚动结构、每页独立高度槽位、测量驱动成帧（下限 260pt 短页贴身残留约 30pt）；修复 macOS TabView 窗格缓存导致的切页高度残值（重访不再跟随）
+
 ## [0.5.1-alpha] - 2026-09-04
 
 ### Fixed

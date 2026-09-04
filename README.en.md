@@ -141,14 +141,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 333 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 334 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
                             # pure logic, ≥80% · currently 88.12%)
-swift run CellarUICheck     # 84 UI snapshot comparisons + localization completeness gate
+swift run CellarUICheck     # 92 UI snapshot comparisons + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -159,7 +159,8 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 3 (0.3.1-alpha)**: theme system, Charge to Full once, Discharge to Limit, power flow, battery health, zh/en bilingual, snapshot matrix, eleven-check `doctor`
 - ✅ **Phase 4 (0.4.0-alpha)**: battery protection round — charge-side thermal pause, optional auto-discharge, one-click battery calibration, instant enforcement on plug/unplug
 - ✅ **Phase 5 · v1.1 (0.5.0-alpha)**: smart fan cooling (released) — automatic fan boost above the temperature threshold, opt-in off by default, three speed strategies, runtime capability verification, automatic restoration of system control on anomalies
-- Phase 5+: statistics panel, calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
+- ✅ **Phase 5 · v1.2 polish batch (0.6.0-alpha)**: low-corner lightweight panel footer + adaptive settings window height (released)
+- Phase 5+: live dashboard, statistics panel, calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
 
 The full roadmap and design documents are published in the release notes.
 
