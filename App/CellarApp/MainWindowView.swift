@@ -2,13 +2,14 @@ import CellarCore
 import CellarUI
 import SwiftUI
 
-/// 主窗口（Phase 5 v1.2 §2.1/§2.2；M3.5 修复 + 用户决策「设置窗退役」）：
-/// **HStack 自绘侧栏**——替换 NavigationSplitView + List(selection:)（系统组件
-/// 在切页/全屏/最小化时侧栏空白、选中行蓝块跳出窗顶的怪癖）；左列定宽 216
-/// （VStack：两导航组 + footer daemon 状态行）+ Divider + 右侧 detail 切页。
+/// 主窗口（Phase 5 v1.2 §2.1/§2.2；M3.5 修复 + 用户决策「设置窗退役」；
+/// v1.3 统计实页化）：**HStack 自绘侧栏**——替换
+/// NavigationSplitView + List(selection:)（系统组件在切页/全屏/最小化时侧栏
+/// 空白、选中行蓝块跳出窗顶的怪癖）；左列定宽 216（VStack：两导航组 + footer
+/// daemon 状态行）+ Divider + 右侧 detail 切页。
 ///
-/// 路由八页（工单 4）：主组（仪表板/充电控制/通用/外观/关于）+ 规划组（统计/
-/// 校准/自动化——版本徽章 v1.3/v1.4/v1.6 占位）；通用/外观/关于页消费共享内容
+/// 路由八页（工单 4）：主组（仪表板/充电控制/通用/外观/关于）+ 规划组（统计
+/// v1.3 实页 / 校准 v1.4 / 自动化 v1.6 占位）；通用/外观/关于页消费共享内容
 /// 子视图（GeneralSections/AppearanceSections/AboutSections，设置窗内容统一
 /// 并入，双入口收敛为单入口）。
 /// 采样多表面仲裁：onAppear/onDisappear 对称上报主窗口表面（§2.3——最小化不
@@ -197,7 +198,10 @@ struct MainWindowView: View {
             AppearancePageView()
         case .about:
             AboutPageView()
-        case .stats, .calibration, .automation:
+        case .stats:
+            // v1.3 实页（方案 §3.0）：替换占位；侧栏徽章同步移除。
+            StatsPageView()
+        case .calibration, .automation:
             TBDPlaceholderView(
                 icon: selection.icon,
                 title: pageTitle(selection),
@@ -211,20 +215,19 @@ struct MainWindowView: View {
         CellarL10n.s(String.LocalizationValue(page.titleKey))
     }
 
-    /// 占位页范围说明（仅规划组消费；主组实页无 scope——含已退役的
-    /// control/about 两 scope key 一并清出 catalog，工单 6）。
+    /// 占位页范围说明（仅校准/自动化消费；统计 scope key 已随 v1.3 实页化退役
+    /// ——含早前 control/about 两 scope key 一并清出 catalog）。
     private func pageScope(_ page: MainWindowPage) -> String {
         CellarL10n.s(String.LocalizationValue(page.scopeKey))
     }
 
-    /// 版本徽章（侧栏与占位页共用）：统计/校准/自动化标注 v1.3/v1.4/v1.6；
-    /// 其余页无徽章（占位页版本 chip 落 main.page.version.alpha）。
+    /// 版本徽章（侧栏与占位页共用）：校准/自动化标注 v1.4/v1.6；统计已 v1.3
+    /// 实页化不再有徽章；其余页无徽章（占位页版本 chip 落 main.page.version.alpha）。
     private func pageVersionBadge(_ page: MainWindowPage) -> String? {
         switch page {
-        case .stats: return CellarL10n.s("main.page.stats.version")
         case .calibration: return CellarL10n.s("main.page.calibration.version")
         case .automation: return CellarL10n.s("main.page.automation.version")
-        case .dashboard, .control, .general, .appearance, .about: return nil
+        case .dashboard, .control, .general, .appearance, .about, .stats: return nil
         }
     }
 }

@@ -380,13 +380,15 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
-            // Phase 5 v1.2 占位页 1 态（统计，代表形态——图标/标题/范围/版本
-            // 全参数）×4（104 → 108，新增 4 张）：params = App 组装同款（标题与
-            // 范围经 CellarL10n 解析——catalog 钉死 zh 原值，跨机确定性成立）。
+            // Phase 5 v1.2 占位页 1 态（校准等占位代表形态——图标/标题/范围/
+            // 版本全参数）×4（104 → 108，新增 4 张）：⚠️ v1.3 统计实页化后
+            // main.page.stats.scope 退役（App 层零消费、catalog 已删）——本态
+            // 以退役前 zh 原文字面量钉死，golden 逐字节不变（swift build 形态
+            // s() 本就恒解析 zh-Hans，语义等价）；组件仍被校准/自动化占位消费。
             let placeholder = TBDPlaceholderView(
                 icon: "chart.bar",
                 title: CellarL10n.s("main.page.stats"),
-                scope: CellarL10n.s("main.page.stats.scope"),
+                scope: "电量 / 窖温 / 功耗历史曲线 · 最大容量趋势 · 循环与健康档案——SQLite 周期采样（后台分钟级，不成为耗电源）。",
                 version: "v1.3"
             )
             cases.append(SnapshotCase(

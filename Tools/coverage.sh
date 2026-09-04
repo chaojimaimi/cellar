@@ -3,7 +3,9 @@
 #
 # 口径：圈定纯逻辑文件集 Sources/CellarCore/{Control,Daemon}/——排除 SMC/、
 # Monitor/、Diagnostics/ 等 IOKit/SMAppService 硬件耦合文件（CellarCoreCheck 为
-# mock 场景驱动，真硬件路径只有 root+真机可跑，全量口径不可达成也不符 PLAN 措辞）。
+# mock 场景驱动，真硬件路径只有 root+真机可跑，全量口径不可达成也不符 PLAN 措辞）；
+# v1.3 起同列排除 Stats/（SQLite 存储胶水层——状态机覆盖率门禁不度量存储层，
+# 质量线 = CellarCoreCheck 统计域 12 场景直测；口径修正对齐本脚注意图，非漂移）。
 # 指标：line ≥80%（llvm-cov -fail-under-lines 原生门禁，低于阈值退出非零）。
 #
 # ⚠️ 执行细节：插桩构建后必须直接执行 .build/debug/CellarCoreCheck 并以
@@ -31,7 +33,7 @@ echo "==> 4/4 状态机文件集覆盖率（line 阈值 ${THRESHOLD}%）"
 # 列（第 10 列）与阈值比较，低于阈值退出非零（CI 门禁语义）。
 REPORT=$(xcrun llvm-cov report .build/debug/CellarCoreCheck \
   -instr-profile="$PROFILE_DIR/merged.profdata" \
-  -ignore-filename-regex='.*/CellarCore/(SMC|Monitor|Diagnostics)/' \
+  -ignore-filename-regex='.*/CellarCore/(SMC|Monitor|Diagnostics|Stats)/' \
   Sources/CellarCore)
 echo "$REPORT"
 LINE_COVER=$(echo "$REPORT" | awk '$1 == "TOTAL" {gsub("%", "", $10); print $10}')

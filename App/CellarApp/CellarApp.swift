@@ -20,6 +20,9 @@ struct CellarApp: App {
     @StateObject private var styleController = StyleController(store: CellarApp.sharedConfigStore)
     /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
     private let notifications = NotificationService()
+    /// Phase 5 v1.3 统计采样器：非可观察（视图不直接读），60s 常驻采样循环——
+    /// 自标定在自身 init（@StateObject 早期访问陷阱：App.init 不触碰）。
+    private let statsSampler = StatsSampler()
 
     init() {
         // WP5 硬事实 4：通知 delegate 必须在启动早期赋值——迟设错过首条
@@ -75,6 +78,10 @@ struct CellarApp: App {
                     .environmentObject(loginItems)
                     .environmentObject(onboarding)
                     .environmentObject(styleController)
+                    // v1.3 统计采样器注入：统计页查询经 StatsSampler actor 后台
+                    // 执行（主线程零 SQLite，红线 4）——注入幸存实例，临时实例
+                    // 靠采样循环 weak-self 复查自熄（StatsSampler 注记）。
+                    .environment(\.statsSampler, statsSampler)
             }
         }
         .defaultSize(width: 1080, height: 720)
