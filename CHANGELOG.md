@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1-alpha] - 2026-09-04
+
+### Changed
+
+- **设置窗分节视觉打磨**：通用页按「通用 / 自动放电（无节头）/ 智能风扇降温」三节分组、关于页按「版本 / 诊断」两节分组（macOS 原生 Form Section）——解决行信息紧凑、风扇区与系统项混排的观感问题；注册态与通知授权态迁入「通用」节。控件与控制逻辑零变更（纯组织结构）
+
 ## [0.6.0-alpha] - 2026-09-04
 
 ### Changed
