@@ -38,9 +38,10 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 84：组件 × 风格(2) × 外观(2) × 态；
+// MARK: - 矩阵案例定义（§3.3 N = 92：组件 × 风格(2) × 外观(2) × 态；
 // WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增；
-// WP3 自 64 扩 76——校准区 3 态 12 新增；Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增）
+// WP3 自 64 扩 76——校准区 3 态 12 新增；Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；
+// Phase 5 v1.2 自 84 扩 92——页脚链接 2 态 8 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -132,9 +133,10 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 84 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 92 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
-// Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增）
+// Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 自 84 扩 92——
+// 页脚链接 2 态 8 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -311,6 +313,26 @@ private func buildCases() -> [SnapshotCase] {
                 ) {
                     AnyView(wrap(style, scheme) {
                         section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // Phase 5 v1.2 页脚链接 2 态（idle/仅设置钮 hover）×4（84 → 92，新增
+            // 8 张）：参数驱动组件直接构造（onSettings/onQuit 空闭包——渲染无
+            // 副作用）；hover 态钉死 initialHoveredLink: .settings——单钮强调、
+            // 余钮常态的代表形态（hover 是运行时鼠标态，矩阵以注入钉死）。
+            let footers: [(String, FooterLink?)] = [
+                ("idle", nil),
+                ("hover", .settings),
+            ]
+            for (stateName, hoveredLink) in footers {
+                cases.append(SnapshotCase(
+                    name: "FooterLinks_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        FooterLinksView(onSettings: {}, onQuit: {}, initialHoveredLink: hoveredLink)
+                            .frame(width: 304, alignment: .leading)
                     })
                 })
             }

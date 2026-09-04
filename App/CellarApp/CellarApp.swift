@@ -69,6 +69,9 @@ struct CellarApp: App {
                     .environmentObject(styleController)
             }
         }
+        // §3.1 步骤 5：窗高跟随内容（测量驱动）——contentSize 钉住内容理想尺寸，
+        // 用户手拖与测量值不打架（越界拖拽被禁属预期行为，R-6）。
+        .windowResizability(.contentSize)
         // §2.8 启动接线：registration → StatusController（连接态语义判定依据）+
         // OnboardingController（收尾规则/安装接续，幂等）。
         .onChange(of: installer.registration) {

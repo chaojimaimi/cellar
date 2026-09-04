@@ -208,27 +208,25 @@ struct LoginItemSectionView: View {
     }
 }
 
-/// 面板页脚（WP3 S5b：设置入口 + 退出，自 PanelView 底部行迁出）：「设置…」经
-/// openSettings + NSApp.activate（真机验收修正 2026-09-02：LSUIElement app 的
-/// Settings 窗口落在前台应用后面——SettingsLink 声式入口无激活钩子，改为按钮
-/// 先把 App 带到前台再打开设置）；退出按钮语汇随风格（word(.quit)）。
+/// 面板页脚薄包装（Phase 5 v1.2 §2.2）：参数驱动组件 FooterLinksView 的 App 侧
+/// 桥接（照 CalibrationSection 先例）——组件零 App 符号依赖（CellarUICheck 可
+/// 独立渲染）；交互语义在此保留：设置 = NSApp.activate + openSettings（真机验收
+/// 修正 2026-09-02：LSUIElement app 的 Settings 窗口落在前台应用后面——
+/// SettingsLink 声式入口无激活钩子，改为按钮先把 App 带到前台再打开设置）；
+/// 退出 = terminate。
 struct PanelFooterView: View {
-    @Environment(\.cellarTheme) private var theme
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        // 无对齐框定：保持迁出前两行在面板纵向中轴的呈现（A 原生视觉零回归）。
-        VStack(spacing: 14) {
-            Button {
+        FooterLinksView(
+            onSettings: {
                 // 先激活（设置窗口才能盖过其它应用），再开/前置 Settings。
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()
-            } label: {
-                Label(CellarL10n.s("panel.footerSettings"), systemImage: "gearshape")
-            }
-            Button(theme.word(.quit)) {
+            },
+            onQuit: {
                 NSApplication.shared.terminate(nil)
             }
-        }
+        )
     }
 }

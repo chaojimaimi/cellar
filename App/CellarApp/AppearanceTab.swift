@@ -13,9 +13,19 @@ struct AppearanceTab: View {
     @EnvironmentObject private var styleController: StyleController
     @Environment(\.cellarTheme) private var theme
     @Environment(\.colorScheme) private var scheme
+    /// 内容理想高回写绑定（SettingsView 共享成帧源，见 reportContentHeight）。
+    @Binding private var contentHeight: CGFloat
+
+    init(contentHeight: Binding<CGFloat>) {
+        _contentHeight = contentHeight
+    }
 
     var body: some View {
-        Form {
+        // 结构性包装（Phase 5 v1.2 §3.1 步骤 1）：三 Tab 统一 ScrollView——裸
+        // Form 对固定高度提案贪婪填充（测得值恒等于当前帧高，短 Tab 永不
+        // 收缩），ScrollView 向内容发 nil 提案 Form 才回落理想高；表单内容零变化。
+        ScrollView {
+            Form {
             Picker(CellarL10n.s("settings.panelStyle"), selection: Binding(
                 get: { styleController.style },
                 set: { styleController.setStyle($0) }
@@ -48,7 +58,9 @@ struct AppearanceTab: View {
                     .font(.caption)
                     .foregroundStyle(theme.alert)
             }
+            }
+            .padding()
+            .contentHeightMeasurement(into: $contentHeight)
         }
-        .padding()
     }
 }
