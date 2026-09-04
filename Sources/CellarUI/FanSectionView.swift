@@ -27,6 +27,10 @@ public struct FanSectionView: View {
     public let initialConfirmVisible: Bool
     /// 快照矩阵注入：状态行词覆盖（生产用 fan.state；矩阵可钉死特定态）。
     public let stateOverride: FanStateWord?
+    /// 首行标题开关（v1.2 视觉打磨 SR-2）：App 通用页由节头承担标题时传 false，
+    /// 防同文重复；默认 true——快照矩阵两处构造不传此参 → 渲染字节不变，92 张
+    /// golden 零 regen 全靠该默认路径（对比模式机械证明）。
+    public let showsTitle: Bool
 
     @State private var showConfirm: Bool
     @State private var strategy: FanStrategy
@@ -42,7 +46,8 @@ public struct FanSectionView: View {
         busy: Bool,
         onApply: @escaping (FanWire) -> Void,
         initialConfirmVisible: Bool = false,
-        stateOverride: FanStateWord? = nil
+        stateOverride: FanStateWord? = nil,
+        showsTitle: Bool = true
     ) {
         let base = fan ?? FanStatus(
             enabled: false, strategy: .constantSpeed, state: .off,
@@ -54,6 +59,7 @@ public struct FanSectionView: View {
         self.onApply = onApply
         self.initialConfirmVisible = initialConfirmVisible
         self.stateOverride = stateOverride
+        self.showsTitle = showsTitle
         _showConfirm = State(initialValue: initialConfirmVisible)
         _strategy = State(initialValue: base.strategy)
         _thresholdC = State(initialValue: Double(base.thresholdCentiC) / 100)
@@ -64,9 +70,13 @@ public struct FanSectionView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(CellarL10n.s("fan.title"))
-                .font(.caption2)
-                .foregroundStyle(theme.tertiaryText)
+            // 标题条件渲染（SR-2）：App 通用页节头承担标题 → 传 false 防同文重复；
+            // 默认 true = 快照构造路径字节不变（92 张 golden 零 regen 的机械保证）。
+            if showsTitle {
+                Text(CellarL10n.s("fan.title"))
+                    .font(.caption2)
+                    .foregroundStyle(theme.tertiaryText)
+            }
 
             Toggle(isOn: Binding(
                 get: { fan?.enabled == true },

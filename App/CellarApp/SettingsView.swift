@@ -135,88 +135,103 @@ private struct GeneralTab: View {
         // 理想高测量（成帧由此驱动，ScrollView 退为 clamp 溢出兜底）。
         ScrollView {
             Form {
-            Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
-                get: { loginItems.launchAtLogin },
-                set: { loginItems.toggle($0) }
-            ))
-            .disabled(loginItems.busy)
+                // v1.2 视觉打磨三节（§2.1）：控件/绑定/回调原样搬入节内，节头一律
+                // CellarL10n.s 构造——App target 查不到 CellarUI bundle 的裸 key
+                // 字面量会渲染裸字符串，无机械门拦截（R1 P3 红线）。
+                Section {
+                    Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
+                        get: { loginItems.launchAtLogin },
+                        set: { loginItems.toggle($0) }
+                    ))
+                    .disabled(loginItems.busy)
 
-            // WP2' 自动放电组（登录项下方）：开关绑定 daemonStatus 单一真相（daemon
-            // 确认后状态回传翻转）；开启两步内嵌确认块，关闭直通（关是安全方向）。
-            Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
-                get: { statusController.daemonStatus?.autoDischargeEnabled == true },
-                set: { toggleAutoDischarge($0) }
-            ))
-            .disabled(autoDischargeCapabilityAvailable == false)
+                    LabeledContent(CellarL10n.s("settings.registrationStatus")) {
+                        HStack {
+                            Text(registrationText)
+                            // 修复路径落控制器（评审 P2-2）；已注册态按钮无意义，禁用。
+                            Button(CellarL10n.s("settings.reregister")) { loginItems.reregister() }
+                                .disabled(loginItems.busy || loginItems.registration == .enabled)
+                        }
+                    }
 
-            // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
-            Text(CellarL10n.s("settings.autoDischarge.desc"))
-                .font(.caption)
-                .foregroundStyle(theme.secondaryText)
+                    LabeledContent(CellarL10n.s("settings.notifications")) {
+                        HStack {
+                            Text(notificationText)
+                            Button(CellarL10n.s("settings.openSystemSettings")) { openNotificationSettings() }
+                        }
+                    }
 
-            // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
-            // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
-            if let hint = autoDischargeGateHint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-            }
+                    if let feedback = loginItems.feedback {
+                        Text(feedback)
+                            .font(.caption)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                } header: {
+                    Text(CellarL10n.s("settings.section.general"))
+                }
 
-            // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
-            // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
-            if autoDischargeConfirming {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(CellarL10n.s("settings.autoDischarge.warning"))
+                // WP2' 自动放电组——无头节（R1 P1-1 定案）：开关标签「自动放电」
+                // 自任标题，带节头必同文相邻重复；仅取节间距分组。开关绑定 daemonStatus
+                // 单一真相（daemon 确认后状态回传翻转）；开启两步内嵌确认块，关闭
+                // 直通（关是安全方向）。
+                Section {
+                    Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
+                        get: { statusController.daemonStatus?.autoDischargeEnabled == true },
+                        set: { toggleAutoDischarge($0) }
+                    ))
+                    .disabled(autoDischargeCapabilityAvailable == false)
+
+                    // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
+                    Text(CellarL10n.s("settings.autoDischarge.desc"))
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
-                    HStack {
-                        Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
-                            .disabled(statusController.busy)
-                        Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
+
+                    // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
+                    // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
+                    if let hint = autoDischargeGateHint {
+                        Text(hint)
+                            .font(.caption)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+
+                    // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
+                    // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
+                    if autoDischargeConfirming {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(CellarL10n.s("settings.autoDischarge.warning"))
+                                .font(.caption)
+                                .foregroundStyle(theme.secondaryText)
+                            HStack {
+                                Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
+                                    .disabled(statusController.busy)
+                                Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
+                            }
+                        }
                     }
                 }
-            }
 
-            // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
-            // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
-            // 旧 daemon（fan==nil）控件禁用 + 升级提示）。
-            FanSectionView(
-                fan: statusController.fanStatus,
-                busy: statusController.busy,
-                onApply: { statusController.setFan($0) }
-            )
-
-            Divider()
-
-            LabeledContent(CellarL10n.s("settings.registrationStatus")) {
-                HStack {
-                    Text(registrationText)
-                    // 修复路径落控制器（评审 P2-2）；已注册态按钮无意义，禁用。
-                    Button(CellarL10n.s("settings.reregister")) { loginItems.reregister() }
-                        .disabled(loginItems.busy || loginItems.registration == .enabled)
+                Section {
+                    // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
+                    // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
+                    // 旧 daemon（fan==nil）控件禁用 + 升级提示）。v1.2：showsTitle false——
+                    // 标题由节头「智能风扇降温」承担，组件自身标题关掉防同文重复。
+                    FanSectionView(
+                        fan: statusController.fanStatus,
+                        busy: statusController.busy,
+                        onApply: { statusController.setFan($0) },
+                        showsTitle: false
+                    )
+                } header: {
+                    Text(CellarL10n.s("settings.section.fan"))
                 }
             }
-
-            LabeledContent(CellarL10n.s("settings.notifications")) {
-                HStack {
-                    Text(notificationText)
-                    Button(CellarL10n.s("settings.openSystemSettings")) { openNotificationSettings() }
-                }
+            .padding()
+            .contentHeightMeasurement(into: $contentHeight)
+            .onAppear {
+                loginItems.load()
+                loginItems.refreshRegistration()
+                queryNotificationAuthorization()
             }
-
-            if let feedback = loginItems.feedback {
-                Text(feedback)
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-            }
-        }
-        .padding()
-        .contentHeightMeasurement(into: $contentHeight)
-        .onAppear {
-            loginItems.load()
-            loginItems.refreshRegistration()
-            queryNotificationAuthorization()
-        }
         }
     }
 
@@ -328,25 +343,35 @@ private struct AboutTab: View {
         // 向内容发 nil 提案 Form 才回落理想高；表单内容零变化。
         ScrollView {
             Form {
-            LabeledContent(CellarL10n.s("settings.appVersion"), value: appVersion)
+                // v1.2 视觉打磨两节（§2.2）：行序不变，节头一律 CellarL10n.s 构造
+                // （裸 key 在 App target 查不到会渲染裸字符串，R1 P3 红线）。
+                Section {
+                    LabeledContent(CellarL10n.s("settings.appVersion"), value: appVersion)
 
-            LabeledContent(CellarL10n.s("settings.daemonVersion"), value: daemonVersionText)
+                    LabeledContent(CellarL10n.s("settings.daemonVersion"), value: daemonVersionText)
 
-            // 版本不匹配警示（既有 stale 语义复用：版本行 ≠ 期望值 → 提示重装）。
-            if daemonMismatch {
-                Text(CellarL10n.s("settings.versionMismatch"))
-                    .font(.caption)
-                    .foregroundStyle(theme.alert)
-            }
+                    // 版本不匹配警示（既有 stale 语义复用：版本行 ≠ 期望值 → 提示重装）。
+                    if daemonMismatch {
+                        Text(CellarL10n.s("settings.versionMismatch"))
+                            .font(.caption)
+                            .foregroundStyle(theme.alert)
+                    }
 
-            LabeledContent(CellarL10n.s("settings.connectionStatus"), value: connectionText)
-            // 用户可见行用本地化展示名；原始存储值只进诊断摘要（排障需要）。
-            LabeledContent(CellarL10n.s("settings.panelStyle"),
-                           value: styleController.style == .amber
-                               ? CellarL10n.s("settings.styleAmber")
-                               : CellarL10n.s("settings.styleNative"))
+                    LabeledContent(CellarL10n.s("settings.connectionStatus"), value: connectionText)
+                    // 用户可见行用本地化展示名；原始存储值只进诊断摘要（排障需要）。
+                    LabeledContent(CellarL10n.s("settings.panelStyle"),
+                                   value: styleController.style == .amber
+                                       ? CellarL10n.s("settings.styleAmber")
+                                       : CellarL10n.s("settings.styleNative"))
+                } header: {
+                    Text(CellarL10n.s("settings.section.version"))
+                }
 
-            Button(copied ? CellarL10n.s("settings.copied") : CellarL10n.s("settings.copySummary")) { copyDiagnostics() }
+                Section {
+                    Button(copied ? CellarL10n.s("settings.copied") : CellarL10n.s("settings.copySummary")) { copyDiagnostics() }
+                } header: {
+                    Text(CellarL10n.s("settings.section.diagnostics"))
+                }
             }
             .padding()
             .contentHeightMeasurement(into: $contentHeight)
