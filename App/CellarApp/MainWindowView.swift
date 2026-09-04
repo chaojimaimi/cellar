@@ -46,9 +46,9 @@ struct MainWindowView: View {
                 // 品牌区与导航组间距（spec 16-18pt，取 16——侧栏总高富余，
                 // footer 照旧钉在底部）。
                 Spacer().frame(height: 16)
-                // 三段导航组：组内行距 2 不变，组间 10pt 视觉分隔（主组实页 →
-                // 规划组版本徽章 → 设置组合并页）。
-                VStack(alignment: .leading, spacing: 10) {
+                // 三段导航组：组内行距 2、组间 16pt——组间距须显著大于行距
+                // （走查：10/2 差距过近读不出分组节奏，显「间距不均匀」）。
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(MainWindowPage.navigationGroups, id: \.self) { group in
                         VStack(spacing: 2) {
                             ForEach(group) { navigationRow($0) }
@@ -134,11 +134,13 @@ struct MainWindowView: View {
             }
             .overlay(alignment: .leading) {
                 if selection == page {
-                    // 「(」左括号形：左缘上下 8pt 圆角随行圆角弧线 + 全行高
-                    // （无 vertical padding），替代旧 2.5pt 直条。
-                    UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8)
-                        .fill(theme.accent)
-                        .frame(width: 3)
+                    // 「(」左括号形：整行圆角描边取左缘 5pt 蒙版——描边在上/
+                    // 下 8pt 圆角处自然弯出弧线（与行背景圆角同心）。旧方案
+                    // 3pt 宽条上用 8pt 圆角会被钳制到宽/2 退化为直线（SwiftUI
+                    // 圆角上限 = 短边一半），括号形丢失。
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(theme.accent, lineWidth: 5)
+                        .mask(alignment: .leading) { Rectangle().frame(width: 5) }
                 }
             }
         }
