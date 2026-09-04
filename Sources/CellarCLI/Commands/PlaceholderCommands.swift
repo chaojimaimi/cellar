@@ -337,12 +337,21 @@ enum DaemonInstaller {
         }
         print("已写入 plist：\(plistPath)")
 
-        // 5. 先容忍清理旧实例，再 bootstrap（失败 → 中止并打印 launchctl 原始错误）。
+        // 5. 先容忍清理旧实例，再 bootstrap。⚠️ bootout 后必须留出 launchd 清理
+        // 间隔（真机 2026-09-04 实证：teardown 后立即 bootstrap 报 EIO "Bootstrap
+        // failed: 5"，竞态非确定——成功过多次后偶发一次）；失败再等 3s 重试一次，
+        // 仍失败 → 中止并打印 launchctl 原始错误。
         let cleanup = runLaunchctl(["bootout", "system/com.cellar.daemon"])
         if cleanup.status != 0 {
             print("launchctl bootout 提示（容忍，旧实例不存在）：\(cleanup.errorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "退出码 \(cleanup.status)" : cleanup.errorText.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
-        let bootstrap = runLaunchctl(["bootstrap", "system", plistPath])
+        Thread.sleep(forTimeInterval: 1.5)
+        var bootstrap = runLaunchctl(["bootstrap", "system", plistPath])
+        if bootstrap.status != 0 {
+            print("launchctl bootstrap 首试失败（\(bootstrap.errorText.trimmingCharacters(in: .whitespacesAndNewlines))），等 3s 重试一次……")
+            Thread.sleep(forTimeInterval: 3)
+            bootstrap = runLaunchctl(["bootstrap", "system", plistPath])
+        }
         guard bootstrap.status == 0 else {
             print("❌ launchctl bootstrap 失败（原始输出）：")
             let raw = bootstrap.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
