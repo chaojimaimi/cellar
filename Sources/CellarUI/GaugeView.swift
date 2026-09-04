@@ -21,17 +21,29 @@ public struct GaugeState {
     }
 }
 
+/// 仪表尺寸语义（Phase 5 v1.2 §3.3）：regular = 面板 150×150（默认——既有
+/// 快照 20 张路径字节不变）；hero = 仪表板 196×196（中心数字 56pt + TARGET 副词行）。
+public enum GaugeSize: Equatable, Sendable {
+    case regular
+    case hero
+}
+
 /// 签名组件（产品视觉锚点）：底环 + band 弧 + 电量弧（充电中叠加 bolt 徽标）+
 /// 中心数字（monospacedDigit 动态字体）。轻量 trim 重绘，数值插值动画 ≤0.3s
 /// linear（无常驻 spring）；accessibilityElement(children: .ignore) 聚合单元素。
+/// Phase 5 v1.2 §3.3：`size` 参数化（.regular = 面板 150 语义，默认路径渲染
+/// 字节不变——20 张既有 golden 零 regen 的机械保证；.hero = 仪表板 196 语义：
+/// 中心数字加大 + TARGET 副词行）。
 public struct GaugeView: View {
     public let state: GaugeState
+    public let size: GaugeSize
     @Environment(\.cellarTheme) private var theme
 
     private static let lineWidth: CGFloat = 14
 
-    public init(state: GaugeState) {
+    public init(state: GaugeState, size: GaugeSize = .regular) {
         self.state = state
+        self.size = size
     }
 
     public var body: some View {
@@ -66,11 +78,28 @@ public struct GaugeView: View {
                         .offset(y: -ringRadius)
                 }
 
-                Text(centerText)
-                    .font(.system(.title2, design: .rounded).weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(state.percent == nil ? theme.secondaryText : theme.accent)
-                    .contentTransition(.numericText())
+                // 中心数字 + hero 副词行（M3.5 修复：mock 为纵向排布——数字上、
+                // TARGET 下；旧实现同 ZStack 居中叠放，56pt 数字与 11pt TARGET
+                // 行重叠）。VStack(spacing: 2) 整块居中；.regular 路径 VStack 单
+                // 元素与原裸 Text 等价（20 张 golden 零 regen 的机械保证）。
+                VStack(spacing: 2) {
+                    Text(centerText)
+                        .font(size == .hero
+                            ? .system(size: 56, design: .rounded).weight(.semibold)
+                            : .system(.title2, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(state.percent == nil ? theme.secondaryText : theme.accent)
+                        .contentTransition(.numericText())
+
+                    // hero 副词行（§3.3：TARGET 限充区间）；regular 路径零变化。
+                    if size == .hero, let band = state.band {
+                        Text(CellarL10n.s("gauge.target", band.lowerBound, band.upperBound))
+                            .font(.system(size: 11))
+                            .monospacedDigit()
+                            .foregroundStyle(theme.tertiaryText)
+                            .tracking(1)
+                    }
+                }
             }
         }
         .accessibilityElement(children: .ignore)

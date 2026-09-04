@@ -208,21 +208,20 @@ struct LoginItemSectionView: View {
     }
 }
 
-/// 面板页脚薄包装（Phase 5 v1.2 §2.2）：参数驱动组件 FooterLinksView 的 App 侧
-/// 桥接（照 CalibrationSection 先例）——组件零 App 符号依赖（CellarUICheck 可
-/// 独立渲染）；交互语义在此保留：设置 = NSApp.activate + openSettings（真机验收
-/// 修正 2026-09-02：LSUIElement app 的 Settings 窗口落在前台应用后面——
-/// SettingsLink 声式入口无激活钩子，改为按钮先把 App 带到前台再打开设置）；
-/// 退出 = terminate。
+/// 面板页脚薄包装（Phase 5 v1.2 §2.1/§2.2；M3.5：设置窗退役——设置链接及
+/// openSettings 接线一并移除，回两链接形态）：参数驱动组件 FooterLinksView
+/// 的 App 侧桥接（照 CalibrationSection 先例）——组件零 App 符号依赖
+/// （CellarUICheck 可独立渲染）；交互语义在此保留：主窗口 = NSApp.activate +
+/// openWindow(id: "main")（LSUIElement 前置修正，§2.1）；退出 = terminate。
 struct PanelFooterView: View {
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         FooterLinksView(
-            onSettings: {
-                // 先激活（设置窗口才能盖过其它应用），再开/前置 Settings。
+            onMainWindow: {
+                // LSUIElement 前置修正（R-8：不激活主窗口会落在前台应用后面）。
                 NSApp.activate(ignoringOtherApps: true)
-                openSettings()
+                openWindow(id: "main")
             },
             onQuit: {
                 NSApplication.shared.terminate(nil)

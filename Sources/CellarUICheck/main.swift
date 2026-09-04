@@ -38,10 +38,12 @@ let repoRoot = URL(fileURLWithPath: #filePath)
 let goldensDir = repoRoot.appendingPathComponent("Snapshots/Goldens")
 let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
 
-// MARK: - 矩阵案例定义（§3.3 N = 92：组件 × 风格(2) × 外观(2) × 态；
+// MARK: - 矩阵案例定义（§3.3 N = 108：组件 × 风格(2) × 外观(2) × 态；
 // WP2' 自 48 扩 60——PowerFlow 12 新增；WP1 自 60 扩 64——状态行温度暂停态 4 新增；
 // WP3 自 64 扩 76——校准区 3 态 12 新增；Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；
-// Phase 5 v1.2 自 84 扩 92——页脚链接 2 态 8 新增）
+// Phase 5 v1.2 首页 自 84 扩 92——页脚链接 2 态 8 新增；
+// Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12 新增 + 占位页 1 态 4 新增；
+// Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -125,18 +127,21 @@ private func wrap(
     _ scheme: ColorScheme,
     @ViewBuilder _ content: () -> some View
 ) -> some View {
-    content()
-        .environment(\.cellarTheme, CellarTheme.resolve(style: style, scheme: scheme))
+    let theme = CellarTheme.resolve(style: style, scheme: scheme)
+    return content()
+        .environment(\.cellarTheme, theme)
+        .tint(theme.accent)
         .environment(\.colorScheme, scheme)
         .environment(\.layoutDirection, .leftToRight)
         .environment(\.displayScale, 1)
         .transaction { $0.animation = nil }
 }
 
-// MARK: 92 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 112 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
-// Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 自 84 扩 92——
-// 页脚链接 2 态 8 新增）
+// Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
+// 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
+// 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -317,13 +322,15 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
-            // Phase 5 v1.2 页脚链接 2 态（idle/仅设置钮 hover）×4（84 → 92，新增
-            // 8 张）：参数驱动组件直接构造（onSettings/onQuit 空闭包——渲染无
-            // 副作用）；hover 态钉死 initialHoveredLink: .settings——单钮强调、
-            // 余钮常态的代表形态（hover 是运行时鼠标态，矩阵以注入钉死）。
+            // Phase 5 v1.2 页脚链接 2 态（idle/hover）×4（84 → 92，新增 8 张）：
+            // 参数驱动组件直接构造（onMainWindow/onQuit 空闭包——渲染无副作用）；
+            // M3.5 两链接形态（左「主窗口」+ 右「退出 Cellar」，设置链接随设置窗
+            // 退役移除，共 108 张数量不变）；hover 态钉死 initialHoveredLink:
+            // .mainWindow（golden hover 代表形态）——单钮强调、余钮常态（hover
+            // 是运行时鼠标态，矩阵以注入钉死）。
             let footers: [(String, FooterLink?)] = [
                 ("idle", nil),
-                ("hover", .settings),
+                ("hover", .mainWindow),
             ]
             for (stateName, hoveredLink) in footers {
                 cases.append(SnapshotCase(
@@ -331,11 +338,63 @@ private func buildCases() -> [SnapshotCase] {
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {
-                        FooterLinksView(onSettings: {}, onQuit: {}, initialHoveredLink: hoveredLink)
+                        FooterLinksView(onMainWindow: {}, onQuit: {}, initialHoveredLink: hoveredLink)
                             .frame(width: 304, alignment: .leading)
                     })
                 })
             }
+
+            // Phase 5 v1.2 功率流三角图 4 态（充电/停充/电池/nodata）×4（108 → 112，
+            // 走查批：nodata 新增 4 张 + 前 3 态 12 张 M regen——Canvas 测量自适应
+            // F2 + 流动语义统一 F3 变更绘制路径）：几何 = mock viewBox 560×244
+            // （快照钉死画布尺寸——几何比例确定性）；⚠️ initialAnimating 恒
+            // false——动画帧不确定会毁 golden 对比（快照注入口纪律，§3.2）；
+            // 状态行 = App 组装同款形态（诚实口径：充电/停充态系统负载无实测
+            // →「—」）。
+            let diagramStates: [(String, PowerFlowDiagramView)] = [
+                ("charging", PowerFlowDiagramView(
+                    state: .charging, batteryPercent: 78, batteryVoltage: "12.3 V",
+                    adapterLine: "65 W · 在位", systemLine: CellarL10n.s("common.nodata"),
+                    powerAB: "+33.4 W", supplyLine: "直供", initialAnimating: false)),
+                ("holding", PowerFlowDiagramView(
+                    state: .holding, batteryPercent: 81, batteryVoltage: "12.3 V",
+                    adapterLine: "65 W · 在位", systemLine: CellarL10n.s("common.nodata"),
+                    supplyLine: "直供", initialAnimating: false)),
+                ("battery", PowerFlowDiagramView(
+                    state: .battery, batteryPercent: 62, batteryVoltage: "11.9 V",
+                    adapterLine: "未接入", systemLine: "12.4 W 负载",
+                    powerBS: "−12.4 W", initialAnimating: false)),
+                // 走查批入阵：nodata 空态 4 张（108 → 112）——三灰卡悬浮无连线
+                // （F3 §2.2）；数值字段全部空（drawNodes 侧经 common.nodata 投影）。
+                ("nodata", PowerFlowDiagramView(
+                    state: .nodata, batteryPercent: nil, batteryVoltage: "",
+                    adapterLine: "", systemLine: "",
+                    initialAnimating: false)),
+            ]
+            for (stateName, diagram) in diagramStates {
+                cases.append(SnapshotCase(
+                    name: "PowerFlowDiagram_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 560, height: 244, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) { diagram })
+                })
+            }
+
+            // Phase 5 v1.2 占位页 1 态（统计，代表形态——图标/标题/范围/版本
+            // 全参数）×4（104 → 108，新增 4 张）：params = App 组装同款（标题与
+            // 范围经 CellarL10n 解析——catalog 钉死 zh 原值，跨机确定性成立）。
+            let placeholder = TBDPlaceholderView(
+                icon: "chart.bar",
+                title: CellarL10n.s("main.page.stats"),
+                scope: CellarL10n.s("main.page.stats.scope"),
+                version: "v1.3"
+            )
+            cases.append(SnapshotCase(
+                name: "TBDPlaceholder_stats_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 460, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) { placeholder.frame(width: 460) })
+            })
         }
     }
     return cases

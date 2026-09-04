@@ -2,30 +2,24 @@ import CellarCore
 import CellarUI
 import SwiftUI
 
-/// 外观 Tab（WP3 §4 定版）：风格 Picker（原生 / 酒窖琥珀）即时生效——
-/// `styleController.setStyle` 内存先行驱动 environment 全树重算（§3.3 链路），
-/// 持久化经共享 store 原子 update；loaded 前 Picker 禁用（防半程态回写，评审
-/// P2-3 登记）。下方色板行 4 色块（accent / 渐变起止 / 面板底）随风格与系统
-/// 深浅色刷新（色板值出自 Theme.swift token，G2 不新增字面量落点）。
+/// 外观分节内容（Phase 5 v1.2 §4.2 自 AppearanceTab 提取——设置窗 Tab 与主
+/// 窗口「外观与关于」页共用的共享子视图）：风格 Picker（原生 / 酒窖琥珀）
+/// 即时生效——`styleController.setStyle` 内存先行驱动 environment 全树重算
+/// （§3.3 链路），持久化经共享 store 原子 update；loaded 前 Picker 禁用（防
+/// 半程态回写，评审 P2-3 登记）。色板行 4 色块（accent / 渐变起止 / 面板底）
+/// 随风格与系统深浅色刷新（色板值出自 Theme.swift token，G2 不新增字面量
+/// 落点）。
 ///
-/// 本文件含风格词元（G1 白名单成员）；组件层其余文件禁止引入。
-struct AppearanceTab: View {
+/// ⚠️ 不含 ScrollView / 内容理想高测量 / `@Binding contentHeight` 成帧——
+/// 这些留在设置窗 Tab 包装层（R1 P1-1：主窗口自由窗口语境无意义）。本文件
+/// 含风格词元（G1 白名单成员）；组件层其余文件禁止引入。
+struct AppearanceSections: View {
     @EnvironmentObject private var styleController: StyleController
     @Environment(\.cellarTheme) private var theme
     @Environment(\.colorScheme) private var scheme
-    /// 内容理想高回写绑定（SettingsView 共享成帧源，见 reportContentHeight）。
-    @Binding private var contentHeight: CGFloat
-
-    init(contentHeight: Binding<CGFloat>) {
-        _contentHeight = contentHeight
-    }
 
     var body: some View {
-        // 结构性包装（Phase 5 v1.2 §3.1 步骤 1）：三 Tab 统一 ScrollView——裸
-        // Form 对固定高度提案贪婪填充（测得值恒等于当前帧高，短 Tab 永不
-        // 收缩），ScrollView 向内容发 nil 提案 Form 才回落理想高；表单内容零变化。
-        ScrollView {
-            Form {
+        Form {
             Picker(CellarL10n.s("settings.panelStyle"), selection: Binding(
                 get: { styleController.style },
                 set: { styleController.setStyle($0) }
@@ -58,9 +52,6 @@ struct AppearanceTab: View {
                     .font(.caption)
                     .foregroundStyle(theme.alert)
             }
-            }
-            .padding()
-            .contentHeightMeasurement(into: $contentHeight)
         }
     }
 }

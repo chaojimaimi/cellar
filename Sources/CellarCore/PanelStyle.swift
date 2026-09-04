@@ -64,4 +64,16 @@ public enum VocabularyWord: String, CaseIterable, Sendable {
     case powerFlowOnBattery
     /// WP2' 健康度段标签（StatusLineView 循环段「… · 健康 N%」；en: Health）。
     case healthLabel
+    // Phase 5 v1.2 走查批 F1：仪表板五处新文案词汇化（原生直白 / 琥珀酒窖语汇，
+    // 与面板同语义行走 theme.word() 双风格词条——修「仪表板绕开风格词汇系统」）。
+    /// 仪表板英雄区藏酒环面板标题（native「电量」）。
+    case dashboardGaugeTitle
+    /// 仪表板四指标带温度 tile 标题（native「温度」）。
+    case dashboardTileTemp
+    /// 仪表板状态徽章充电态（native「充电中」；amber「充电中 · 酒液入窖」）。
+    case dashboardStateCharging
+    /// 仪表板状态徽章停充态（native「已停充」；amber「已停充 · 窖藏中」）。
+    case dashboardStateHolding
+    /// 仪表板状态徽章电池态（native「电池供电」；amber「电池供电 · 开窖出行」）。
+    case dashboardStateBattery
 }

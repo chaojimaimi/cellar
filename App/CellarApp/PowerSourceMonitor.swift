@@ -11,8 +11,10 @@ import IOKit.ps
 /// - C 函数指针回调不能捕获 self：context 经 `Unmanaged` 盒子传递（本对象持有盒子，
 ///   回调期内指针恒有效；回调内 `takeUnretainedValue` 取回）。
 /// - 事件源挂主 RunLoop：回调在主线程派发 → `MainActor.assumeIsolated` 入 actor。
-/// - ≥1s 节流 + 电源态未变 no-op（IOPS 对电量百分比变化也触发）；busy 时不抢
-///   （与 refreshNow 跳过条件一致）。
+/// - ≥1s 节流 + 电源态未变 no-op（IOPS 对电量百分比变化也触发）——两条丢弃路径
+///   与读 nil 均置一次性延迟复查（1.5s 重跑，F4 自愈：IOPS 通知先行于注册表更新
+///   的竞态由复查覆盖）；`apply(powerOverride:)` 无条件执行（纯 @Published 赋值
+///   与 XPC 无冲突），`refreshNow()` 保留 busy 门（在途不抢，内部自带 guard）。
 ///
 /// macOS 26 键位实证（2026-09-02 实测）：运行时字典已无 ExternalConnected 键，
 /// 外接态以 `Power Source State == "AC Power"` 判定（旧 IOPSKeys.h 常量值语义，
@@ -32,6 +34,9 @@ final class PowerSourceMonitor {
     private var lastEventAt = Date.distantPast
     /// 最近 override（电源态未变 no-op 基准）。
     private var lastOverride: PowerOverride?
+    /// 延迟复查旗标（F4：一次性——置位后仅调度一次 1.5s 复查；复查执行前清除，
+    /// 防事件风暴叠排与复查自循环）。
+    private var pendingRecheck = false
 
     /// 安装订阅（幂等：重复调用直接返回）。安装即种子一次——首图标态直接用实时
     /// 电源数据，不等首个事件。
@@ -59,18 +64,47 @@ final class PowerSourceMonitor {
         }
     }
 
-    /// 电源事件处理（主 RunLoop 派发 → assumeIsolated 主 actor）：busy 不抢 →
-    /// ≥1s 节流 → 电源态未变 no-op → 更新 override（图标即时翻转）+ 触发一次刷新。
-    private func handlePowerSourceEvent() {
-        guard let controller, !controller.busy else { return }
+    /// 电源事件处理（主 RunLoop 派发 → assumeIsolated 主 actor，v1.2 走查批 F4
+    /// 自愈改造）：`apply(powerOverride:)` **无条件执行**（纯 @Published 主线程
+    /// 赋值——图标即时翻转数据源，与 XPC 控制无冲突，busy 门拦它没有道理；
+    /// `refreshNow()` 保留 busy 门控（在途不抢 XPC，内部自带 guard））。
+    /// ≥1s 节流 → 电源态未变 no-op → 更新 override + 触发一次刷新。
+    /// 三条丢弃路径（节流拦截 / 读 nil / 与 lastOverride 相同——IOPS 通知先行于
+    /// 注册表更新的竞态）→ 置一次性 pendingRecheck 旗标 + 1.5s 后重跑一次
+    /// （1.5s > 1s 节流窗保证复查可过节流；复查仍无变化则终止——旗标防循环）。
+    private func handlePowerSourceEvent(isRecheck: Bool = false) {
+        guard let controller else { return }
         let now = Date()
-        guard now.timeIntervalSince(lastEventAt) >= 1 else { return }
+        guard now.timeIntervalSince(lastEventAt) >= 1 else {
+            scheduleRecheckIfNeeded(fromRecheck: isRecheck)
+            return
+        }
         lastEventAt = now
-        guard let override = Self.readPowerOverride() else { return }
-        guard override != lastOverride else { return }
+        guard let override = Self.readPowerOverride() else {
+            scheduleRecheckIfNeeded(fromRecheck: isRecheck)
+            return
+        }
+        guard override != lastOverride else {
+            scheduleRecheckIfNeeded(fromRecheck: isRecheck)
+            return
+        }
         lastOverride = override
         controller.apply(powerOverride: override)
         controller.refreshNow()
+    }
+
+    /// 延迟复查调度（F4 §2.3 一次性旗标防循环）：复查发起方（isRecheck == true）
+    /// 不再重排——「复查仍无变化则终止」；旗标在复查执行前清除，正常事件流
+    /// 不受残留影响。
+    private func scheduleRecheckIfNeeded(fromRecheck isRecheck: Bool) {
+        guard !isRecheck, !pendingRecheck else { return }
+        pendingRecheck = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self else { return }
+            self.pendingRecheck = false
+            self.handlePowerSourceEvent(isRecheck: true)
+        }
     }
 
     /// C 回调（静态属性置类作用域：可访问类私有成员）。context = 盒子不透明指针，

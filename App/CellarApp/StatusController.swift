@@ -58,7 +58,8 @@ final class StatusController: ObservableObject {
     /// **幸存实例诞生即自带**后台轮询档 + IOPS 即时化订阅；临时实例同样自装
     /// 随析构自摘（install 幂等 + deinit 摘源，无害）。
     init() {
-        setPolling(panelVisible: false)
+        // 双表面初值全不可见 → 轮询 60s 档 + 遥测停（refreshCadence 统一裁决）。
+        refreshCadence()
         powerSourceMonitor.controller = self
         powerSourceMonitor.install()
     }
@@ -74,16 +75,25 @@ final class StatusController: ObservableObject {
         daemonStatus?.capabilities
     }
 
-    /// 控制成功回调（面板据此同步滑杆本地态；轮询回包不回写滑杆——规格 §2.3
-    /// 同步时机 = 面板打开 + 应用成功）。
-    var onLimitsApplied: ((Int, Int) -> Void)?
-
-    /// 当前面板可见性（轮询换档依据：面板开 1s / 关 60s，轮询恒在与注册态无关）。
+    /// 当前面板可见性（多表面仲裁输入之一：面板表面）。
     private var panelVisible = false
+    /// 当前主窗口可见性（多表面仲裁输入之二：主窗口表面）。
+    private var mainWindowVisible = false
     /// 最近已知注册态（registrationChanged 维护）：连接失败按其判定语义——已注册
     /// 失联 = 故障告警；未注册失联 = 「未安装」常态（不告警、图标不 .alert）。
     private var lastKnownRegistration: RegistrationStatus = .notRegistered
     private let batteryMonitor = BatteryMonitor.makeDefault()
+
+    /// 时间估算样本环（Phase 5 v1.2 §3.6）：遥测管道挂载 (Date, percent) 环形
+    /// 缓冲，容量 900 点 = 15 分钟 @1s（内存 ~14KB）；仅遥测运行期采样（追加点
+    /// 位于 sampleBatteryOnce）。
+    private var sampleRing: [TimeSample] = []
+    private static let sampleRingCapacity = 900
+    /// 上一快照电源态（翻转清环检测基线；nil = 环尚无基线）。
+    private var lastSamplePowerState: (isCharging: Bool, externalConnected: Bool)?
+    /// 时间估算只读投影（DashboardView 消费；TimeEstimator 内部再做新鲜度截断
+    /// 与连续段校验——本环只保证追加顺序与电源态清环）。
+    var estimateSamples: [TimeSample] { sampleRing }
 
     /// ⚠️ nonisolated(unsafe)：deinit（非隔离）需取消两个轮询 Task；属性仅在主 actor
     /// 方法或 deinit 中访问（Task.cancel() 本身线程安全），无数据竞争面。
@@ -97,18 +107,34 @@ final class StatusController: ObservableObject {
         telemetryTask?.cancel()
     }
 
-    // MARK: - 轮询调度（规格 §2.2）
+    // MARK: - 轮询调度（规格 §2.2 + Phase 5 v1.2 §2.3 多表面仲裁）
 
-    /// 换档：cancel 旧 Task + 立即单次刷新 + 以新间隔重启（cancel+restart 定版）。
-    /// 轮询恒在（双路线解耦定版）：面板开 1s / 关 60s；循环体内串行（await 完成
-    /// 再 sleep），尾部 busy 门控跳过本轮（控制在途时轮询静默）。
-    func setPolling(panelVisible: Bool) {
-        self.panelVisible = panelVisible
+    /// 面板可见性换档（Phase 5 v1.2 §2.3）：与 setMainWindowVisible 对称——防漏停
+    /// 要求两入口 appear 设 true / disappear 设 false（R-2 走查项）。最小化语义：
+    /// macOS 窗口最小化不触发 onDisappear——最小化视同可见（1s 采样继续），属
+    /// 可接受行为（R1 P3 注明，不引入 scenePhase 追踪）。
+    func setPanelVisible(_ visible: Bool) {
+        panelVisible = visible
+        refreshCadence()
+    }
+
+    /// 主窗口可见性换档（与 setPanelVisible 同语义的第二个表面）。
+    func setMainWindowVisible(_ visible: Bool) {
+        mainWindowVisible = visible
+        refreshCadence()
+    }
+
+    /// 内部合并裁决（§2.3）：任一表面可见 → 遥测 1s + 轮询 1s；全不可见 →
+    /// 遥测停（nil）+ 轮询 60s（轮询恒在不做 nil，注册态 freshness 语义保持）。
+    /// 换档即立即补一次刷新：防「表面打开后最长 60s 空窗」；控制在途时跳过
+    /// 立即刷新（控制结果回包即最新，无需轮询抢占），但轮询循环照常重启；
+    /// 遥测同款：翻档到可见档即补一次采样。两管线并行独立、不复用同一循环
+    /// （规格 §2.1 P0-2 独立门控语义保留）。
+    private func refreshCadence() {
+        let anyVisible = panelVisible || mainWindowVisible
         pollTask?.cancel()
         pollTask = nil
-        let interval = refreshInterval(panelVisible: panelVisible)
-        // 换档即立即补一次刷新：防「面板打开后最长 60s 空窗」；控制在途时跳过
-        // 立即刷新（控制结果回包即最新，无需轮询抢占），但轮询循环照常重启。
+        let interval = refreshInterval(panelVisible: anyVisible)
         if !busy {
             Task { await refreshOnce() }
         }
@@ -118,6 +144,21 @@ final class StatusController: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 guard !self.busy else { continue }   // busy 门控：跳过本轮（规格 §2.2 P1）
                 await self.refreshOnce()
+            }
+        }
+        telemetryTask?.cancel()
+        telemetryTask = nil
+        guard let telemetryInterval = telemetrySampleInterval(panelVisible: anyVisible) else {
+            return
+        }
+        if anyVisible {
+            Task { await sampleBatteryOnce() }   // 翻档可见即补一次快照
+        }
+        telemetryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(telemetryInterval))
+                guard let self, !Task.isCancelled else { return }
+                await self.sampleBatteryOnce()
             }
         }
     }
@@ -210,39 +251,38 @@ final class StatusController: ObservableObject {
         lastAttempt = nil
     }
 
-    // MARK: - 遥测采样（规格 §2.1 P0-2 独立门控）
-
-    /// 遥测档启停：面板可见 1s、关闭 nil（停止采样）——与 status 轮询并行独立、
-    /// 不复用同一循环。翻档沿用 cancel + 立即补采样 + 重启。未注册 daemon 时
-    /// 遥测照常（门控只有 panelVisible；安装前展示产品能读什么是招牌场景）。
-    func setTelemetry(panelVisible: Bool) {
-        telemetryTask?.cancel()
-        telemetryTask = nil
-        guard let interval = telemetrySampleInterval(panelVisible: panelVisible) else {
-            return
-        }
-        if panelVisible {
-            Task { await sampleBatteryOnce() }   // 打开即补一次快照
-        }
-        telemetryTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(interval))
-                guard let self, !Task.isCancelled else { return }
-                await self.sampleBatteryOnce()
-            }
-        }
-    }
+    // MARK: - 遥测采样（规格 §2.1 P0-2 独立门控；档位仲裁见 refreshCadence）
 
     /// 单次电池快照（IOKit 在 detached Task 后台执行——主线程永不阻塞）。
     /// 采样失败 → batterySnapshot=nil + os_log（不进横幅、不触发图标 .alert）。
+    /// 成功后挂样本环（电源态翻转先清环——R1 P1-3，杜绝充电↔放电异态混合
+    /// 样本拟合出小斜率产生错误估算）。
     private func sampleBatteryOnce() async {
         let snapshot = await Task.detached { [batteryMonitor] in
             try? batteryMonitor.snapshot()
         }.value
         guard !Task.isCancelled else { return }
         batterySnapshot = snapshot
-        if snapshot == nil {
+        if let snapshot {
+            ingestSampleRing(snapshot)
+        } else {
             Self.log.error("电池快照采样失败（面板显「遥测不可用」降级形态）")
+        }
+    }
+
+    /// 样本环写入（仅遥测运行期经 sampleBatteryOnce 调用）：电源态
+    /// （isCharging/externalConnected）翻转即清环重采；容量满丢最旧（900 点 =
+    /// 15 分钟 @1s——新鲜度截断的环侧等价物，TimeEstimator 内仍再截断一次）。
+    private func ingestSampleRing(_ snapshot: BatterySnapshot) {
+        if let last = lastSamplePowerState,
+           last.isCharging != snapshot.isCharging
+            || last.externalConnected != snapshot.externalConnected {
+            sampleRing.removeAll(keepingCapacity: true)
+        }
+        lastSamplePowerState = (snapshot.isCharging, snapshot.externalConnected)
+        sampleRing.append(TimeSample(date: snapshot.timestamp, percent: snapshot.percent))
+        if sampleRing.count > Self.sampleRingCapacity {
+            sampleRing.removeFirst(sampleRing.count - Self.sampleRingCapacity)
         }
     }
 
@@ -251,6 +291,9 @@ final class StatusController: ObservableObject {
     /// 应用上限/滞回（WP2'：autoDischarge 可选键——nil = 不发键，daemon 缺席保持）。
     /// 唯一显式传 true/false 的调用点是设置窗自动放电开关（其余三调用点走默认 nil，
     /// 防 60s 轮询窗口内用旧值覆写 CLI 刚改的限值，R1 P3）。
+    /// Phase 5 v1.2 §4.1（R1 P1-2）：成功回包经 runControl → ingest 统一更新
+    /// daemonStatus——ControlSectionView 自同步单通路（onChange）即回写源，
+    /// 不再需要 onLimitsApplied 单值回调（双宿主下后开覆盖先开的缺陷根除）。
     func applyLimits(upperLimit: Int, hysteresis: Int, autoDischarge: Bool? = nil) {
         runControl(
             attempt: .setLimits(upperLimit: upperLimit, hysteresis: hysteresis),
@@ -260,9 +303,7 @@ final class StatusController: ObservableObject {
                 )
             },
             successFeedback: CellarL10n.s("status.applied", upperLimit, hysteresis)
-        ) { [weak self] status in
-            self?.onLimitsApplied?(status.upperLimit, status.hysteresis)
-        }
+        )
     }
 
     /// 总开关：mode 驱动「停用限充 / 启用限充」（禁用/启用命令语义相反）。
@@ -410,9 +451,10 @@ final class StatusController: ObservableObject {
         }
     }
 
-    /// 控制结果处理（主 actor）：成功 → 状态更新 + 反馈 + 滑杆同步回调 +
-    /// lastAttempt 清除；失败三态：daemonError → stale 版本比对；timeout/
-    /// connectionFailed → connection=.unreachable + 「守护进程未运行或无响应」。
+    /// 控制结果处理（主 actor）：成功 → ingest 状态更新（滑杆自同步通路的数据
+    /// 源，§4.1 R1 P1-2）+ 反馈 + lastAttempt 清除；失败三态：daemonError →
+    /// stale 版本比对；timeout/connectionFailed → connection=.unreachable +
+    /// 「守护进程未运行或无响应」。
     private func finishControl(
         result: Result<DaemonStatus, DaemonClientError>,
         successFeedback: String,

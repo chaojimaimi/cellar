@@ -57,11 +57,19 @@ struct CellarApp: App {
             MenuBarIconLabel(controller: statusController)
         }
         .menuBarExtraStyle(.window)
-        // WP3 §4：设置窗口（spike S1 检查点）；注入五对象 = 四控制器 +
-        // styleController，内容同经 ThemeProvider 包裹（与面板一致的主题链路）。
-        Settings {
+        // Phase 5 v1.2 §2.1 主窗口（macOS 13+ Window scene）：ThemeProvider 全树
+        // 生效 + environmentObject 五对象注入（缺任一将运行时 crash）。M3.5
+        // 用户决策：**设置窗退役**——原 Settings scene 删除，设置内容并入侧栏
+        // 路由（通用/外观/关于页，共享子视图随迁），本 scene 为唯一常驻窗口。
+        // 默认 1080×720 / min 920×620（§2.1 工程裁定，与 mock 748 高度差异为
+        // 浏览器留白）；仅带 .defaultSize——可调性由 windowResizability 默认值
+        //（自由）保证。
+        // ⚠️ **启动接线必须挂在本 scene 链尾**（P0-1 教训：接线挂在不打开的
+        // scene 上是死代码——Settings scene 退役后迁入此处；MenuBarExtra 链尾
+        // 不重复接线，面板侧接线已随面板自身 onChange 保留）。
+        Window(CellarL10n.s("main.window.title"), id: "main") {
             ThemeProvider(style: styleController.style) {
-                SettingsView()
+                MainWindowView()
                     .environmentObject(installer)
                     .environmentObject(statusController)
                     .environmentObject(loginItems)
@@ -69,9 +77,7 @@ struct CellarApp: App {
                     .environmentObject(styleController)
             }
         }
-        // §3.1 步骤 5：窗高跟随内容（测量驱动）——contentSize 钉住内容理想尺寸，
-        // 用户手拖与测量值不打架（越界拖拽被禁属预期行为，R-6）。
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1080, height: 720)
         // §2.8 启动接线：registration → StatusController（连接态语义判定依据）+
         // OnboardingController（收尾规则/安装接续，幂等）。
         .onChange(of: installer.registration) {

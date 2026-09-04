@@ -211,6 +211,11 @@ public struct CellarTheme: Sendable {
         case .powerFlowFloating: return "已停充"
         case .powerFlowOnBattery: return "电池供电"
         case .healthLabel: return "健康"
+        case .dashboardGaugeTitle: return "电量"
+        case .dashboardTileTemp: return "温度"
+        case .dashboardStateCharging: return "充电中"
+        case .dashboardStateHolding: return "已停充"
+        case .dashboardStateBattery: return "电池供电"
         }
     }
 
@@ -278,6 +283,11 @@ public struct ThemeProvider<Content: View>: View {
     }
 
     public var body: some View {
-        content().environment(\.cellarTheme, CellarTheme.resolve(style: style, scheme: scheme))
+        let theme = CellarTheme.resolve(style: style, scheme: scheme)
+        return content()
+            .environment(\.cellarTheme, theme)
+            // 系统控件（滑杆/开关/选择器/按钮）跟随主题 accent——琥珀风格下不再
+            // 泄漏系统蓝（走查 2026-09-04）；native 的 accent token = 系统色，零变化。
+            .tint(theme.accent)
     }
 }
