@@ -15,7 +15,8 @@
 //   开关翻转重置（resetRequired）/ 常量钉死
 // ⑤ validFan* 10：各键值域拒绝矩阵 + 与 validated 同源抽查 + 缺席保持合并 +
 //   STRING 混入整包拒绝 + 键域错误分流（P1-2 isKeyDomainError）
-// ⑤b FanSMC LE 编解码向量 1：1350 ↔ 00C0A844 双向 + BE 反例 + roundtrip
+// ⑤b FanSMC LE 编解码向量 + 锁存阶梯常量 2：1350 ↔ 00C0A844 双向 + BE 反例 +
+//   roundtrip；verifyLadderMs 语义（0.5.1-alpha 热修，真机验证路径注记）
 // ⑥ DaemonStatus 兼容 3：旧 JSON 无 fan 键 → nil；fan roundtrip；显式 null
 //（doctor 风扇检查项 5 场景在 FanDoctorDomain.swift——同域拆分，FanDomain 限 800 行）
 //
@@ -728,7 +729,7 @@ private func runFanWireValidationScenarios() {
     }
 }
 
-// MARK: - ⑤b FanSMC LE 编解码向量（方案 §2.4 条 1 U7 定版；1 场景）
+// MARK: - ⑤b FanSMC LE 编解码向量 + 锁存阶梯常量（方案 §2.4 条 1 U7 定版；2 场景）
 
 private func runFanSMCCodecScenarios() {
     // 风扇码-1：已知向量 1350.0 ↔ 00C0A844（spike E0 双序对照样本：F0Mn=
@@ -744,6 +745,18 @@ private func runFanSMCCodecScenarios() {
         check(FanSMC.decodeRPM(FanSMC.encodeRPM(3350)) == 3350, "风扇码-1", "roundtrip 3350 无损")
         check(FanSMC.decodeRPM([0x00, 0xC0, 0xA8]) == nil && FanSMC.decodeRPM([]) == nil,
               "风扇码-1", "形状不符（非 4B）→ nil（调用方按格式不符 fail-visible，不做值格式猜测）")
+    }
+    // 风扇码-2（0.5.1-alpha 热修）：锁存重试阶梯常量语义——非空 / 首档 ≥ 100ms
+    // / 严格单调递增（阶梯绝不回退）。真机验证路径：2026-09-04 探针实测 F0Md
+    // 写后 T+10ms 回读仍旧值、T+100ms 锁存（≤100ms 量级锁存延迟）——首档必须
+    // ≥ 100ms；实际时序在部署后经 daemon verifyFanKey 写路径真机承担，此处仅
+    // 钉死常量语义（IO 时序不做纯函数模拟）。
+    do {
+        let ladder = FanSMC.verifyLadderMs
+        check(!ladder.isEmpty && zip(ladder, ladder.dropFirst()).allSatisfy { $0 < $1 },
+              "风扇码-2", "verifyLadderMs 非空且严格单调递增（阶梯绝不回退）")
+        check(ladder.count == 3 && ladder[0] >= 100,
+              "风扇码-2", "verifyLadderMs 三档且首档 ≥ 100ms（锁存延迟实测下限，探针 2026-09-04）")
     }
 }
 

@@ -333,4 +333,16 @@ public enum FanSMC {
         return [UInt8(bits & 0xFF), UInt8((bits >> 8) & 0xFF),
                 UInt8((bits >> 16) & 0xFF), UInt8(bits >> 24)]
     }
+
+    /// 写后回读锁存重试阶梯（ms；0.5.1-alpha 热修）——daemon verifyFanKey 的
+    /// 每次回读前延时表：先延时再回读，依次 [100, 300, 800]ms，共三次机会，
+    /// 任一次读值 == 写入值即通过。
+    ///
+    /// 真机验证路径：2026-09-04 探针实测 F0Md 写入（kr=0 result=0）后 T+10ms
+    /// 回读仍是旧值 0、T+100ms 已锁存为新值 1——模式寄存器有 ≤100ms 量级的
+    /// 锁存延迟，写后立即回读必然撞在锁存完成之前（能力误判根因）。首档因此
+    /// 必须 ≥ 100ms。真机验证在部署后由 daemon 写路径（F0Md/F0Tg 两步写/还原）
+    /// 承担；本常量语义由 CellarCoreCheck 钉死（非空/首档 ≥100/严格单调递增），
+    /// 时序本身不做纯函数模拟。
+    public static let verifyLadderMs: [UInt32] = [100, 300, 800]
 }

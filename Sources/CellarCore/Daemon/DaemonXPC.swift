@@ -92,7 +92,9 @@ public enum DaemonXPC {
     // Phase 5 v1.1（0.5.0-alpha）：新增 setFan 命令 + DaemonStatus.fan 字段
     // （风扇智能降温，行为变更第五次破例 bump——install 后 getStatus 版本核对
     // 同置，防 CLI 对 stale daemon）。
-    public static let daemonVersion = "0.5.0-alpha"
+    // 0.5.1-alpha（2026-09-04 热修）：风扇键写后回读锁存延迟（≤100ms 量级）导致
+    // 能力误判——verifyFanKey 改锁存重试阶梯（行为修复，第六次破例 bump）。
+    public static let daemonVersion = "0.5.1-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

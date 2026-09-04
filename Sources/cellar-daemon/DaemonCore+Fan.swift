@@ -585,13 +585,35 @@ extension DaemonCore {
         return FanGuard.targetRPM(policy: policy, facts: facts, temperatureC: fanState.lastTemperatureC)
     }
 
-    /// 写后回读校验（红线 3 同源）：不一致 → FanBodyError 上抛（调用方按
-    /// fail-visible/漂移计数处置，绝不静默）。
+    /// 写后回读校验（红线 3 同源）：不一致 → 锁存重试阶梯后仍不一致才抛
+    /// FanBodyError（fail-visible 语义不变，调用方按 fail-visible/漂移计数处置，
+    /// 绝不静默）。
+    ///
+    /// 实测依据（2026-09-04 真机探针）：F0Md 写入（kr=0 result=0）后 T+10ms
+    /// 回读仍是旧值 0、T+100ms 已锁存为新值 1——模式寄存器有 ≤100ms 量级的
+    /// 锁存延迟，写后立即回读必然撞在锁存完成之前（0.5.0 能力误判根因：进入/
+    /// 还原写全部误报「写后回读不一致」→ 连续失败 ≥3 → 能力置 unavailable）；
+    /// 还原写（Md=0）同样受此影响。故采用锁存重试阶梯：写后依次延时
+    /// [100, 300, 800]ms（FanSMC.verifyLadderMs 同源）共三次回读，
+    /// 任一次读值 == 写入值即通过。
+    ///
+    /// 锁内持有（线程/锁纪律）：单次校验最坏 100+300+800 = 1.2s 锁内持有，
+    /// 期间心跳/XPC 排队等待——可接受；且阶梯仅发生在 boost 进入两步写/
+    /// 进入回滚/释放两步/重写等**稀有转移写**，非每 tick（tick 常规路径
+    /// hold/idle 不写、漂移检测是只读比对不受影响）。禁止在 tick 常规路径
+    /// 使用本阶梯。
     private func verifyFanKey(_ key: String, written: [UInt8], client: SMCClient) throws {
-        let back = try client.read(key)
-        guard back == written else {
-            throw FanBodyError.readbackMismatch(key: key, desiredHex: hex(written), actualHex: hex(back))
+        var lastMismatch: FanBodyError?
+        for delayMs in FanSMC.verifyLadderMs {
+            Thread.sleep(forTimeInterval: TimeInterval(delayMs) / 1000.0)
+            let back = try client.read(key)
+            guard back == written else {
+                lastMismatch = FanBodyError.readbackMismatch(key: key, desiredHex: hex(written), actualHex: hex(back))
+                continue
+            }
+            return
         }
+        throw lastMismatch ?? FanBodyError.readbackMismatch(key: key, desiredHex: hex(written), actualHex: hex(written))
     }
 
     private func hex(_ bytes: [UInt8]) -> String {

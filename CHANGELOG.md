@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1-alpha] - 2026-09-04
+
+### Fixed
+
+- **风扇控制能力误判**：模式寄存器写后存在 ≤100ms 量级锁存延迟（真机探针实测 T+10ms 回读仍旧值、T+100ms 锁存），写后立即回读误报「写后回读不一致」→ 进入连续失败 ≥3 → 本机误判为「不支持」（实测支持机同样中招）；还原写（Md=0）同样受影响。写后回读校验改锁存重试阶梯（[100, 300, 800]ms 三次回读，任一次一致即通过；fail-visible 语义不变），仅影响 boost 进入/重写/释放等稀有转移写，不进入 tick 常规路径
+
 ## [0.5.0-alpha] - 2026-09-04
 
 ### Added
