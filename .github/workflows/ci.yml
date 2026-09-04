@@ -90,7 +90,7 @@ jobs:
       - name: Build CellarUICheck
         run: swift build --product CellarUICheck
 
-      - name: Snapshot comparison (92 goldens)
+      - name: Snapshot comparison (112 goldens)
         env:
           AppleLanguages: en
           AppleLocale: en_US
