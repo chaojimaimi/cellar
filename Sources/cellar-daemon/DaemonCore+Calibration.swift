@@ -9,13 +9,16 @@ import CellarCore
 /// OneShotTrack 转移（CellarCoreCheck 矩阵穷举钉死），本扩展只做副作用（落盘/
 /// 写 CHTE/写 CHIE、删文件、终态字面量落状态）与日志。
 extension DaemonCore {
-    /// startCalibration XPC（方案 §2.2 启动序列，幂等语义拆分 R1 P1-3）：
-    /// 取锁 → 幂等拆分（在轨且 kind==calibration → 回当前状态；在轨且 kind≠
-    /// calibration → **上抛 .actionOccupied**——防 App 误弹「校准已启动」假成功）
-    /// → 能力守卫（XPC 纵深防御）→ 前置快照 + calibrationStartPrecondition →
-    /// 构造动作（phase=chargeFull/phaseStartedAt=now/deadline=now+24h）→
-    /// startIfIdle → actionStore.save（失败 → cancel + 上抛 persistenceFailed）→
-    /// 即时 tick（首 tick 保活使能）→ buildStatusLocked。
+    /// startCalibration 锁内启动结果（照 DischargeStartOutcome 先例：仅 .started 才接管）。
+    enum CalibrationStartOutcome {
+        case started, alreadyActive
+    }
+
+    /// startCalibration XPC 臂（v1.4 拆分定版 UD-6）：取锁 → Locked 核（.manual，
+    /// snapshot 传 nil → 核内走现序列自带新鲜快照+回落）→ **仅 .started 才即时
+    /// tick**（首拍保活使能——现状语义零变化）→ buildStatusLocked。⚠️ NSLock 不可
+    /// 重入：本臂取锁后调 Locked 版；tick 调度臂（已持锁）直调 Locked 版——两入口
+    /// 共用同一副作用序列。
     func startCalibration() throws -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
@@ -23,14 +26,35 @@ extension DaemonCore {
             lock.unlock()
             emit(events)
         }
+        let outcome = try startCalibrationLocked(initiator: .manual, snapshot: nil, events: &events)
+        if outcome == .started {
+            // 即时 tick：首 tick 保活使能 + 首样本（lastStatus 不冻结，P1-2 同判例）。
+            performTickLocked(events: &events)
+        }
+        return buildStatusLocked()
+    }
 
+    /// startCalibration 锁内核心（v1.4 UD-6 提取，现有锁内序列原样搬移；**绝不自取
+    /// lock**——调用方必须已持锁，工单提示 1）：幂等拆分（在轨且 kind==calibration →
+    /// .alreadyActive；在轨且 kind≠calibration → **上抛 .actionOccupied**——防 App
+    /// 误弹「校准已启动」假成功）→ 能力守卫（XPC 纵深防御）→ 前置快照 +
+    /// calibrationStartPrecondition → startIfIdle + setCalibrationPhase(.chargeFull)
+    /// → actionStore.save（失败 → cancel + 上抛 persistenceFailed，锚点不写）→
+    /// **记锚点 state.lastStartedAt**（UD-4：启动即记——手动+自动统一刷新；前置
+    /// 不满足不写锚点——当日窗口内顺延重试）。单一 now 纪律（工单提示 2）：一次
+    /// `Date()` 贯穿 startIfIdle/setCalibrationPhase/锚点——保证 `action.startedAt ==
+    /// state.lastStartedAt`（①② 记录与 ③ 去重键跨路径不得有微秒级偏移，否则去重失效）。
+    @discardableResult
+    func startCalibrationLocked(
+        initiator: Initiator, snapshot: BatterySnapshot?, events: inout [LogEvent]
+    ) throws -> CalibrationStartOutcome {
         if actionTrack.isActive {
             if actionTrack.action?.kind == Calibration.kind {
                 events.append(LogEvent(
                     category: .control, level: .info,
                     message: "startCalibration 重复请求：校准已在进行中，回当前状态（幂等）"
                 ))
-                return buildStatusLocked()
+                return .alreadyActive
             }
             events.append(LogEvent(
                 category: .control, level: .warn,
@@ -45,16 +69,21 @@ extension DaemonCore {
             ))
             throw CalibrationStartRejection.capabilityUnavailable
         }
-        // 前置外接判定：新鲜快照优先；失败回落上次已知值；均未知 → 拒绝（不无据启动）。
+        // 前置外接判定（R2 P3 snapshot 注入）：调度臂传本拍快照（免重复拍电池）；
+        // XPC 臂传 nil → 现序列新鲜快照；失败回落上次已知值；均未知 → 拒绝（不无据启动）。
         let external: Bool?
-        do {
-            external = try monitor.snapshot().externalConnected
-        } catch {
-            events.append(LogEvent(
-                category: .control, level: .warn,
-                message: "startCalibration 前置：电池快照失败（\(error)），使用上次已知外接状态"
-            ))
-            external = lastStatus?.lastExternalConnected
+        if let snapshot {
+            external = snapshot.externalConnected
+        } else {
+            do {
+                external = try monitor.snapshot().externalConnected
+            } catch {
+                events.append(LogEvent(
+                    category: .control, level: .warn,
+                    message: "startCalibration 前置：电池快照失败（\(error)），使用上次已知外接状态"
+                ))
+                external = lastStatus?.lastExternalConnected
+            }
         }
         if let rejection = calibrationStartPrecondition(
             mode: policy.mode,
@@ -80,13 +109,14 @@ extension DaemonCore {
             ))
             throw CalibrationStartRejection.persistenceFailed
         }
+        // 启动锚点（与 startIfIdle 同一 now——单一 now 纪律；UD-4）。
+        calibrationState.lastStartedAt = Int(now.timeIntervalSince1970)
+        persistCalibrationStateLocked(events: &events)
         events.append(LogEvent(
             category: .control, level: .info,
-            message: "校准已启动：phase=chargeFull（充满 ≤6h → 静置 2h → 放电至 10%）"
+            message: "校准已启动（\(initiator == .manual ? "手动" : "自动调度")）：phase=chargeFull（充满 ≤6h → 静置 2h → 放电至 10%）"
         ))
-        // 即时 tick：首 tick 保活使能 + 首样本（lastStatus 不冻结，P1-2 同判例）。
-        performTickLocked(events: &events)
-        return buildStatusLocked()
+        return .started
     }
 
     /// cancelCalibration XPC：用户取消（独立命令臂走鉴权门；实际副作用经

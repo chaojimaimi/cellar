@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 #if canImport(Darwin)
 import Darwin
@@ -26,16 +27,26 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// nil 会把用户已配置的风扇设置静默清空并落盘（与 0.4.1 F-1 同型事故）。
     /// 合成 Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
     public var fan: FanPolicy?
+    /// Phase 5 v1.4 校准调度策略（nil = 未配置，视为全默认关）。⚠️ **F-1 全构造点
+    /// 透传强制条款（v1.4 扩面，与 fan 同守）**：setLimits/disable/enable 三处
+    /// 显式构造都必须携带当前值，走 init 默认 nil 会把用户已配置的调度静默清空
+    /// 并落盘。合成 Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    /// 值域非法仅丢字段（PolicyStore.load 校验块）——与 fan 整包 nil 分层不同：
+    /// 调度为非关键 opt-in 配置，不连累 mode/限值（CalibrationSchedulePolicy.validated
+    /// 注记）。
+    public var calibrationSchedule: CalibrationSchedulePolicy?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
-        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil
+        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
+        calibrationSchedule: CalibrationSchedulePolicy? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
         self.hysteresis = hysteresis
         self.autoDischargeEnabled = autoDischargeEnabled
         self.fan = fan
+        self.calibrationSchedule = calibrationSchedule
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
@@ -46,7 +57,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 不额外校验，nil 与非 nil 都原样携带）。
     public static func validated(
         mode: String, upperLimit: Int, hysteresis: Int,
-        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil
+        autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
+        calibrationSchedule: CalibrationSchedulePolicy? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -54,7 +66,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         }
         return DaemonPolicy(
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
-            autoDischargeEnabled: autoDischargeEnabled, fan: fan
+            autoDischargeEnabled: autoDischargeEnabled, fan: fan,
+            calibrationSchedule: calibrationSchedule
         )
     }
 }
@@ -100,12 +113,32 @@ public struct PolicyStore: Sendable {
         } else {
             fan = nil
         }
+        // Phase 5 v1.4：校准调度字段校验——**值域非法仅丢该字段**（R1 P1-2 定版，
+        // 与 fan 整包 nil 分层不同：调度为非关键 opt-in 配置，不连累 mode/限值/
+        // 风扇；Logger error 可见化）。类型错乱（整包 JSONDecoder 解码失败）走上方
+        // decoded == nil → 整包 nil 落默认策略（合成 Codable 行为，与 fan 同形）。
+        var calibrationSchedule: CalibrationSchedulePolicy?
+        if let decodedSchedule = decoded.calibrationSchedule {
+            if let validatedSchedule = CalibrationSchedulePolicy.validated(
+                enabled: decodedSchedule.enabled,
+                intervalDays: decodedSchedule.intervalDays,
+                startHour: decodedSchedule.startHour
+            ) {
+                calibrationSchedule = validatedSchedule
+            } else {
+                Self.log.error(
+                    "policy.json 校准调度字段值域非法（intervalDays 应 1-180 / startHour 应 0-23），仅丢弃该字段（mode/限值/风扇不受连累）"
+                )
+                calibrationSchedule = nil
+            }
+        }
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
             hysteresis: decoded.hysteresis,
             autoDischargeEnabled: decoded.autoDischargeEnabled,
-            fan: fan
+            fan: fan,
+            calibrationSchedule: calibrationSchedule
         )
     }
 
@@ -141,4 +174,7 @@ public struct PolicyStore: Sendable {
         try FileManager.default.moveItem(at: temporaryURL, to: url)
         #endif
     }
+
+    /// 日志（struct 静态成员非隔离；Logger Sendable，跨隔离界安全——ActionStore 同款）。
+    private nonisolated static let log = Logger(subsystem: "com.cellar", category: "policy-store")
 }

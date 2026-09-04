@@ -68,6 +68,11 @@ final class DaemonCore: @unchecked Sendable {
     var actionTrack = OneShotTrack()
     /// 动作持久化（action.json；独立于 policy.json，格式红线不动）。
     let actionStore: ActionStore
+    /// Phase 5 v1.4 校准运行时状态（**锁内内存缓存 + 写透**——buildStatusLocked 读
+    /// 缓存不读盘，daemon 单属主惯例；store 仅 IO，启动时载入一次）。
+    var calibrationState = CalibrationState()
+    /// 校准状态持久化（calibration-state.json；路径注入缝照 ActionStore 先例——可测）。
+    let calibrationStateStore: CalibrationStateStore
     /// WP2' 自动放电冷却态（锁内普通变量，不持久化；崩溃重启即清零——重启后由
     /// 崩溃恢复完成记录补记冷却，§3.7）。最近一次放电动作终止/取消时刻。
     var lastAutoDischargeCompletedAt: Date?
@@ -83,9 +88,14 @@ final class DaemonCore: @unchecked Sendable {
 
     // MARK: - 生命周期
 
-    init(policyStore: PolicyStore, log: os.Logger, actionStore: ActionStore = ActionStore(url: ActionStore.defaultURL)) {
+    init(
+        policyStore: PolicyStore, log: os.Logger,
+        actionStore: ActionStore = ActionStore(url: ActionStore.defaultURL),
+        calibrationStateStore: CalibrationStateStore = CalibrationStateStore(url: CalibrationStateStore.defaultURL)
+    ) {
         self.policyStore = policyStore
         self.actionStore = actionStore
+        self.calibrationStateStore = calibrationStateStore
         self.monitor = BatteryMonitor.makeDefault()
         self.lifecycleLogger = log
         self.controlLogger = Logger(subsystem: "com.cellar.daemon", category: "control")
@@ -109,6 +119,10 @@ final class DaemonCore: @unchecked Sendable {
                 message: "policy.json 缺失或非法，使用默认策略（active 80/2）"
             ))
         }
+
+        // Phase 5 v1.4：校准运行时状态载入（缺失/损坏 → 空状态容错；此后全部经
+        // 内存缓存 + 写透，读路径不再触盘）。
+        calibrationState = calibrationStateStore.load()
 
         do {
             let detected = try establishBackendLocked(events: &events)
@@ -160,6 +174,12 @@ final class DaemonCore: @unchecked Sendable {
                 // WP3：校准残留按相位恢复 CHIE（discharge 在场/相位缺失未知 → 无条件
                 // 恢复 fail-closed；chargeFull/hold 无需）。通知经 crash-recovery 锁存补发。
                 restoreCalibrationAfterCrashLocked(pending, events: &events)
+                // Phase 5 v1.4 终态补写（UD-5）：crash-recovery 路径写 cancel(crash-
+                // recovery) 归一记录——startedAt 取在手 pending（state 丢失时仍有源
+                // 可取，R2 P3）；去重见 recordCalibrationOutcomeLocked。
+                recordCalibrationOutcomeLocked(
+                    outcome: .crashRecovery, startedAt: pending.startedAt, events: &events
+                )
             }
             _ = actionTrack.adoptForCrashRecovery(pending)
             events.append(LogEvent(
@@ -349,7 +369,11 @@ final class DaemonCore: @unchecked Sendable {
             adapterCycleArmed = true
         }
         applyPolicyLocked(
-            DaemonPolicy(mode: "active", upperLimit: upper, hysteresis: hys, autoDischargeEnabled: autoFlag, fan: policy.fan),
+            DaemonPolicy(
+                mode: "active", upperLimit: upper, hysteresis: hys,
+                autoDischargeEnabled: autoFlag, fan: policy.fan,
+                calibrationSchedule: policy.calibrationSchedule
+            ),
             events: &events
         )
         persistPolicyLocked(events: &events)
@@ -403,7 +427,8 @@ final class DaemonCore: @unchecked Sendable {
         applyPolicyLocked(
             DaemonPolicy(
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
-                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan
+                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
+                calibrationSchedule: policy.calibrationSchedule
             ),
             events: &events
         )
@@ -432,7 +457,8 @@ final class DaemonCore: @unchecked Sendable {
         applyPolicyLocked(
             DaemonPolicy(
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
-                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan
+                autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
+                calibrationSchedule: policy.calibrationSchedule
             ),
             events: &events
         )
@@ -611,6 +637,15 @@ final class DaemonCore: @unchecked Sendable {
             }
         }
 
+        // Phase 5 v1.4 终态观察（UD-5 第②点，空闲臂）：无在轨动作 ∧ 锁存字面量 ∈
+        // 校准终态族（全等匹配）→ 补写上次校准记录——覆盖 done/timeout/safety 等
+        // 锁存型终态（取消路径不锁存，由 cancelActionLocked 即时补写，第①点）。
+        // startedAt 去重（第③点）在记录助手内——锁存存活期内逐 tick 不重写。
+        if !actionTrack.isActive, let latched = actionTrack.latchedLiteral,
+           let outcome = calibrationOutcomeLiteral(latched) {
+            recordCalibrationOutcomeLocked(outcome: outcome, startedAt: nil, events: &events)
+        }
+
         // 5) 策略执行：动作活跃 → 维护分支（规格 §1.1 tick 行——采样/控制键读取/percent
         // 事件（步骤 2/3/4）保留，仅「enforce」替换为完成判定 + 保活）；其余原样。
         let context = ChargingContext(
@@ -655,6 +690,7 @@ final class DaemonCore: @unchecked Sendable {
                 // 下方既有 enforce 块（不重入 performTickLocked——失败臂已做 CHIE
                 // 恢复/回滚，残留无约束窗口 ≤1 tick，下 tick 全量收敛，R1 P1-1）。
                 var autoStarted = false
+                var calibrationStarted = false
                 let tickNow = Date()
                 if Discharge.autoTriggerReady(
                     enabled: policy.autoDischargeEnabled,
@@ -683,6 +719,50 @@ final class DaemonCore: @unchecked Sendable {
                     }
                 }
                 if !autoStarted {
+                    // Phase 5 v1.4 调度臂（空闲 active 臂内、autoTriggerReady 判定
+                    // **之后**——自动放电就绪优先占轨，校准下 tick 重判，R1 P2 次序
+                    // 钉死）：动作空闲（本分支前提）∧ 调度开启 ∧ 周期就绪 → 锁内
+                    // 自动启动（直调 Locked 版——本处已持锁，NSLock 不可重入，UD-6）。
+                    // 复用本拍 snapshot（免重复拍电池，R2 P3）。
+                    if let schedule = policy.calibrationSchedule, schedule.enabled,
+                       calibrationAutoStartReady(
+                           now: tickNow,
+                           lastStartedAt: calibrationAnchorDateLocked(),
+                           schedule: schedule
+                       ) {
+                        do {
+                            if try startCalibrationLocked(
+                                initiator: .auto, snapshot: snapshot, events: &events
+                            ) == .started {
+                                // 同拍 maintainCalibrationLocked 接管（R2 P1，照
+                                // autoDischarge autoStarted 门结构——使 enforce 块
+                                // 跳过，防 enforce 按 idle 语境对着 chargeFull 相写
+                                // 停充，30s 后才被保活纠正）。
+                                calibrationStarted = true
+                                actionName = maintainCalibrationLocked(
+                                    now: tickNow, snapshot: snapshot, backend: backend, events: &events
+                                )
+                            }
+                        } catch let rejection as CalibrationStartRejection
+                            where rejection == .persistenceFailed {
+                            // persistenceFailed 提级 warn（P3-1，对齐自动放电臂 catch
+                            // warn 先例）：action.json 写失败 = 动作未落盘的异常态，
+                            // 非静默顺延；下 tick 幂等重试，残留交启动崩溃恢复兜底。
+                            events.append(LogEvent(
+                                category: .control, level: .warn,
+                                message: "自动校准启动失败：\(rejection)（持久化是动作存活的前提）"
+                            ))
+                        } catch {
+                            // 前置拒绝静默顺延（info 级，防窗口内每 30s 刷 error）：
+                            // 不写锚点——当日窗口内顺延重试，窗口过后自然跨日（UD-4）。
+                            events.append(LogEvent(
+                                category: .control, level: .info,
+                                message: "自动校准未启动：\(error)（静默顺延，窗口内下 tick 重判）"
+                            ))
+                        }
+                    }
+                }
+                if !autoStarted && !calibrationStarted {
                 do {
                     // WP1：温度守卫介入常规执法——decide → ThermalGuard.guarded →
                     // perform（noop 不触碰 backend；enable/disable 经写后回读校验，
@@ -721,7 +801,7 @@ final class DaemonCore: @unchecked Sendable {
                     actionName = "enforce:error"
                     noteControlFailureLocked(error, events: &events, context: "策略执行")
                 }
-                }   // if !autoStarted（未自动启动才落常规 enforce 块）
+                }   // if !autoStarted && !calibrationStarted（未自动启动才落常规 enforce 块）
             }
         } else {
             // disabled 档同样巡检（不变式无条件：CHIE=0x8 仅允许在动作活跃期存在）。
@@ -863,6 +943,18 @@ final class DaemonCore: @unchecked Sendable {
         status.hysteresis = policy.hysteresis
         status.autoDischargeEnabled = policy.autoDischargeEnabled
         status.fan = fanStatusLocked()
+        // Phase 5 v1.4：校准调度三键**恒填**（未配置 → .default，UD-7——照
+        // fanStatusLocked `policy.fan ?? .default` 先例，防新装用户被误判旧 daemon）；
+        // lastCal 三键读 state 内存缓存（无记录 → 缺席表达，勿读盘）。
+        let schedule = policy.calibrationSchedule ?? .default
+        status.calSchedEnabled = schedule.enabled
+        status.calSchedIntervalDays = schedule.intervalDays
+        status.calSchedStartHour = schedule.startHour
+        if let last = calibrationState.lastCalibration {
+            status.lastCalStart = last.startedAt
+            status.lastCalEnd = last.endedAt
+            status.lastCalOutcome = last.outcome
+        }
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

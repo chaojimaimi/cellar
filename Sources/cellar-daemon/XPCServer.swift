@@ -6,7 +6,8 @@ import CellarCore
 /// raw XPC 监听（串行队列）+ euid/组门 + 鉴权失败限流 + 命令分发（规格 §0.2/§0）。
 ///
 /// 安全契约：
-/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan` 仅 **euid==0 或
+/// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
+///   setCalibrationSchedule` 仅 **euid==0 或
 ///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
 ///   admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/无数据泄露），
 ///   否则错误回包（ok=false + 原文）。
@@ -183,6 +184,35 @@ final class XPCServer: @unchecked Sendable {
                 sendStatus(status, to: peer)
             } catch {
                 // FanSetError（参数越界/minRaise 未开放）→ 原文回传（App 上屏）。
+                send(errorReply(String(describing: error)), to: peer.connection)
+            }
+
+        case CalibrationScheduleWireKeys.command:
+            // Phase 5 v1.4：setCalibrationSchedule（鉴权门同变更命令；三键值域校验
+            // valid* 与 CalibrationSchedulePolicy.validated 同源——CellarCoreCheck
+            // 同源测试；缺席保持合并在 DaemonCore.setCalibrationScheduleConfig）。
+            guard authorize(peer, operation: "setCalibrationSchedule") else { return }
+            guard let schedule = request.calSched else {
+                send(errorReply("setCalibrationSchedule 缺少调度参数"), to: peer.connection)
+                return
+            }
+            if let value = schedule.enabled, !CalibrationScheduleWireKeys.validEnabled(value) {
+                send(errorReply("校准调度开关参数越界（0/1）"), to: peer.connection)
+                return
+            }
+            if let value = schedule.intervalDays, !CalibrationScheduleWireKeys.validIntervalDays(value) {
+                send(errorReply("校准调度周期参数越界（1-180 天）"), to: peer.connection)
+                return
+            }
+            if let value = schedule.startHour, !CalibrationScheduleWireKeys.validStartHour(value) {
+                send(errorReply("校准调度窗口起点参数越界（0-23 时）"), to: peer.connection)
+                return
+            }
+            do {
+                let status = try core.setCalibrationScheduleConfig(schedule)
+                sendStatus(status, to: peer)
+            } catch {
+                // CalibrationScheduleSetError（参数越界）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
 

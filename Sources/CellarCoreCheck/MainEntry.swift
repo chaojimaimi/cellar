@@ -324,6 +324,10 @@ struct Main {
         // 三相位转移/监护缺失门控/Codable/字面量家族/通知矩阵/AppSide 助手/交互拒绝/
         // StatusFailureKind 映射）。
         try runCalibrationDomainScenarios()
+        // Phase 5 v1.4：校准调度场景域（方案 §2.4 清单：窗口判定/就绪判定/validated
+        // 值域/仅丢字段分层/Codable 兼容/wire 编解码/终态映射/state 文件/下次预估/
+        // AppSide 派生助手）。
+        try runCalibrationScheduleDomainScenarios()
         // Phase 5 v1.1：风扇智能降温场景域（方案 §9 表：星策略校验/F-1 全构造点
         // 透传/FanGuard 矩阵/能力推进/validFan*/DaemonStatus 兼容/doctor 检查项）。
         try runFanDomainScenarios()

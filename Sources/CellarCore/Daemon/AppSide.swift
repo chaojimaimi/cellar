@@ -328,6 +328,33 @@ public extension DaemonStatus {
     }
 }
 
+// MARK: - 校准调度派生助手（Phase 5 v1.4 §2.1/§2.3：DaemonStatus calSched 强类型视图）
+
+public extension DaemonStatus {
+    /// 校准调度配置（daemon buildStatusLocked **恒填** .default——nil 仅在旧 daemon
+    /// 回包时出现；App 门控二态：字段缺席 = 整卡升级提示，非 nil 且 enabled == false
+    /// = 正常 off 态，UD-7——勿把「未配置」当「旧 daemon」）。
+    var calibrationSchedule: CalibrationSchedulePolicy? {
+        guard let enabled = calSchedEnabled, let intervalDays = calSchedIntervalDays,
+              let startHour = calSchedStartHour else { return nil }
+        return CalibrationSchedulePolicy(
+            enabled: enabled, intervalDays: intervalDays, startHour: startHour
+        )
+    }
+
+    /// 下次自动校准预估（方案 §2.1 派生助手；调度禁用 / 旧 daemon / 时钟回拨负差值
+    /// → nil——预估行上屏「—」）。以当前时刻推算（面板轮询逐次刷新）。
+    var nextAutoCalibrationEstimate: Date? {
+        guard let schedule = calibrationSchedule else { return nil }
+        // 模块限定：与同名实例属性区分（编译器提示的消歧写法）。
+        return CellarCore.nextAutoCalibrationEstimate(
+            now: Date(),
+            schedule: schedule,
+            lastStartedAt: lastCalStart.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        )
+    }
+}
+
 // MARK: - 展示格式化
 
 /// 时间戳本地时区渲染。⚠️ 直接对 Date 做字符串插值（description）恒为 UTC——

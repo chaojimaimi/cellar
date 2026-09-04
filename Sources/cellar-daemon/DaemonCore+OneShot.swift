@@ -105,11 +105,14 @@ extension DaemonCore {
 /// 锁存无消费面）。
     func cancelActionLocked(events: inout [LogEvent], latchCancelled: Bool = false) {
         // kind 预取：cancel 会清空动作，分流判断必须在取消之前；
-        // calibration 相位同理由：第三分支需要 phase 判定 CHIE 恢复。
+        // calibration 相位同理由：第三分支需要 phase 判定 CHIE 恢复；
+        // calibration startedAt 同理由（v1.4 UD-5 第①点：终态补写取在手值——
+        // state 锚点丢失时仍有源可取，R2 P3）。
         let kind = actionTrack.action?.kind
         let calibrationPhase = kind == Calibration.kind
             ? actionTrack.action?.phase.flatMap(Calibration.Phase.init(rawValue:))
             : nil
+        let calibrationStartedAt = kind == Calibration.kind ? actionTrack.action?.startedAt : nil
         let literal: String?
         if latchCancelled && (kind == Discharge.dischargeToLimitKind || kind == Calibration.kind) {
             literal = actionTrack.cancelLatched()
@@ -172,6 +175,14 @@ extension DaemonCore {
                     message: "取消校准动作：无控制后端，跳过 CHIE 恢复与 enforce（仅落终态）"
                 ))
             }
+            // Phase 5 v1.4 终态补写（UD-5 第①点）：取消链 OneShotTrack.cancel()
+            // 不锁存字面量（latchedLiteral = nil）——空闲臂单点观察恒漏记最高频的
+            // 「已取消」，在本臂即时补写（XPC cancelCalibration/cancelAction 与
+            // SIGTERM/SIGHUP-disable 取消共用，latchCancelled 两态一点覆盖）；
+            // startedAt 去重（第③点）在记录助手内。
+            recordCalibrationOutcomeLocked(
+                outcome: .cancel, startedAt: calibrationStartedAt, events: &events
+            )
         } else if let backend {
             do {
                 _ = try controller.perform(.disableCharging, backend: backend)
