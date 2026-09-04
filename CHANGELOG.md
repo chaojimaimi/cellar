@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0-alpha] - 2026-09-05
+
+### Added
+
+- **统计面板（主窗口侧栏）**：SQLite 周期采样（60 秒一跳常驻，35 天滚动窗口保留）+ 历史曲线页——电量曲线按充电 / 停充 / 放电三色分段并带最小-最大波动带，窖温、功耗曲线（正 = 充电输入 / 负 = 放电输出），24 小时 / 7 天 / 30 天范围切换，最大容量趋势（数据积累后显示）。采样断档（睡眠 / App 未运行）如实留空不插值；统计存储于本机用户域（`~/Library/Application Support/Cellar/stats.sqlite`），无遥测。
+- **采样与界面解耦**：统计记录常驻（每分钟一跳，静息 CPU 近零），不受面板 / 主窗口可见性影响；库损坏自动重建（遥测可弃，App 不受影响）。
+
+### Fixed
+
+- 功率流向三角图直供边配色与标签位置修正（真实能量流动用主题强调色呈现、标签上移出线），停充态直供动态可见。
+
 ## [0.7.0-alpha] - 2026-09-04
 
 ### Added

@@ -99,7 +99,9 @@ public enum DaemonXPC {
     // 0.6.1-alpha（2026-09-04）：设置窗分节视觉打磨，协议零变更（同上纪律）。
     // 0.7.0-alpha（2026-09-04）：实时仪表板主窗口（App 层新增，协议零变更——
     // 随版本矩阵同步 bump，doctor 三方一致纪律）。
-    public static let daemonVersion = "0.7.0-alpha"
+    // 0.8.0-alpha（2026-09-05）：统计面板（App 侧 SQLite 本地采样，协议零变更——
+    // 同上纪律）。
+    public static let daemonVersion = "0.8.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

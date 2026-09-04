@@ -141,7 +141,7 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 346 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 358 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
@@ -161,7 +161,8 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 5 · v1.1 (0.5.0-alpha)**: smart fan cooling (released) — automatic fan boost above the temperature threshold, opt-in off by default, three speed strategies, runtime capability verification, automatic restoration of system control on anomalies
 - ✅ **Phase 5 · v1.2 polish batch (0.6.0-alpha / 0.6.1-alpha)**: low-corner lightweight panel footer + adaptive settings window height and sectioned visual polish (released)
 - ✅ **Phase 5 · v1.2 dashboard (0.7.0-alpha)**: live dashboard main window + sidebar navigation (power flow / charge gauge / time estimates / health profile) + charge control / general / appearance / about pages + settings window retirement (released)
-- Phase 5+: statistics panel, calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
+- ✅ **Phase 5 · v1.3 statistics (0.8.0-alpha)**: SQLite periodic sampling + battery level / temperature / power history charts + max capacity trend (released)
+- Phase 5+: calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
 
 The full roadmap and design documents are published in the release notes.
 
