@@ -336,6 +336,12 @@ struct Main {
         // 值域/仅丢字段分层/Codable 兼容/wire 编解码/终态映射/state 文件/下次预估/
         // AppSide 派生助手）。
         try runCalibrationScheduleDomainScenarios()
+        // Phase 5 v1.6：充电日程场景域（方案 §2.4 清单：validated/matchingEntry/
+        // desiredState+transitionRequired 转移矩阵四族/字面量族——纯函数面；
+        // wire 字符串键/JSON+validated 组合/DaemonStatus 兼容/PolicyStore 校验块/
+        // ScheduleState 文件——wire/持久化/兼容面，两文件同域拆分 ≤400 行先例）。
+        try runChargeScheduleDomainScenarios()
+        try runChargeScheduleWireDomainScenarios()
         // Phase 5 v1.1：风扇智能降温场景域（方案 §9 表：星策略校验/F-1 全构造点
         // 透传/FanGuard 矩阵/能力推进/validFan*/DaemonStatus 兼容/doctor 检查项）。
         try runFanDomainScenarios()

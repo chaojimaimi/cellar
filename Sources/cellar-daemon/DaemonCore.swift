@@ -73,6 +73,12 @@ final class DaemonCore: @unchecked Sendable {
     var calibrationState = CalibrationState()
     /// 校准状态持久化（calibration-state.json；路径注入缝照 ActionStore 先例——可测）。
     let calibrationStateStore: CalibrationStateStore
+    /// Phase 5 v1.6 充电日程运行时状态（**锁内内存缓存 + 写透**——照 calibrationState
+    /// 先例；buildStatusLocked 读缓存不读盘；存储属性必须在主体声明——扩展不能加
+    /// 存储属性，日程执行逻辑全在 DaemonCore+Schedule.swift）。
+    var scheduleState = ScheduleState()
+    /// 充电日程状态持久化（schedule-state.json；路径注入缝照 calibrationStateStore 先例）。
+    let scheduleStateStore: ScheduleStateStore
     /// WP2' 自动放电冷却态（锁内普通变量，不持久化；崩溃重启即清零——重启后由
     /// 崩溃恢复完成记录补记冷却，§3.7）。最近一次放电动作终止/取消时刻。
     var lastAutoDischargeCompletedAt: Date?
@@ -91,11 +97,13 @@ final class DaemonCore: @unchecked Sendable {
     init(
         policyStore: PolicyStore, log: os.Logger,
         actionStore: ActionStore = ActionStore(url: ActionStore.defaultURL),
-        calibrationStateStore: CalibrationStateStore = CalibrationStateStore(url: CalibrationStateStore.defaultURL)
+        calibrationStateStore: CalibrationStateStore = CalibrationStateStore(url: CalibrationStateStore.defaultURL),
+        scheduleStateStore: ScheduleStateStore = ScheduleStateStore(url: ScheduleStateStore.defaultURL)
     ) {
         self.policyStore = policyStore
         self.actionStore = actionStore
         self.calibrationStateStore = calibrationStateStore
+        self.scheduleStateStore = scheduleStateStore
         self.monitor = BatteryMonitor.makeDefault()
         self.lifecycleLogger = log
         self.controlLogger = Logger(subsystem: "com.cellar.daemon", category: "control")
@@ -123,6 +131,10 @@ final class DaemonCore: @unchecked Sendable {
         // Phase 5 v1.4：校准运行时状态载入（缺失/损坏 → 空状态容错；此后全部经
         // 内存缓存 + 写透，读路径不再触盘）。
         calibrationState = calibrationStateStore.load()
+
+        // Phase 5 v1.6：充电日程运行时状态载入（照 calibrationState 先例——缺失/
+        // 损坏 → 空状态容错；在窗中断由首个 tick 日程臂无侧重算补判，UD-3）。
+        scheduleState = scheduleStateStore.load()
 
         do {
             let detected = try establishBackendLocked(events: &events)
@@ -372,7 +384,8 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "active", upperLimit: upper, hysteresis: hys,
                 autoDischargeEnabled: autoFlag, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
+                schedule: policy.schedule
             ),
             events: &events
         )
@@ -428,7 +441,8 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
+                schedule: policy.schedule
             ),
             events: &events
         )
@@ -458,7 +472,8 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
+                schedule: policy.schedule
             ),
             events: &events
         )
@@ -764,6 +779,17 @@ final class DaemonCore: @unchecked Sendable {
                     }
                 }
                 if !autoStarted && !calibrationStarted {
+                // Phase 5 v1.6 日程臂（空闲 active 臂内、校准调度臂之后——UD-4 次序
+                // 钉死；执行体在 DaemonCore+Schedule.swift，本文件仅挂点——零新增
+                // 逻辑）：转移为 chargingDisabled 时当拍跳过 enforce（scheduleHandled
+                // 门照 calibrationStarted 门结构——该转移即 disable 全路径含手写使能，
+                // enforce 不再对着 disabled mode 执法）；restore/limit 转移后同拍
+                // enforce 自然按新 policy 值执法。
+                var scheduleHandled = false
+                applyScheduleTransitionLocked(
+                    now: tickNow, actionName: &actionName, handled: &scheduleHandled, events: &events
+                )
+                if !scheduleHandled {
                 do {
                     // WP1：温度守卫介入常规执法——decide → ThermalGuard.guarded →
                     // perform（noop 不触碰 backend；enable/disable 经写后回读校验，
@@ -805,6 +831,7 @@ final class DaemonCore: @unchecked Sendable {
                     actionName = "enforce:error"
                     noteControlFailureLocked(error, events: &events, context: "策略执行")
                 }
+                }   // if !scheduleHandled（chargingDisabled 转移当拍跳过 enforce）
                 }   // if !autoStarted && !calibrationStarted（未自动启动才落常规 enforce 块）
             }
         } else {
@@ -899,8 +926,11 @@ final class DaemonCore: @unchecked Sendable {
 
     // MARK: - 内部：策略/持久化/状态
 
-    /// 应用策略（validated 保证可构造；防御分支理论上不可达）。
-    private func applyPolicyLocked(_ newPolicy: DaemonPolicy, events: inout [LogEvent]) {
+    /// 应用策略（validated 保证可构造；防御分支理论上不可达）。⚠️ 可见性：
+    /// Phase 5 v1.6 起 internal——DaemonCore+Schedule.swift 的日程转移（applyEntry
+    /// limit 段 / restoreBase 段，工单转移执行禁令指定的复用段落）复用本方法
+    ///（persistPolicyLocked v1.1 同款放宽先例；executable internal 模块外不可达）。
+    func applyPolicyLocked(_ newPolicy: DaemonPolicy, events: inout [LogEvent]) {
         guard let limit = try? LimitPolicy(upperLimit: newPolicy.upperLimit, hysteresis: newPolicy.hysteresis) else {
             events.append(LogEvent(
                 category: .lifecycle, level: .error,
@@ -960,6 +990,13 @@ final class DaemonCore: @unchecked Sendable {
         let thermal = policy.thermal ?? .default
         status.thermPauseCentiC = thermal.pauseCentiC
         status.thermHysteresisCentiC = thermal.hysteresisCentiC
+        // Phase 5 v1.6：充电日程**恒填**（`policy.schedule ?? .default` encoded——照
+        // calSched 先例，UD-7：未配置用户填空配置 JSON，防被误判旧 daemon；nil 仅
+        // 旧 daemon 回包出现，App 据此整卡升级提示）+ scheduleActiveId（state 内存
+        // 缓存读，勿读盘——daemon 单属主惯例；臂驱动下 lastAppliedEntryId 即当前
+        // 命中窗口 id：转移成功才写、退出恢复即清空，UD-3/UD-6）。
+        status.scheduleJson = (policy.schedule ?? .default).encoded
+        status.scheduleActiveId = scheduleState.lastAppliedEntryId
         if let last = calibrationState.lastCalibration {
             status.lastCalStart = last.startedAt
             status.lastCalEnd = last.endedAt

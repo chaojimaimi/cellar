@@ -7,7 +7,7 @@ import CellarCore
 ///
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
-///   setCalibrationSchedule/setThermal` 仅 **euid==0 或
+///   setCalibrationSchedule/setThermal/setChargeSchedule` 仅 **euid==0 或
 ///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
 ///   admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/无数据泄露），
 ///   否则错误回包（ok=false + 原文）。
@@ -240,6 +240,29 @@ final class XPCServer: @unchecked Sendable {
                 sendStatus(status, to: peer)
             } catch {
                 // ThermalSetError（参数越界）→ 原文回传（App 上屏）。
+                send(errorReply(String(describing: error)), to: peer.connection)
+            }
+
+        case ChargeScheduleWireKeys.command:
+            // Phase 5 v1.6：setChargeSchedule（鉴权门同变更命令；**首个字符串键**
+            // ——类型/长度白名单已在 validateRequest（STRING + ≤8192 字节，UD-6/
+            // R-3），此处做长度复核 + 缺键拒绝；JSON/validated 两级在
+            // core.setChargeScheduleConfig（三级 = 长度/JSON/validated，无第四级
+            // UTF-8——R1 P2-1），错误原文回传）。
+            guard authorize(peer, operation: "setChargeSchedule") else { return }
+            guard let json = request.schedule?.scheduleJson else {
+                send(errorReply("setChargeSchedule 缺少日程配置参数"), to: peer.connection)
+                return
+            }
+            guard ChargeScheduleWireKeys.validLength(json) else {
+                send(errorReply("充电日程配置超长（≤\(ChargeScheduleWireKeys.maxJsonLength) 字节）"), to: peer.connection)
+                return
+            }
+            do {
+                let status = try core.setChargeScheduleConfig(json: json)
+                sendStatus(status, to: peer)
+            } catch {
+                // ChargeScheduleSetError（长度/JSON/validated 三级）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
 

@@ -142,6 +142,23 @@ struct DoctorCommand: ParsableCommand {
             thermalStatus = nil
         }
 
+        // 检查 14：充电日程配置现态（daemon 回读 scheduleJson + scheduleActiveId；
+        // 未运行或旧 daemon 缺键 → nil → INFO 行渲染，Phase 5 v1.6——新 daemon 恒填，
+        // 缺席即旧 daemon，UD-7）。解码失败按缺席处理（R-9：无日程 = 无害回落）。
+        let chargeScheduleProbe: ChargeScheduleDoctorProbe?
+        if let json = daemonStatus?.scheduleJson,
+           let data = json.data(using: .utf8),
+           let config = try? JSONDecoder().decode(ChargeScheduleConfig.self, from: data) {
+            let activeEntry = daemonStatus?.scheduleActiveId.flatMap { activeId in
+                config.entries.first { $0.id == activeId }
+            }
+            chargeScheduleProbe = ChargeScheduleDoctorProbe(
+                enabled: config.enabled, entryCount: config.entries.count, activeEntry: activeEntry
+            )
+        } else {
+            chargeScheduleProbe = nil
+        }
+
         // 检查 9：BTM 注册态（launchctl print 子进程；非 root 亦可读基本字段——
         // 2026-09-02 spike 实证；解析纯函数在 CellarCore，评审 P2-1 分层）。
         let btmOutput = runProcessCapture("/bin/launchctl", ["print", "system/com.cellar.daemon"]).output
@@ -178,7 +195,9 @@ struct DoctorCommand: ParsableCommand {
                 config: daemonStatus?.fan
             ),
             thermal: thermalStatus,
-            thermalProbeAttempted: true
+            thermalProbeAttempted: true,
+            chargeSchedule: chargeScheduleProbe,
+            chargeScheduleProbeAttempted: true
         )
     }
 

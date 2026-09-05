@@ -114,6 +114,12 @@ public struct DoctorInputs: Sendable {
     public let thermal: ThermalStatus?
     /// 检查 13 是否已探测（DoctorCommand 恒 true——getStatus 总会尝试）。
     public let thermalProbeAttempted: Bool
+    /// 检查 14（Phase 5 v1.6）：充电日程配置现态（daemon 回读；nil = 旧 daemon 未
+    /// 上报/未运行——`chargeScheduleProbeAttempted` 区分「未探测」与「已探测但不
+    /// 可得」，后者渲染 INFO 行、前者不渲染——检查 8/9/13 同款条件渲染兼容约束）。
+    public let chargeSchedule: ChargeScheduleDoctorProbe?
+    /// 检查 14 是否已探测（DoctorCommand 恒 true——getStatus 总会尝试）。
+    public let chargeScheduleProbeAttempted: Bool
 
     public init(
         isRoot: Bool,
@@ -134,7 +140,9 @@ public struct DoctorInputs: Sendable {
         dischargeProbe: DischargeProbe? = nil,
         fanProbe: FanDoctorProbe? = nil,
         thermal: ThermalStatus? = nil,
-        thermalProbeAttempted: Bool = false
+        thermalProbeAttempted: Bool = false,
+        chargeSchedule: ChargeScheduleDoctorProbe? = nil,
+        chargeScheduleProbeAttempted: Bool = false
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -155,6 +163,8 @@ public struct DoctorInputs: Sendable {
         self.fanProbe = fanProbe
         self.thermal = thermal
         self.thermalProbeAttempted = thermalProbeAttempted
+        self.chargeSchedule = chargeSchedule
+        self.chargeScheduleProbeAttempted = chargeScheduleProbeAttempted
     }
 }
 
@@ -174,6 +184,23 @@ public struct FanDoctorProbe: Equatable, Sendable {
         self.mdValue = mdValue
         self.tgRPM = tgRPM
         self.config = config
+    }
+}
+
+/// 检查 14 输入：充电日程配置现态（CLI DoctorCommand 组装；条目摘要以结构化条目
+/// 传入——渲染词由检查函数生成，与 fanControl 组装 config 形态一致）。
+public struct ChargeScheduleDoctorProbe: Equatable, Sendable {
+    /// 日程总开关（daemon 回读配置的 enabled）。
+    public let enabled: Bool
+    /// 条目数。
+    public let entryCount: Int
+    /// 当前命中窗口条目（id == DaemonStatus.scheduleActiveId 的条目；nil = 无命中）。
+    public let activeEntry: ChargeScheduleEntry?
+
+    public init(enabled: Bool, entryCount: Int, activeEntry: ChargeScheduleEntry?) {
+        self.enabled = enabled
+        self.entryCount = entryCount
+        self.activeEntry = activeEntry
     }
 }
 
@@ -212,6 +239,10 @@ public enum DoctorReportGenerator {
         // 8/9 先例；未探测缺省形态零渲染——既有 count 断言不受影响）。
         if let thermalCheck = thermalConfig(inputs) {
             checks.append(thermalCheck)
+        }
+        // Phase 5 v1.6 检查 14：充电日程（条件渲染同 9-13——probe 缺省零渲染）。
+        if let scheduleCheck = chargeSchedule(inputs) {
+            checks.append(scheduleCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -430,5 +461,53 @@ public enum DoctorReportGenerator {
             + String(format: "%.1f", Double(thermal.hysteresisCentiC) / 100)
             + "°C（" + (isDefault ? "默认" : "自定义") + "；与风扇阈值相互独立）"
         return DoctorCheck(name: "热暂停配置", status: .pass, detail: detail)
+    }
+
+    // MARK: - 检查 14：充电日程（Phase 5 v1.6 增补；条件渲染同 9-13）
+
+    /// daemon 回读日程配置现态（开/关 + 条数 + 当前命中窗口摘要）。daemon 未运行
+    /// → INFO；在线但未上报 scheduleJson = 旧 daemon（新 daemon 恒填——UD-7）→
+    /// INFO 升级提示（检查 13 同款双 INFO 分支）。
+    private static func chargeSchedule(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.chargeScheduleProbeAttempted else { return nil }
+        guard let probe = inputs.chargeSchedule else {
+            if inputs.daemonStatus != nil {
+                return DoctorCheck(
+                    name: "充电日程", status: .info,
+                    detail: "守护进程在线但未上报日程配置（旧版本 daemon，建议重装升级）"
+                )
+            }
+            return DoctorCheck(
+                name: "充电日程", status: .info,
+                detail: "守护进程未运行，无法读取日程配置"
+            )
+        }
+        var parts = ["日程\(probe.enabled ? "开启" : "关闭")（\(probe.entryCount) 个条目）"]
+        if let entry = probe.activeEntry {
+            parts.append("当前命中：" + entrySummary(entry))
+        } else {
+            parts.append("当前无命中窗口")
+        }
+        return DoctorCheck(name: "充电日程", status: .pass, detail: parts.joined(separator: "；"))
+    }
+
+    /// 条目摘要（检查 14 渲染词；星期 ISO 周一=1…周日=7，时段钟面 HH:mm）。
+    private static func entrySummary(_ entry: ChargeScheduleEntry) -> String {
+        let weekdayNames = ["一", "二", "三", "四", "五", "六", "日"]
+        let weekdays = entry.weekdays.map { "周\(weekdayNames[$0 - 1])" }.joined(separator: "、")
+        let action: String
+        if entry.chargingDisabled == true {
+            action = "放开充电"
+        } else if let limit = entry.upperLimit {
+            action = "限充 \(limit)%"
+        } else {
+            action = "无动作"
+        }
+        return "\(weekdays) \(clockText(entry.startMinute))-\(clockText(entry.endMinute)) \(action)"
+    }
+
+    /// 分钟数 → HH:mm 钟面文本。
+    private static func clockText(_ minute: Int) -> String {
+        String(format: "%02d:%02d", minute / 60, minute % 60)
     }
 }

@@ -44,12 +44,20 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 字段分层（UD-3：热暂停为保护配置但 default 40/37 保护仍在，不连累
     /// mode/限值/风扇；勿照 fan 整包 nil）。
     public var thermal: ThermalPolicy?
+    /// Phase 5 v1.6 充电日程配置（nil = 未配置，视为 enabled=false 空表）。⚠️ **F-1
+    /// 全构造点透传强制条款（v1.6 扩面，与 fan/calibrationSchedule/thermal 同守）**：
+    /// setLimits/disable/enable 三处显式构造都必须携带当前值，走 init 默认 nil 会
+    /// 把用户已配置的日程静默清空并落盘（与 0.4.1 F-1 同型事故）。
+    /// 合成 Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    /// 结构非法仅丢字段（PolicyStore.load 校验块，照 thermal 块）——日程为非关键
+    /// opt-in 配置，不连累 mode/限值；类型错乱整包 nil（合成 Codable 行为）。
+    public var schedule: ChargeScheduleConfig?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
-        thermal: ThermalPolicy? = nil
+        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
@@ -58,6 +66,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         self.fan = fan
         self.calibrationSchedule = calibrationSchedule
         self.thermal = thermal
+        self.schedule = schedule
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
@@ -70,7 +79,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
-        thermal: ThermalPolicy? = nil
+        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -79,7 +88,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         return DaemonPolicy(
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
             autoDischargeEnabled: autoDischargeEnabled, fan: fan,
-            calibrationSchedule: calibrationSchedule, thermal: thermal
+            calibrationSchedule: calibrationSchedule, thermal: thermal, schedule: schedule
         )
     }
 }
@@ -163,6 +172,25 @@ public struct PolicyStore: Sendable {
                 thermal = nil
             }
         }
+        // Phase 5 v1.6：充电日程字段校验——**结构非法仅丢该字段**（UD-1/R-9 定版，
+        // 照 thermal 块仅丢字段分层——勿照 fan 整包 nil：日程为非关键 opt-in 配置，
+        // 无日程 = 无害回落，不连累 mode/限值；Logger error 可见化）。类型错乱
+        //（整包 JSONDecoder 解码失败）走上方 decoded == nil → 整包 nil 落默认
+        // 策略（合成 Codable 行为，与 fan/thermal 同形）。
+        var schedule: ChargeScheduleConfig?
+        if let decodedSchedule = decoded.schedule {
+            if let validatedSchedule = ChargeScheduleConfig.validated(
+                enabled: decodedSchedule.enabled,
+                entries: decodedSchedule.entries
+            ) {
+                schedule = validatedSchedule
+            } else {
+                Self.log.error(
+                    "policy.json 充电日程字段结构非法（条目应 ≤8、weekdays 1-7 去重升序、时段 0-1439 分钟且起止不等、上限 60-100、动作字段至少一项、条目 id 唯一），仅丢弃该字段（mode/限值不受连累）"
+                )
+                schedule = nil
+            }
+        }
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
@@ -170,7 +198,8 @@ public struct PolicyStore: Sendable {
             autoDischargeEnabled: decoded.autoDischargeEnabled,
             fan: fan,
             calibrationSchedule: calibrationSchedule,
-            thermal: thermal
+            thermal: thermal,
+            schedule: schedule
         )
     }
 
