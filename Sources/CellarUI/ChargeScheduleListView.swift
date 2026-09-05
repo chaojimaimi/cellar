@@ -14,11 +14,18 @@ public enum ChargeScheduleSummary {
 
     /// 星期摘要词（「一 二 三」式空格连接）。越界索引跳过不猜测——daemon 侧
     /// validated 已保证 1...7，此处仅防御手改配置的展示路径。
+    ///
+    /// ⚠️ key 必须先拼 `String` 再包 `String.LocalizationValue(_:)`（逐字 key
+    /// 语义）——字面量插值形式 `s("prefix.\(x)")` 会把 `\()` 捕获为**格式参数**
+    /// （key 变 `prefix.%@`），查表落空回退显示原始 key（v1.6 走查实证：星期
+    /// chip 全显 `chargeSchedule.weekday.%@`；golden 同坏代码烤入故快照门失明
+    /// ——CGRect/nodeScale 后第三例）。
     public static func weekdays(_ weekdays: [Int]) -> String {
         weekdays.compactMap { isoWeekday in
             guard ChargeScheduleEntry.weekdayRange.contains(isoWeekday),
                   isoWeekday <= weekdayKeys.count else { return nil }
-            return CellarL10n.s("chargeSchedule.weekday.\(weekdayKeys[isoWeekday - 1])")
+            let key = "chargeSchedule.weekday." + weekdayKeys[isoWeekday - 1]
+            return CellarL10n.s(String.LocalizationValue(key))
         }
         .joined(separator: " ")
     }
