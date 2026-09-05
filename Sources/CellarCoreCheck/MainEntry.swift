@@ -317,6 +317,14 @@ struct Main {
         runDeviceInfoDomainScenarios()
         // WP1：热守卫场景域（充电侧温度暂停，方案 §4.1 九项穷举）。
         try runThermalGuardDomainScenarios()
+        // Phase 5 v1.5：充电热阈值可配置化场景域（方案 §2.4 清单：validated 边界/
+        // default 与常量等价/guarded 参数化矩阵/F-1 五触点分层/wire 编解码/
+        // DaemonStatus 兼容/keepAlive 三分支 × 两调用点语境/R-2 降级机型边界/
+        // 校准滞留恢复与超时中止/doctor 组装——ThermalGuardDomain 既有 17 零改动；
+        // 三文件同域拆分照 FanDomain/FanDoctorDomain 先例，各文件 ≤400 行）。
+        try runThermalPolicyDomainScenarios()
+        try runThermalKeepAliveDomainScenarios()
+        try runThermalDoctorDomainScenarios()
         // Phase 4 WP2：自动放电（opt-in）场景域（方案 §4.1 九项：触发矩阵/Codable
         // 兼容/线格式/字面量锁存/值域/通知矩阵/事件承载）。
         try runAutoDischargeDomainScenarios()

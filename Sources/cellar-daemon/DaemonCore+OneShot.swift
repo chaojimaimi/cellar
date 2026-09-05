@@ -208,12 +208,14 @@ extension DaemonCore {
 
     /// 动作维护分支（performTickLocked 第 5 步动作分支；规格 §1.1 tick 行）：
     /// 完成（2 tick 去抖）/超时 → 恢复限充 + 删文件 + 终态锁存（轨道完成）；
-    /// 未完成 → 保活充电。返回本 tick 的 lastAction 字面量。
+    /// 未完成 → 保活充电（v1.5 UD-5 热守卫收编——temperatureC 非可选穿透，
+    /// tick 步骤 2 采样失败即早退，本处温度恒在手）。返回本 tick 的 lastAction 字面量。
     func maintainActionLocked(
         now: Date,
         fullyCharged: Bool?,
         isCharging: Bool,
         percent: Int,
+        temperatureC: Double,
         backend: any ChargingBackend,
         events: inout [LogEvent]
     ) -> String {
@@ -227,7 +229,7 @@ extension DaemonCore {
             deleteActionFileLocked(events: &events)
             return actionTrack.latchedLiteral ?? OneShotLiteral.timeout()
         case .keepAlive:
-            keepAliveChargingLocked(backend: backend, events: &events)
+            keepAliveChargingLocked(backend: backend, temperatureC: temperatureC, events: &events)
             let literal = OneShotLiteral.start(kind: actionTrack.action?.kind ?? OneShot.fullOnceKind)
             return actionTrack.effectiveLastAction(literal) ?? literal
         case .idle:
@@ -252,10 +254,22 @@ extension DaemonCore {
         }
     }
 
-    /// 保活校验（规格 §1.1 tick 行）：回读 CHTE，非使能 → 重写使能 + 日志 +
-    /// 走既有自愈计数（noteControlFailureLocked）——**不触发 conflictSuspected**
-    /// （动作期间外部改写由保活纠正，属期望行为；P2 采纳）。
-    func keepAliveChargingLocked(backend: any ChargingBackend, events: inout [LogEvent]) {
+    /// 保活校验（规格 §1.1 tick 行）：v1.5 UD-5 热守卫收编——三分支热判定
+    /// （决策纯函数 `ThermalGuard.keepAliveDecision`，CellarCoreCheck 矩阵同源钉死；
+    /// 本方法只做副作用）：
+    /// - temp ≥ pause：CHTE 现态**非停充才写**停充（避免同值重写——写伴随 info
+    ///   日志一次，即状态转移日志；已停充则驻留免写免日志，防每 tick 刷屏）；
+    /// - temp ∈ [resume, pause)：hold **不重写**（滞回带驻留；含不修复外部改写
+    ///   ——动作活跃期无常规 enforce，窗口至 temp < resume 或动作终态，R-3。
+    ///   驻留期零日志：暂停写/恢复写已各在转移分支伴随记录，按现态再记必然每
+    ///   tick 重复，正是防刷屏要消除的形态）；
+    /// - temp < resume：既有重写使能（现态使能则免写免日志）。
+    /// lastAction 保持动作相位字面量不动（不标 tempPause——显示面维持现状，UD-5）。
+    func keepAliveChargingLocked(
+        backend: any ChargingBackend,
+        temperatureC: Double,
+        events: inout [LogEvent]
+    ) {
         let enabled: Bool
         do {
             enabled = try backend.chargingEnabled()
@@ -263,15 +277,35 @@ extension DaemonCore {
             noteControlFailureLocked(error, events: &events, context: "保活回读")
             return
         }
-        guard !enabled else { return }
-        do {
-            _ = try controller.perform(.enableCharging, backend: backend)
-            events.append(LogEvent(
-                category: .control, level: .info,
-                message: "保活：CHTE 非使能（外部改写），已重写使能"
-            ))
-        } catch {
-            noteControlFailureLocked(error, events: &events, context: "保活重写")
+        switch ThermalGuard.keepAliveDecision(
+            temperatureC: temperatureC,
+            policy: policy.thermal ?? .default
+        ) {
+        case .pauseCharging:
+            guard enabled else { return }
+            do {
+                _ = try controller.perform(.disableCharging, backend: backend)
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "充电因温度暂停（fullOnce/校准 chargeFull 保活，写 CHTE 停充 + 回读校验通过）"
+                ))
+            } catch {
+                noteControlFailureLocked(error, events: &events, context: "保活热暂停写")
+            }
+        case .hold:
+            // 滞回带驻留：不重写（R-3）。无转移、无日志（防刷屏）。
+            break
+        case .keepAlive:
+            guard !enabled else { return }
+            do {
+                _ = try controller.perform(.enableCharging, backend: backend)
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "保活：CHTE 非使能（外部改写/热暂停恢复），已重写使能"
+                ))
+            } catch {
+                noteControlFailureLocked(error, events: &events, context: "保活重写")
+            }
         }
     }
 

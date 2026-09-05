@@ -372,7 +372,7 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "active", upperLimit: upper, hysteresis: hys,
                 autoDischargeEnabled: autoFlag, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
             ),
             events: &events
         )
@@ -428,7 +428,7 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
             ),
             events: &events
         )
@@ -458,7 +458,7 @@ final class DaemonCore: @unchecked Sendable {
             DaemonPolicy(
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
-                calibrationSchedule: policy.calibrationSchedule
+                calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal
             ),
             events: &events
         )
@@ -674,6 +674,7 @@ final class DaemonCore: @unchecked Sendable {
                     fullyCharged: snapshot.fullyCharged,
                     isCharging: snapshot.isCharging,
                     percent: snapshot.percent,
+                    temperatureC: snapshot.temperatureC,
                     backend: backend,
                     events: &events
                 )
@@ -773,10 +774,13 @@ final class DaemonCore: @unchecked Sendable {
                     // 期间持续可见（滞回带 [resume, upper) 内落 case 6 不标——
                     // 限充滞回语义，方案 §2.1；审查 M3 同构）。
                     let base = controller.decide(context: context)
+                    // v1.5（UD-4/R1 P2-3）：守卫阈值来源 = 锁内策略（未配置走
+                    // .default 40/37）——函数体内直接读，不参数化。
                     let guarded = ThermalGuard.guarded(
                         base: base,
                         context: context,
-                        temperatureC: snapshot.temperatureC
+                        temperatureC: snapshot.temperatureC,
+                        policy: policy.thermal ?? .default
                     )
                     _ = try controller.perform(guarded.action, backend: backend)
                     if guarded.tempPauseActive {
@@ -950,6 +954,12 @@ final class DaemonCore: @unchecked Sendable {
         status.calSchedEnabled = schedule.enabled
         status.calSchedIntervalDays = schedule.intervalDays
         status.calSchedStartHour = schedule.startHour
+        // Phase 5 v1.5：热暂停两键**恒填**（`policy.thermal ?? .default` 展开，UD-7
+        // ——照 calSched 先例，防默认配置用户被误判旧 daemon；可选字段
+        // decodeIfPresent——旧客户端解码缺席 → nil 兼容）。
+        let thermal = policy.thermal ?? .default
+        status.thermPauseCentiC = thermal.pauseCentiC
+        status.thermHysteresisCentiC = thermal.hysteresisCentiC
         if let last = calibrationState.lastCalibration {
             status.lastCalStart = last.startedAt
             status.lastCalEnd = last.endedAt

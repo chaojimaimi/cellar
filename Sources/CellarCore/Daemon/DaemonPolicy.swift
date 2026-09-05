@@ -35,11 +35,21 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 调度为非关键 opt-in 配置，不连累 mode/限值（CalibrationSchedulePolicy.validated
     /// 注记）。
     public var calibrationSchedule: CalibrationSchedulePolicy?
+    /// Phase 5 v1.5 充电热暂停策略（nil = 未配置，视为 .default 40/37）。⚠️ **F-1
+    /// 全构造点透传强制条款（v1.5 扩面，与 fan/calibrationSchedule 同守）**：
+    /// setLimits/disable/enable 三处显式构造都必须携带当前值，走 init 默认 nil 会
+    /// 把用户已配置的热暂停静默清空并落盘（与 0.4.1 F-1 同型事故）。
+    /// 合成 Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    /// 值域非法仅丢字段（PolicyStore.load 校验块）——照 calibrationSchedule 仅丢
+    /// 字段分层（UD-3：热暂停为保护配置但 default 40/37 保护仍在，不连累
+    /// mode/限值/风扇；勿照 fan 整包 nil）。
+    public var thermal: ThermalPolicy?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
-        calibrationSchedule: CalibrationSchedulePolicy? = nil
+        calibrationSchedule: CalibrationSchedulePolicy? = nil,
+        thermal: ThermalPolicy? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
@@ -47,6 +57,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         self.autoDischargeEnabled = autoDischargeEnabled
         self.fan = fan
         self.calibrationSchedule = calibrationSchedule
+        self.thermal = thermal
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
@@ -58,7 +69,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     public static func validated(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
-        calibrationSchedule: CalibrationSchedulePolicy? = nil
+        calibrationSchedule: CalibrationSchedulePolicy? = nil,
+        thermal: ThermalPolicy? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -67,7 +79,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         return DaemonPolicy(
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
             autoDischargeEnabled: autoDischargeEnabled, fan: fan,
-            calibrationSchedule: calibrationSchedule
+            calibrationSchedule: calibrationSchedule, thermal: thermal
         )
     }
 }
@@ -132,13 +144,33 @@ public struct PolicyStore: Sendable {
                 calibrationSchedule = nil
             }
         }
+        // Phase 5 v1.5：热暂停字段校验——**值域非法仅丢该字段**（UD-3 定版，照
+        // calibrationSchedule 仅丢字段分层：回落 default 40/37 保护仍在，不连累
+        // mode/限值/风扇；勿照 fan 整包 nil；Logger error 可见化）。类型错乱
+        //（整包 JSONDecoder 解码失败）走上方 decoded == nil → 整包 nil 落默认
+        // 策略（合成 Codable 行为，与 fan/calibrationSchedule 同形）。
+        var thermal: ThermalPolicy?
+        if let decodedThermal = decoded.thermal {
+            if let validatedThermal = ThermalPolicy.validated(
+                pauseCentiC: decodedThermal.pauseCentiC,
+                hysteresisCentiC: decodedThermal.hysteresisCentiC
+            ) {
+                thermal = validatedThermal
+            } else {
+                Self.log.error(
+                    "policy.json 热暂停字段值域非法（pause 应 3500-4500 / hysteresis 应 100-800 厘摄氏度），仅丢弃该字段（mode/限值/风扇不受连累，回落默认 40/37 保护仍在）"
+                )
+                thermal = nil
+            }
+        }
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
             hysteresis: decoded.hysteresis,
             autoDischargeEnabled: decoded.autoDischargeEnabled,
             fan: fan,
-            calibrationSchedule: calibrationSchedule
+            calibrationSchedule: calibrationSchedule,
+            thermal: thermal
         )
     }
 

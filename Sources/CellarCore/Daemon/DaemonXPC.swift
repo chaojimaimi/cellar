@@ -44,6 +44,11 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     public var lastCalStart: Int?
     public var lastCalEnd: Int?
     public var lastCalOutcome: String?
+    /// Phase 5 v1.5 热暂停配置回读（buildStatusLocked **恒填** `policy.thermal ??
+    /// .default` 展开，UD-7——照 calSched 三键先例，防默认配置用户被误判旧 daemon；
+    /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 / 旧客户端解码 → nil 兼容）。
+    public var thermPauseCentiC: Int?
+    public var thermHysteresisCentiC: Int?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -66,6 +71,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         lastCalStart: Int? = nil,
         lastCalEnd: Int? = nil,
         lastCalOutcome: String? = nil,
+        thermPauseCentiC: Int? = nil,
+        thermHysteresisCentiC: Int? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -86,6 +93,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.lastCalStart = lastCalStart
         self.lastCalEnd = lastCalEnd
         self.lastCalOutcome = lastCalOutcome
+        self.thermPauseCentiC = thermPauseCentiC
+        self.thermHysteresisCentiC = thermHysteresisCentiC
         self.timestamp = timestamp
     }
 }
@@ -128,7 +137,11 @@ public enum DaemonXPC {
     // DaemonStatus calSched 三键（恒填）与 lastCal 三键（上次校准记录回读），
     // 行为变更第七次破例 bump（install 后 getStatus 版本核对，防 CLI/App 对
     // stale daemon，UD-9）。
-    public static let daemonVersion = "0.9.0-alpha"
+    // 0.10.0-alpha（2026-09-05）：Phase 5 v1.5 热保护完整化——新增 setThermal 命令
+    // + DaemonStatus thermPauseCentiC/thermHysteresisCentiC 两键（恒填），行为变更
+    // 第八次破例 bump（install 后 getStatus 版本核对，防 CLI/App 对 stale daemon，
+    // UD-9；M4 发布批补 Info.plist/package-release.sh 两方）。
+    public static let daemonVersion = "0.10.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -161,11 +174,12 @@ public enum DaemonXPC {
     // MARK: - 请求/回包构造与校验（服务端与客户端共用）
 
     /// 构造请求字典（⚠️ Swift 的 ARC 自动管理 xpc 对象引用计数——调用方不得手动
-    /// xpc_retain/xpc_release，否则双重释放崩溃）。auto/fan/calSched 缺省 = 不发键
-    /// （daemon 缺席保持语义，照 auto 键先例；FanWire 内 nil 字段亦不发键）。
+    /// xpc_retain/xpc_release，否则双重释放崩溃）。auto/fan/calSched/thermal 缺省
+    /// = 不发键（daemon 缺席保持语义，照 auto 键先例；Wire 内 nil 字段亦不发键）。
     public static func makeMessage(
         cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil,
-        fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil
+        fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
+        thermal: ThermalWire? = nil
     ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
@@ -188,6 +202,10 @@ public enum DaemonXPC {
             if let intervalDays = calSched.intervalDays { xpc_dictionary_set_uint64(message, CalibrationScheduleWireKeys.intervalDays, intervalDays) }
             if let startHour = calSched.startHour { xpc_dictionary_set_uint64(message, CalibrationScheduleWireKeys.startHour, startHour) }
         }
+        if let thermal {
+            if let pause = thermal.pause { xpc_dictionary_set_uint64(message, ThermalWireKeys.pause, pause) }
+            if let hysteresis = thermal.hysteresis { xpc_dictionary_set_uint64(message, ThermalWireKeys.hysteresis, hysteresis) }
+        }
         return message
     }
 
@@ -202,9 +220,13 @@ public enum DaemonXPC {
     /// Phase 5 v1.4：setCalibrationSchedule 三键（calSchedEnabled/calSchedIntervalDays/
     /// calSchedStartHour）同款 UINT64 白名单 + anyKeyPresent 判定；值域校验（valid*）
     /// 由 XPCServer 臂负责。
+    /// Phase 5 v1.5：setThermal 两键（thermPauseCentiC/thermHysteresisCentiC）同款
+    /// UINT64 白名单 + anyThermalKeyPresent 判定；值域校验（validTherm*）由
+    /// XPCServer 臂负责。
     public static func validateRequest(
         _ msg: xpc_object_t
-    ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?, calSched: CalibrationScheduleWire?)? {
+    ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?,
+          calSched: CalibrationScheduleWire?, thermal: ThermalWire?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -261,9 +283,22 @@ public enum DaemonXPC {
         }
         let anyCalSchedKeyPresent = calSched.enabled != nil
             || calSched.intervalDays != nil || calSched.startHour != nil
+        // 热暂停两键：出现即必须 UINT64（类型混淆 → 整包拒绝）；缺席保持 nil。
+        var thermal = ThermalWire()
+        for (key, kind) in [
+            (ThermalWireKeys.pause, \ThermalWire.pause),
+            (ThermalWireKeys.hysteresis, \ThermalWire.hysteresis),
+        ] {
+            if let value = xpc_dictionary_get_value(msg, key) {
+                guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+                thermal[keyPath: kind] = xpc_dictionary_get_uint64(msg, key)
+            }
+        }
+        let anyThermalKeyPresent = thermal.pause != nil || thermal.hysteresis != nil
         return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis,
                 auto: auto, fan: anyFanKeyPresent ? fan : nil,
-                calSched: anyCalSchedKeyPresent ? calSched : nil)
+                calSched: anyCalSchedKeyPresent ? calSched : nil,
+                thermal: anyThermalKeyPresent ? thermal : nil)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -379,6 +414,17 @@ public struct DaemonXPCClient: Sendable {
         )
     }
 
+    /// Phase 5 v1.5：设置充电热暂停策略（可选字段缺席 = daemon 保持现值；**不改
+    /// mode**；值域 35-45°C / 滞回 1-8°C，保护不可被配置关闭——UD-2 值域钳制）。
+    /// 旧 daemon → 「未知命令」daemonError（detectStaleBeforeReject 升级提示既有
+    /// 闭环，R-4）。
+    public func setThermal(_ thermal: ThermalWire) throws -> DaemonStatus {
+        try exchange(
+            cmd: ThermalWireKeys.command, upper: 0, hysteresis: 0,
+            auto: nil, fan: nil, calSched: nil, thermal: thermal
+        )
+    }
+
     // MARK: - 内部
 
     /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
@@ -387,13 +433,15 @@ public struct DaemonXPCClient: Sendable {
     /// - ok=false → .daemonError(原文)
     private func exchange(
         cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil,
-        fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil
+        fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
+        thermal: ThermalWire? = nil
     ) throws -> DaemonStatus {
         // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
         // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
         let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
         let message = DaemonXPC.makeMessage(
-            cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto, fan: fan, calSched: calSched
+            cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto,
+            fan: fan, calSched: calSched, thermal: thermal
         )
         let waiter = ReplyWaiter()
 

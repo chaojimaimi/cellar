@@ -132,6 +132,16 @@ struct DoctorCommand: ParsableCommand {
             daemonStatus = nil
         }
 
+        // 检查 13：热暂停配置现态（daemon 回读 therm 两键；未运行或旧 daemon 缺键
+        // → nil → INFO 行渲染，Phase 5 v1.5）。
+        let thermalStatus: ThermalStatus?
+        if let thermPause = daemonStatus?.thermPauseCentiC,
+           let thermHysteresis = daemonStatus?.thermHysteresisCentiC {
+            thermalStatus = ThermalStatus(pauseCentiC: thermPause, hysteresisCentiC: thermHysteresis)
+        } else {
+            thermalStatus = nil
+        }
+
         // 检查 9：BTM 注册态（launchctl print 子进程；非 root 亦可读基本字段——
         // 2026-09-02 spike 实证；解析纯函数在 CellarCore，评审 P2-1 分层）。
         let btmOutput = runProcessCapture("/bin/launchctl", ["print", "system/com.cellar.daemon"]).output
@@ -166,7 +176,9 @@ struct DoctorCommand: ParsableCommand {
                 mdValue: fanMdValue,
                 tgRPM: fanTgRPM,
                 config: daemonStatus?.fan
-            )
+            ),
+            thermal: thermalStatus,
+            thermalProbeAttempted: true
         )
     }
 

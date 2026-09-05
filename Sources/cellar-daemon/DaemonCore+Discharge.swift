@@ -332,8 +332,13 @@ extension DaemonCore {
             let action: ChargingAction
             if let temperatureC {
                 let base = controller.decide(context: context)
+                // v1.5（UD-4/R1 P2-3）：守卫阈值来源 = 锁内策略（未配置走
+                // .default 40/37）——函数体内直接读，6 个调用行不参数化。
                 action = ThermalGuard.guarded(
-                    base: base, context: context, temperatureC: temperatureC
+                    base: base,
+                    context: context,
+                    temperatureC: temperatureC,
+                    policy: policy.thermal ?? .default
                 ).action
             } else {
                 events.append(LogEvent(

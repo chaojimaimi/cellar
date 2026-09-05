@@ -217,7 +217,9 @@ extension DaemonCore {
             // 读改写完成，此处避免双重写）。
             switch phase {
             case .chargeFull:
-                keepAliveChargingLocked(backend: backend, events: &events)
+                // v1.5 UD-5：chargeFull 相保活同入热守卫（盲区收编——本拍快照
+                // 温度穿透，三分支判定与 fullOnce 保活同源）。
+                keepAliveChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             case .hold:
                 holdLimitChargingLocked(backend: backend, events: &events)
             case .discharge:

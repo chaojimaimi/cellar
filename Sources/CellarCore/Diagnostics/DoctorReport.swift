@@ -108,6 +108,12 @@ public struct DoctorInputs: Sendable {
     /// 检查 12（Phase 5 v1.1）：风扇控制只读探测（键在位矩阵 + F0Md/F0Tg 现态 +
     /// daemon 配置现态；nil = 未探测不渲染——异常现态可见化，配合 §6.5 残留窗口）。
     public let fanProbe: FanDoctorProbe?
+    /// 检查 13（Phase 5 v1.5）：热暂停配置现态（daemon 回读；nil = 旧 daemon 未
+    /// 上报/未运行——`thermalProbeAttempted` 区分「未探测」与「已探测但不可得」，
+    /// 后者渲染 INFO 行、前者不渲染——检查 8/9 同款条件渲染兼容约束）。
+    public let thermal: ThermalStatus?
+    /// 检查 13 是否已探测（DoctorCommand 恒 true——getStatus 总会尝试）。
+    public let thermalProbeAttempted: Bool
 
     public init(
         isRoot: Bool,
@@ -126,7 +132,9 @@ public struct DoctorInputs: Sendable {
         btmProbeAttempted: Bool = false,
         versionMatrix: VersionMatrix? = nil,
         dischargeProbe: DischargeProbe? = nil,
-        fanProbe: FanDoctorProbe? = nil
+        fanProbe: FanDoctorProbe? = nil,
+        thermal: ThermalStatus? = nil,
+        thermalProbeAttempted: Bool = false
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -145,6 +153,8 @@ public struct DoctorInputs: Sendable {
         self.versionMatrix = versionMatrix
         self.dischargeProbe = dischargeProbe
         self.fanProbe = fanProbe
+        self.thermal = thermal
+        self.thermalProbeAttempted = thermalProbeAttempted
     }
 }
 
@@ -197,6 +207,11 @@ public enum DoctorReportGenerator {
         // Phase 5 v1.1 检查 12：风扇控制（条件渲染同 9-11——fanProbe 缺省零渲染）。
         if let fanCheck = fanControl(inputs) {
             checks.append(fanCheck)
+        }
+        // Phase 5 v1.5 检查 13：热暂停配置（已探测但 daemon 缺席 → INFO 行，照检查
+        // 8/9 先例；未探测缺省形态零渲染——既有 count 断言不受影响）。
+        if let thermalCheck = thermalConfig(inputs) {
+            checks.append(thermalCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -385,5 +400,35 @@ public enum DoctorReportGenerator {
                 + String(format: "%.1f", Double(config.thresholdCentiC) / 100) + "°C）")
         }
         return DoctorCheck(name: "风扇控制", status: status, detail: parts.joined(separator: "；"))
+    }
+
+    // MARK: - 检查 13：热暂停配置（Phase 5 v1.5 增补；条件渲染同 9-12）
+
+    /// daemon 回读热暂停配置现态 + 是否默认值（UD-6：文案明示与风扇阈值相互独立；
+    /// 恢复点 = 暂停点 − 滞回 派生，不单列）。daemon 未运行 → INFO（沿用检查 8
+    /// 的安装提示覆盖，本项显式说明读不到配置）；在线但未上报两键 = 旧 daemon
+    ///（R-4）→ INFO 升级提示。
+    private static func thermalConfig(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.thermalProbeAttempted else { return nil }
+        guard let thermal = inputs.thermal else {
+            if inputs.daemonStatus != nil {
+                return DoctorCheck(
+                    name: "热暂停配置", status: .info,
+                    detail: "守护进程在线但未上报热暂停配置（旧版本 daemon，建议重装升级）"
+                )
+            }
+            return DoctorCheck(
+                name: "热暂停配置", status: .info,
+                detail: "守护进程未运行，无法读取热配置"
+            )
+        }
+        let isDefault = thermal.pauseCentiC == ThermalPolicy.default.pauseCentiC
+            && thermal.hysteresisCentiC == ThermalPolicy.default.hysteresisCentiC
+        let detail = "热暂停配置：≥"
+            + String(format: "%.1f", Double(thermal.pauseCentiC) / 100)
+            + "°C 暂停 / 滞回 "
+            + String(format: "%.1f", Double(thermal.hysteresisCentiC) / 100)
+            + "°C（" + (isDefault ? "默认" : "自定义") + "；与风扇阈值相互独立）"
+        return DoctorCheck(name: "热暂停配置", status: .pass, detail: detail)
     }
 }

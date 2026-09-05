@@ -7,7 +7,7 @@ import CellarCore
 ///
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
-///   setCalibrationSchedule` 仅 **euid==0 或
+///   setCalibrationSchedule/setThermal` 仅 **euid==0 或
 ///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
 ///   admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/无数据泄露），
 ///   否则错误回包（ok=false + 原文）。
@@ -213,6 +213,33 @@ final class XPCServer: @unchecked Sendable {
                 sendStatus(status, to: peer)
             } catch {
                 // CalibrationScheduleSetError（参数越界）→ 原文回传（App 上屏）。
+                send(errorReply(String(describing: error)), to: peer.connection)
+            }
+
+        case ThermalWireKeys.command:
+            // Phase 5 v1.5：setThermal（鉴权门同变更命令；两键值域校验 validTherm*
+            // 与 ThermalPolicy.validated 同源——CellarCoreCheck 同源测试；缺席保持
+            // 合并在 DaemonCore.setThermalConfig）。
+            guard authorize(peer, operation: "setThermal") else { return }
+            guard let thermal = request.thermal else {
+                send(errorReply("setThermal 缺少热暂停参数"), to: peer.connection)
+                return
+            }
+            // 两键值域校验（类型混淆已由 validateRequest 整包拒绝——此处只查值域；
+            // 3500...4500 / 100...800 与 validated 同源——保护不可被误配关闭，R-1）。
+            if let value = thermal.pause, !ThermalWireKeys.validPause(value) {
+                send(errorReply("热暂停阈值参数越界（3500-4500 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            if let value = thermal.hysteresis, !ThermalWireKeys.validHysteresis(value) {
+                send(errorReply("热暂停滞回参数越界（100-800 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            do {
+                let status = try core.setThermalConfig(thermal)
+                sendStatus(status, to: peer)
+            } catch {
+                // ThermalSetError（参数越界）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
 
