@@ -36,7 +36,15 @@ struct ActionSectionView: View {
                     Label(theme.word(.actionFullOnce), systemImage: "bolt.fill")
                 }
                 .controlSize(.small)
-                .disabled(statusController.busy)
+                // Phase 5 v1.7 M3：原生限充激活 → 禁用（守卫口径 active，与 daemon
+                // fullOnceStartPrecondition 拒绝行为一致；unknown 态放行 = fail-open）。
+                .disabled(statusController.busy || statusController.nativeLimitActive)
+                if let hintWord = statusController.nativeLimitFullOnceHintWord {
+                    Text(theme.word(hintWord))
+                        .font(.caption2)
+                        .foregroundStyle(theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 dischargeSection
             }
         }
@@ -166,6 +174,7 @@ struct ActionSectionView: View {
 /// 与回调经 statusController 派生，组件零 App 符号依赖（CellarUICheck 可独立渲染）。
 struct CalibrationSection: View {
     @EnvironmentObject private var statusController: StatusController
+    @Environment(\.cellarTheme) private var theme
 
     var body: some View {
         CalibrationSectionView(
@@ -178,7 +187,10 @@ struct CalibrationSection: View {
             actionIdle: statusController.action == nil,
             busy: statusController.busy,
             onStart: { statusController.calibrateStart() },
-            onCancel: { statusController.calibrateCancel() }
+            onCancel: { statusController.calibrateCancel() },
+            // 原生限充守卫辅助文案（v1.7 M3：词汇位 → 双口径文案，StatusController
+            // 判定口径，视图层仅取词；review P2-1 后走校准口径词汇位）。
+            nativeLimitHint: statusController.nativeLimitCalibrationHintWord.map(theme.word)
         )
     }
 }

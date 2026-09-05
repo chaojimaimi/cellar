@@ -125,23 +125,57 @@ public enum OneShotStartRejection: Error, Equatable, Sendable, CustomStringConve
     case noExternalPower
     /// action.json 写入失败（动作不启动——持久化是动作存活的前提）。
     case persistenceFailed
+    /// 原生限充阻断（Phase 5 v1.7 M2，方案 §3.1——校准臂 CalibrationStartRejection
+    /// 平行同构 case：任何未终止且 <100 的原生策略都会卡死充满判定）。关联值 =
+    /// manualSocLimit（仅手动策略最小值；nil = 仅非手动策略/OBC 等）——文案双口径
+    /// （R2 P1：「请先在系统设置中关闭」只对手动限充成立）。
+    case nativeChargeLimit(socLimit: Int?)
 
     public var message: String {
         switch self {
         case .modeNotActive: return "「充满一次」需要限充处于启用状态（当前已停用）"
         case .noExternalPower: return "「充满一次」需要连接外接电源"
         case .persistenceFailed: return "「充满一次」启动失败：无法写入动作文件"
+        case .nativeChargeLimit(let manual):
+            if let manual {
+                return "系统充电上限已激活（\(manual)%），「充满一次」需充满 100%——请先在系统设置中关闭"
+            }
+            return "检测到系统充电策略占用，「充满一次」需充满 100%"
         }
     }
 
     public var description: String { message }
 }
 
+/// 守卫 fail-open warn（fullOnceStartPrecondition 为无类型属主的自由函数；Logger
+/// Sendable——照各类型 static log 同源惯例，Phase 5 v1.7 M2）。
+private let nativeLimitGuardLog = Logger(subsystem: "com.cellar", category: "oneshot-guard")
+
 /// fullOnce 启动前置（规格 §1.1/§1.3）：外接电源 && mode == "active"。
 /// externalConnected 为 nil（快照失败且无上次已知值）→ 拒绝（不无据启动）。
-public func fullOnceStartPrecondition(mode: String, externalConnected: Bool?) -> OneShotStartRejection? {
+///
+/// Phase 5 v1.7 M2 原生限充守卫（方案 §3.1，挂点之二——校准臂
+/// startCalibrationLocked 平行）：`nativeLimit.blockingPolicies` 非空（未终止且
+/// <100，不限 reason）→ 拒绝（fail-closed——明确阻断必须拒）；检测器自身故障
+/// （detectorError）→ **放行 + os_log warn**（fail-open 唯一边界——降级后果 =
+/// 若确有原生限充，充满按既有 timeout 终态收敛，非新增机制）；nil（调用方未
+/// 接线/既有用例）→ 跳过本判定。拒绝发生在动作轨 startIfIdle 之前 → 无锚点写入。
+public func fullOnceStartPrecondition(
+    mode: String,
+    externalConnected: Bool?,
+    nativeLimit: NativeChargeLimitReading? = nil
+) -> OneShotStartRejection? {
     guard mode == "active" else { return .modeNotActive }
     guard externalConnected == true else { return .noExternalPower }
+    if let nativeLimit {
+        if nativeLimit.detectorError {
+            nativeLimitGuardLog.warning(
+                "fullOnce 前置：原生限充检测失败（detectorError）——fail-open 放行（若确有原生限充，充满按既有超时收敛）"
+            )
+        } else if !nativeLimit.blockingPolicies.isEmpty {
+            return .nativeChargeLimit(socLimit: nativeLimit.manualSocLimit)
+        }
+    }
     return nil
 }
 

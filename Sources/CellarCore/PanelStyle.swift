@@ -78,4 +78,25 @@ public enum VocabularyWord: String, CaseIterable, Sendable {
     case dashboardStateHolding
     /// 仪表板状态徽章电池态（native「电池供电」；amber「电池供电 · 开窖出行」）。
     case dashboardStateBattery
+    // Phase 5 v1.7 M3：原生限充呈现词汇（方案 §4.1，注记行/深链按钮/校准守卫辅助
+    // 文案经 theme.word() 双风格词汇化；注记行动态 N 以 %lld%% 占位——消费侧
+    // String(format:) 填充，nativeConstant 兜底同形）。
+    /// 仪表板原生限充注记行（native「系统限充 N% 生效中」；amber 含窖顶语汇）。
+    /// 消费侧以 String(format:) 填充 N——值内 `%%` 转义百分号（catalog 同
+    /// status.applied 先例）。
+    case nativeLimitNote
+    /// 冲突横幅深链按钮（native「打开系统电池设置」；amber 出窖语汇）。
+    case nativeLimitOpenSettings
+    /// 校准/fullOnce 按钮禁用辅助文案——手动限充口径（manualSocLimit 有值；
+    /// 与 daemon 拒绝文案同语义，App 侧为提前禁用提示，方案 §4.1 双口径）。
+    case nativeLimitCalibrationHintManual
+    /// 校准/fullOnce 按钮禁用辅助文案——通用口径（仅非手动策略/OBC 等；
+    /// manualSocLimit == nil 时选用）。
+    case nativeLimitCalibrationHintGeneric
+    /// fullOnce（充满一次）按钮禁用辅助文案——手动限充口径（review P2-1：
+    /// 主语必须是「充满一次」，不得复用校准口径词汇——按钮下方提示讲校准
+    /// 属主语失实）。
+    case nativeLimitFullOnceHintManual
+    /// fullOnce（充满一次）按钮禁用辅助文案——通用口径（仅非手动策略/OBC 等）。
+    case nativeLimitFullOnceHintGeneric
 }

@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0-alpha] - 2026-09-06
+
+### Added
+
+- **原生限充协调（macOS 26.4+）**：检测系统设置中的「充电上限」（80/85/90/95/100% 五档）注册态——经实测确认原生机制为 powerd 软件策略（`ChargeCtrlPolicy`/`manualChargeLimit`，非 SMC 固件键），Cellar 对其只读、执法路径零改动：
+  - 仪表板注记行「系统限充 N% 生效中」（仅手动策略口径）与冲突横幅（原生值高于 Cellar 上限时提示二选一，附「打开系统电池设置」深链）
+  - **校准 / 充满一次守卫**：原生限充激活时前置拒绝（手动路径返回明确文案；调度路径静默顺延），防止校准永远到不了 100%
+  - `doctor` 新增第十五项「原生限充共存」（警告 / 提示 / 失败 / 未知分级，摘要文案同步修正为十五项）；`status` 新增原生段与用户域 UI 镜像行；`status --json` daemon 段携带 `nativeLimit` 子对象
+  - 兼容性：`DaemonStatus.nativeLimit` 可选字段缺席保持（旧 daemon 不上报 → App/CLI 显示升级提示）；全部控制类回包恒携带该字段（避免「旧 daemon」瞬态误判）
+- 测试栈：CellarCoreCheck 438 → 476 场景（原生限充检测 23 + wire/守卫 15 + doctor 分支），快照 234 → 246 张（注记行 / 冲突横幅 × 三风格 × 双色板），本地化 387 → 400 键，覆盖率 88.95% → 89.81%
+
+### Changed
+
+- daemon `getStatus` 与全部控制类回包统一附加 `nativeLimit`（每请求一次只读解析 /Library 域 powerd 策略注册表，不进执法 tick）
+
 ## [0.12.0-alpha] - 2026-09-05
 
 ### Added

@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -348,12 +348,23 @@ struct Main {
         // Phase 5 v1.2：时间估算场景域（方案 §3.6——充电/放电外推、holding 不
         // 适用、短窗/无变化不可信、钳制上下界、跨 gap 重开、态切换清环（跳变
         // 断段）、斜率反向、恰好到达上限）。
-        try runTimeEstimatorDomainScenarios()
+        // （M1 附带修正：原 `try` 冗余——该域函数非 throws，触发 no-calls-throwing
+        // 编译警告，与本域零行为差，服务于「swift build 零警告」验收。）
+        runTimeEstimatorDomainScenarios()
         // Phase 5 v1.3：统计域场景（方案 §2.3 十二项：往返/分桶边界/AVG/功率符号
         // 推导/retention prune/损坏重建/user_version 迁移/WAL 并发/空库/同 ts
         // OR REPLACE/NULL 容错/桶末态折叠——StatsStore + StatsBucketing 直测，
         // DB 全临时目录注入）。
         await runStatsDomainScenarios()
+        // Phase 5 v1.7 M1：原生限充检测器场景域（方案 §2.2 清单：平层归档解析/
+        // CF$UID 包装/策略级异常丢弃/blockingPolicies/manualSocLimit 双口径/
+        // detectorError 三态形态/位常量钉死/notChargingReason 提取——纯 Data
+        // 注入，不触碰真实 plist）。
+        try runNativeLimitDomainScenarios()
+        // Phase 5 v1.7 M2：原生限充 daemon 接线场景域（wire 映射三态/DaemonStatus
+        // 缺席保持/校准与 fullOnce 守卫拒绝文案双口径/doctor 第 15 项分支——纯函数
+        // 面，不触碰真实 plist）。
+        try runNativeLimitWireDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
@@ -2380,8 +2391,8 @@ struct Main {
         }
 
         // 用例 106：vocabularyKey 完整性——3 风格 × 全词条产出合法 key
-        // （非空 + 前缀 vocabulary.<style>. + 词条名落尾）+ 词条集合钉死 16 个
-        // （延后词条不建死键，§3.5）。
+        // （非空 + 前缀 vocabulary.<style>. + 词条名落尾）+ 词条集合钉死 20 个
+        // （延后词条不建死键，§3.5；v1.7 M3 新增 4 见下方文案）。
         do {
             var allOK = true
             for style in [PanelStyle.native, .amber, .industrial] {
@@ -2398,7 +2409,7 @@ struct Main {
                     == "vocabulary.amber.statusHoldingExternal",
                 "用例106", "key 形态钉死：vocabulary.<style>.<word>（§3.6 示例 = 真实词条名）"
             )
-            check(VocabularyWord.allCases.count == 16, "用例106", "词条数 = 16（对账表定版 7 成员 + WP2' 新增 4：powerFlow×3 + health×1 + 走查批 F1 新增 5：dashboard*×5，不多不少）")
+            check(VocabularyWord.allCases.count == 22, "用例106", "词条数 = 22（对账表定版 7 成员 + WP2' 新增 4：powerFlow×3 + health×1 + 走查批 F1 新增 5：dashboard*×5 + v1.7 M3 新增 4：nativeLimitNote/OpenSettings/CalibrationHintManual/CalibrationHintGeneric + review P2-1 新增 2：FullOnceHintManual/Generic，不多不少）")
         }
 
         // 用例 107：AppConfigStore.update 原子读改写（评审 P0-1 定版）——

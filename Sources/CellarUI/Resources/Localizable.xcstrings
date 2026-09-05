@@ -1327,6 +1327,23 @@
         }
       }
     },
+    "dashboard.nativeLimit.conflict": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System charge limit %lld%% is above the Cellar limit %lld%% — charging follows Cellar; adjust one of them to resolve"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统限充 %lld%% 高于 Cellar 上限 %lld%%——充电实际以 Cellar 为准，如需生效请调整其中之一"
+          }
+        }
+      }
+    },
     "dashboard.panel.flow": {
       "extractionState": "manual",
       "localizations": {
@@ -5628,6 +5645,108 @@
         }
       }
     },
+    "vocabulary.amber.nativeLimitCalibrationHintGeneric": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A system charging policy is guarding the cellar door — calibration requires a full 100%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "窖门由系统充电策略值守，校准需充满 100%"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.nativeLimitCalibrationHintManual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The system charge limit is active — calibration requires a full 100% charge. Step outside and turn it off in Battery Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统充电上限已激活，校准需充满 100%——请先出窖，在系统设置中关闭"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.nativeLimitFullOnceHintGeneric": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A system charging policy is guarding the cellar door — a full once requires a full 100%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "窖门由系统充电策略值守，充满一次需充满 100%"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.nativeLimitFullOnceHintManual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The system charge limit is active — a full once requires a full 100% charge. Step outside and turn it off in Battery Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统充电上限已激活，充满一次需充满 100%——请先出窖，在系统设置中关闭"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.nativeLimitNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System charge limit %lld%% active · Above the cellar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统限充 %lld%% 生效中 · 窖顶之律"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.nativeLimitOpenSettings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Battery Settings · Step outside"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出窖 · 打开电池设置"
+          }
+        }
+      }
+    },
     "vocabulary.amber.powerFlowCharging": {
       "extractionState": "manual",
       "localizations": {
@@ -5896,6 +6015,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "充电上限"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitCalibrationHintGeneric": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A system charging policy is holding the charge — calibration requires a full 100%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到系统充电策略占用，校准需充满 100%"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitCalibrationHintManual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The system charge limit is active — calibration requires a full 100% charge. Turn it off in Battery Settings first"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统充电上限已激活，校准需充满 100%，请先在系统设置中关闭"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitFullOnceHintGeneric": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A system charging policy is active — Charge to Full requires a full 100%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到系统充电策略占用，充满一次需充满 100%"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitFullOnceHintManual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The system charge limit is active — Charge to Full requires a full 100% charge. Turn it off in Battery Settings first"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统充电上限已激活，充满一次需充满 100%——请先在系统设置中关闭"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System charge limit %lld%% active"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统限充 %lld%% 生效中"
+          }
+        }
+      }
+    },
+    "vocabulary.native.nativeLimitOpenSettings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Battery Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开系统电池设置"
           }
         }
       }

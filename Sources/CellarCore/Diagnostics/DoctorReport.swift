@@ -120,6 +120,13 @@ public struct DoctorInputs: Sendable {
     public let chargeSchedule: ChargeScheduleDoctorProbe?
     /// 检查 14 是否已探测（DoctorCommand 恒 true——getStatus 总会尝试）。
     public let chargeScheduleProbeAttempted: Bool
+    /// 检查 15（Phase 5 v1.7）：原生限充注册态 wire 三态（detectorError → known=false；
+    /// nil = 未探测不渲染——`nativeLimitProbeAttempted` 条件渲染兼容约束，检查 13/14
+    /// 同款）。数据源 = CLI 侧直接读 /Library powerd 策略 plist（0644 用户态可读，
+    /// D4）+ `NativeChargeLimit.wireStatus`（与 daemon getStatus 同源——三方一致口径）。
+    public let nativeLimit: NativeLimitStatus?
+    /// 检查 15 是否已探测（DoctorCommand 恒 true——plist 读失败亦为 known=false 形态）。
+    public let nativeLimitProbeAttempted: Bool
 
     public init(
         isRoot: Bool,
@@ -142,7 +149,9 @@ public struct DoctorInputs: Sendable {
         thermal: ThermalStatus? = nil,
         thermalProbeAttempted: Bool = false,
         chargeSchedule: ChargeScheduleDoctorProbe? = nil,
-        chargeScheduleProbeAttempted: Bool = false
+        chargeScheduleProbeAttempted: Bool = false,
+        nativeLimit: NativeLimitStatus? = nil,
+        nativeLimitProbeAttempted: Bool = false
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -165,6 +174,8 @@ public struct DoctorInputs: Sendable {
         self.thermalProbeAttempted = thermalProbeAttempted
         self.chargeSchedule = chargeSchedule
         self.chargeScheduleProbeAttempted = chargeScheduleProbeAttempted
+        self.nativeLimit = nativeLimit
+        self.nativeLimitProbeAttempted = nativeLimitProbeAttempted
     }
 }
 
@@ -243,6 +254,10 @@ public enum DoctorReportGenerator {
         // Phase 5 v1.6 检查 14：充电日程（条件渲染同 9-13——probe 缺省零渲染）。
         if let scheduleCheck = chargeSchedule(inputs) {
             checks.append(scheduleCheck)
+        }
+        // Phase 5 v1.7 检查 15：原生限充共存（条件渲染同 9-14——attempted 缺省零渲染）。
+        if let nativeCheck = nativeLimitCoexistence(inputs) {
+            checks.append(nativeCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -509,5 +524,67 @@ public enum DoctorReportGenerator {
     /// 分钟数 → HH:mm 钟面文本。
     private static func clockText(_ minute: Int) -> String {
         String(format: "%02d:%02d", minute / 60, minute % 60)
+    }
+
+    // MARK: - 检查 15：原生限充共存（Phase 5 v1.7 增补；条件渲染同 9-14）
+
+    /// 口径 = 守卫口径 blockingPolicies（物理执法事实，非手动过滤——方案 §3.3）。
+    /// 判定分支（文案「请先在系统设置中关闭」只对手动限充成立，R2 P1 双口径）：
+    /// - active ∧ 校准进行中（daemon 回读 isCalibrationAction）→ **FAIL**（校准充满
+    ///   判据被破坏——优先级最高）；
+    /// - active ∧ socLimit > L_c（Cellar 执法上限 = daemon mode=="active" 的
+    ///   upperLimit）→ **WARN**（Cellar 执法生效、原生永不触发，提示二选一）；
+    /// - active ∧ socLimit ≤ L_c → **INFO**（原生先执法，等效原生值——Cellar 让位）；
+    /// - active ∧ daemon 未运行/未执法（L_c nil）→ INFO（等效原生值）；
+    /// - known=false（detectorError）→ INFO「未知」（不计失败——守卫已 fail-open）；
+    /// - 无阻断策略 → PASS 轻提示（注册态）。
+    private static func nativeLimitCoexistence(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.nativeLimitProbeAttempted else { return nil }
+        guard let wire = inputs.nativeLimit else {
+            return DoctorCheck(
+                name: "原生限充共存", status: .info,
+                detail: "原生限充状态不可得（未探测）"
+            )
+        }
+        guard wire.known else {
+            return DoctorCheck(
+                name: "原生限充共存", status: .info,
+                detail: "原生限充：检测未知（策略文件读取或解析失败，不计失败）"
+            )
+        }
+        guard wire.active, let nativeLimit = wire.socLimit else {
+            return DoctorCheck(
+                name: "原生限充共存", status: .pass,
+                detail: "未检测到原生限充策略（注册态）"
+            )
+        }
+        if inputs.daemonStatus?.isCalibrationAction == true {
+            let hint = wire.manualSocLimit != nil
+                ? "请先在系统设置中关闭充电上限再校准"
+                : "请先关闭该系统充电策略再校准"
+            return DoctorCheck(
+                name: "原生限充共存", status: .fail,
+                detail: "原生限充 \(nativeLimit)% 与校准冲突：充满阶段无法到达 100%（校准将按超时中止）——\(hint)"
+            )
+        }
+        // L_c 口径：daemon mode=="active" 的 upperLimit（disabled/未运行 = Cellar
+        // 不执法 → 无「Cellar 先执法」前提，按原生等效值提示）。
+        if let cellarLimit = inputs.daemonStatus.flatMap({ $0.mode == "active" ? $0.upperLimit : nil }) {
+            if nativeLimit > cellarLimit {
+                return DoctorCheck(
+                    name: "原生限充共存", status: .warn,
+                    detail: "原生限充 \(nativeLimit)% 高于 Cellar 上限 \(cellarLimit)%：Cellar 执法生效，"
+                        + "原生策略不会触发（等效 \(cellarLimit)%）——建议二选一（关闭原生限充或停用 Cellar）"
+                )
+            }
+            return DoctorCheck(
+                name: "原生限充共存", status: .info,
+                detail: "原生限充 \(nativeLimit)% 不高于 Cellar 上限 \(cellarLimit)%：原生先执法，等效 \(nativeLimit)%"
+            )
+        }
+        return DoctorCheck(
+            name: "原生限充共存", status: .info,
+            detail: "原生限充 \(nativeLimit)% 生效中（Cellar daemon 未运行或未启用执法——等效原生值）"
+        )
     }
 }

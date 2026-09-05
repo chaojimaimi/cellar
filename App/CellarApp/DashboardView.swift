@@ -1,3 +1,4 @@
+import AppKit
 import CellarCore
 import CellarUI
 import SwiftUI
@@ -23,6 +24,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                nativeLimitRegion
                 hero
                 tiles
                 cards
@@ -138,6 +140,45 @@ struct DashboardView: View {
             .overlay(
                 Capsule().strokeBorder(emphasized ? theme.accent.opacity(0.35) : theme.secondaryText.opacity(0.45))
             )
+    }
+
+    // MARK: - 原生限充区（Phase 5 v1.7 M3 §4.1）
+
+    /// 原生限充呈现区（冲突横幅 + 注记行，两者可并存；注记行不抢主状态——
+    /// 状态徽章/停充语义零改动）。三态门控：nativeLimit 缺席（旧 daemon）→
+    /// 区域整体隐藏；known=false（检测未知）→ 不渲染（fail-open 对齐）；
+    /// known=true 才进入呈现判定（方案 §4.1 消费口径分工）。横幅在前（照
+    /// PanelView AlertBanner 置顶先例——警示级先行，注记行随后）。
+    @ViewBuilder
+    private var nativeLimitRegion: some View {
+        if let native = statusController.nativeLimitStatus, native.known {
+            // 冲突横幅（口径 = manualSocLimit > L_c）：Cellar 执法在位（mode !=
+            // disabled）才成立——停用态原生值本就生效，无冲突可言（照 doctor
+            // 检查 15 的执法/未执法分支语义）。
+            if let status = statusController.daemonStatus,
+               status.mode != "disabled",
+               let manual = native.manualSocLimit,
+               manual > status.upperLimit {
+                NativeLimitConflictBanner(
+                    nativeSocLimit: manual,
+                    cellarLimit: status.upperLimit,
+                    onOpenSettings: Self.openBatterySettings
+                )
+            }
+            // 注记行（口径 = manualSocLimit，仅手动策略；nil 不显示）。
+            if native.active, let manual = native.manualSocLimit {
+                NativeLimitNoteRow(socLimit: manual)
+            }
+        }
+    }
+
+    /// 深链「打开系统电池设置」（force unwrap 规避：锚构造失败 → 通用系统设置
+    /// 锚降级；再失败不动作——不 crash 不静默崩溃面）。
+    private static func openBatterySettings() {
+        let url = URL(string: "x-apple.systemsettings:com.apple.settings.battery")
+            ?? URL(string: "x-apple.systemsettings:")
+        guard let url else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - 英雄区

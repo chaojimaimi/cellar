@@ -70,6 +70,13 @@ public enum CalibrationStartRejection: Error, Equatable, Sendable, CustomStringC
     case capabilityUnavailable
     /// action.json 写入失败（动作不启动——持久化是动作存活的前提）。
     case persistenceFailed
+    /// 原生限充阻断（Phase 5 v1.7 M2，方案 §3.1：任何未终止且 <100 的原生策略都会
+    /// 卡死充满相——守卫口径 blockingPolicies 不限 reason）。关联值 = manualSocLimit
+    /// （仅手动策略最小值；nil = 仅非手动策略/OBC 等系统策略）——文案双口径（R2 P1：
+    /// 「请先在系统设置中关闭」只对手动限充成立）。拒绝发生在校准态机进入之前
+    /// → 无 startedAt、无锚点、无残留；调度臂落入既有静默顺延路径（DaemonCore.swift
+    /// generic catch，零新增终态语义）。
+    case nativeChargeLimit(socLimit: Int?)
 
     public var message: String {
         switch self {
@@ -78,6 +85,11 @@ public enum CalibrationStartRejection: Error, Equatable, Sendable, CustomStringC
         case .actionOccupied: return "有其他动作进行中，请先完成或取消"
         case .capabilityUnavailable: return "当前机型不支持校准功能"
         case .persistenceFailed: return "「电池校准」启动失败：无法写入动作文件"
+        case .nativeChargeLimit(let manual):
+            if let manual {
+                return "系统充电上限已激活（\(manual)%），校准需充满 100%——请先在系统设置中关闭"
+            }
+            return "检测到系统充电策略占用，校准需充满 100%"
         }
     }
 

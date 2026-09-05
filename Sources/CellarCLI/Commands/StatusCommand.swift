@@ -149,6 +149,7 @@ struct StatusCommand: ParsableCommand {
             let status = try DaemonXPCClient().getStatus()
             DaemonCommandHelpers.printStatus(status)
             printFanLine(status)
+            printNativeLine(status)
             printRouteLine()
         } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
             if FileManager.default.fileExists(atPath: DaemonInstaller.plistPath) {
@@ -214,6 +215,47 @@ struct StatusCommand: ParsableCommand {
         case .twoStage: return "两级分段"
         case .emergency: return "全速应急"
         }
+    }
+
+    // MARK: - Phase 5 v1.7 原生限充行（方案 §3.3 CLI 段）
+
+    /// 原生限充行（注册态；`--json` 的 daemon 段经 DaemonStatus 直接 encode 自动携带
+    /// nativeLimit 子对象，本函数只服务人读路径）。三态：nil = 旧 daemon 未上报
+    /// （照风扇行升级提示）；known=false = 检测未知；active = N% 注册（守卫口径
+    /// blocking 最小值）；inactive = 未注册。CLI 输出恒中文（不本地化，既有惯例）。
+    private func printNativeLine(_ status: DaemonStatus) {
+        guard let native = status.nativeLimit else {
+            print("原生限充：旧版守护进程未上报（升级后可查看）")
+            return
+        }
+        guard native.known else {
+            print("原生限充：检测未知（策略文件读取失败）")
+            return
+        }
+        guard native.active, let socLimit = native.socLimit else {
+            print("原生限充：未注册")
+            return
+        }
+        print("原生限充：\(socLimit)% 注册")
+        printNativeMirrorLine()
+    }
+
+    /// 用户域 UI 镜像行（方案 §3.3「本地 UI 镜像行」，review P2-2 补齐）——
+    /// `~/Library/Preferences/com.apple.batteryui.charging.mac.plist` 平 plist 键
+    /// `com.apple.batteryui.charging.mac.prior.limit`。仅镜像值存在时打印（缺席 =
+    /// 用户从未用过原生 UI，常态不打印不告警）；daemon 不读用户域（D4），此行
+    /// 只能由 CLI 用户态读取。展示参考，无判定权（注册态口径见 printNativeLine）。
+    private func printNativeMirrorLine() {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/com.apple.batteryui.charging.mac.plist")
+        guard let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil),
+              let dict = plist as? [String: Any],
+              let value = dict["com.apple.batteryui.charging.mac.prior.limit"] as? Int else {
+            return
+        }
+        print("UI 镜像：\(value)%（用户最近设置值）")
     }
 
     // MARK: - 后端与控制键（SMC 路径）

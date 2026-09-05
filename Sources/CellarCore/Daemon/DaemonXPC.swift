@@ -56,6 +56,11 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     public var scheduleJson: String?
     /// 当前命中窗口条目 id（state 内存缓存读；nil = 无在窗应用/旧 daemon）。
     public var scheduleActiveId: String?
+    /// Phase 5 v1.7 原生限充注册态（daemon 在 getStatus 快照时 load() 每请求填充，
+    /// 方案 §3.2——不进 enforce tick；三态形态由 NativeChargeLimit.wireStatus 钉死）。
+    /// 可选字段 + 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容
+    /// （App 提示升级），照 fan/autoDischargeEnabled 先例。
+    public var nativeLimit: NativeLimitStatus?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -82,6 +87,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         thermHysteresisCentiC: Int? = nil,
         scheduleJson: String? = nil,
         scheduleActiveId: String? = nil,
+        nativeLimit: NativeLimitStatus? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -106,7 +112,37 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.thermHysteresisCentiC = thermHysteresisCentiC
         self.scheduleJson = scheduleJson
         self.scheduleActiveId = scheduleActiveId
+        self.nativeLimit = nativeLimit
         self.timestamp = timestamp
+    }
+}
+
+/// Phase 5 v1.7 原生限充状态载荷（DaemonStatus.nativeLimit 可选字段；旧 daemon
+/// 回包缺席 → nil，App 提示升级，照 fan: FanStatus? 先例，方案 §3.2）。
+///
+/// 三态钉死（wire 形态被场景 原生-16/17 与 M2 原生-23..24 钉死，映射纯函数
+/// `NativeChargeLimit.wireStatus`）：
+/// - 字段缺席（DaemonStatus.nativeLimit == nil）= 旧 daemon（App 弹升级提示）；
+/// - known=false = 检测器未知态 ⇒ 恒 active=false 且双 socLimit=nil；
+/// - known=true ∧ active=false（无阻断策略）⇒ 恒双 socLimit=nil——App 无需猜测。
+public struct NativeLimitStatus: Codable, Sendable, Equatable {
+    /// false = 检测器故障（读取/解析失败，未知态）；与新 daemon「恒填」约定并存：
+    /// 字段缺席 = 旧 daemon；字段在 + known=false = 检测器未知。
+    public var known: Bool
+    /// 原生限充激活（守卫口径 blockingPolicies 非空——不限 reason，物理执法事实）。
+    public var active: Bool
+    /// blockingPolicies 最小 soclimit（active=true 时填充——最先触发者；
+    /// active=false 恒 nil）。
+    public var socLimit: Int?
+    /// 手动策略过滤口径（reason == "manualChargeLimit" 最小值，R2 P1——注记行/
+    /// 冲突横幅消费；无手动策略或 active=false 恒 nil）。
+    public var manualSocLimit: Int?
+
+    public init(known: Bool, active: Bool, socLimit: Int?, manualSocLimit: Int?) {
+        self.known = known
+        self.active = active
+        self.socLimit = socLimit
+        self.manualSocLimit = manualSocLimit
     }
 }
 
@@ -159,7 +195,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.12.0-alpha"
+    public static let daemonVersion = "0.13.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

@@ -18,6 +18,9 @@ public enum BatterySnapshotParser {
     /// 纯函数解析。`timestamp` 由调用方注入（评审 D-1），保持无外部状态的纯函数语义。
     public static func parse(_ props: [String: Any], timestamp: Date) throws -> BatterySnapshot {
         let batteryData = props["BatteryData"] as? [String: Any]
+        // ChargerData 子字典（v1.7 原生限充运行态签名 NotChargingReason 的来源；
+        // 提取模式照 BatteryData 先例——缺席/类型不符 → 整字段 nil 容错）。
+        let chargerData = props["ChargerData"] as? [String: Any]
         return BatterySnapshot(
             percent: try requiredInt(props, "CurrentCapacity"),
             isCharging: try requiredBool(props, "IsCharging"),
@@ -38,6 +41,7 @@ public enum BatterySnapshotParser {
             cellVoltagesMV: batteryData.flatMap { cellVoltages(from: $0) },
             fccMAh: batteryData.flatMap { intValue($0["FccComp1"]) },
             adapter: adapter(from: props["AdapterDetails"]),
+            notChargingReason: chargerData.flatMap { uint64Value($0["NotChargingReason"]) },
             timestamp: timestamp
         )
     }
@@ -65,6 +69,13 @@ public enum BatterySnapshotParser {
     private static func intValue(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber else { return nil }
         return Int(Int64(bitPattern: number.uint64Value))
+    }
+
+    /// 统一 UInt64 转换（v1.7 NotChargingReason 位集专用）：uint64Value 按位保留，
+    /// 位 63 置位等超 Int64 正域的值不回绕不失真（位集必须 UInt64 全域）。
+    private static func uint64Value(_ value: Any?) -> UInt64? {
+        guard let number = value as? NSNumber else { return nil }
+        return number.uint64Value
     }
 
     /// Bool 值域（评审 B-5）：Bool 直收；数值 NSNumber 仅接受 0/1（0→false、1→true），

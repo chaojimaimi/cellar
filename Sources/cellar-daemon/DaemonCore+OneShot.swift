@@ -44,7 +44,16 @@ extension DaemonCore {
             ))
             external = lastStatus?.lastExternalConnected
         }
-        if let rejection = fullOnceStartPrecondition(mode: policy.mode, externalConnected: external) {
+        // Phase 5 v1.7 M2 原生限充守卫（方案 §3.1，挂点 fullOnceStartPrecondition 之二
+        // ——校准臂 startCalibrationLocked 平行）：每请求一次读盘（/Library 域只读）；
+        // 阻断判据与 fail-open 边界全在 CellarCore 纯函数（detectorError → 函数内
+        // os_log warn 放行）。拒绝发生在 startIfIdle 之前 → 无锚点写入。
+        let nativeReading = NativeChargeLimit.load(
+            rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
+        )
+        if let rejection = fullOnceStartPrecondition(
+            mode: policy.mode, externalConnected: external, nativeLimit: nativeReading
+        ) {
             throw rejection
         }
         _ = actionTrack.startIfIdle(now: Date())

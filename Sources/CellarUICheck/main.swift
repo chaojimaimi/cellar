@@ -47,7 +47,8 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
 // Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
-// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增）
+// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
+// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -141,7 +142,7 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 234 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 246 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
@@ -149,7 +150,8 @@ private func wrap(
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
 // Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
-// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增）
+// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
+// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -531,6 +533,33 @@ private func buildCases() -> [SnapshotCase] {
                     .frame(width: 304, alignment: .leading)
                 })
             })
+
+            // Phase 5 v1.7 M3 原生限充 2 态（注记行/冲突横幅）×4（234 → 246，
+            // 新增 12 张）：参数驱动组件直接构造（onOpenSettings 空闭包——渲染无
+            // 副作用）。注记行钉死 manual 85（§4.1 口径：N = daemon 注册态
+            // manualSocLimit）；冲突横幅钉死原生 85 > Cellar 80（冲突代表形态）。
+            // 语汇经 theme.word（native/amber 双风格词条，industrial 直装 native
+            // ——风格 C 先例）；注记行 N 串组件内 String(format:) 填充。
+            cases.append(SnapshotCase(
+                name: "NativeLimitNote_active_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    NativeLimitNoteRow(socLimit: 85)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+            cases.append(SnapshotCase(
+                name: "NativeLimitConflict_shown_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    NativeLimitConflictBanner(
+                        nativeSocLimit: 85, cellarLimit: 80, onOpenSettings: {}
+                    )
+                    .frame(width: 304, alignment: .leading)
+                })
+            })
         }
     }
     return cases
@@ -672,12 +701,19 @@ private func ensureGoldensDir() -> String? {
 }
 
 @MainActor
-private func runSnapshot(regenerate: Bool) -> Int32 {
+private func runSnapshot(regenerate: Bool, onlyPrefixes: [String] = []) -> Int32 {
     if let error = ensureGoldensDir() {
         FileHandle.standardError.write(error.data(using: .utf8)!)
         return 1
     }
-    let cases = buildCases()
+    let allCases = buildCases()
+    // golden 纪律（Phase 5 v1.7 M3）：--only=<前缀> 限定本轮案例——--regen 只跑
+    // 新增 case，既有 golden 文件零触碰（字节级零扰动由 git status 断言兜底）。
+    let cases = onlyPrefixes.isEmpty
+        ? allCases
+        : allCases.filter { testCase in
+            onlyPrefixes.contains(where: { testCase.name.hasPrefix($0) })
+        }
     var failures: [String] = []
     var passed = 0
     for testCase in cases {
@@ -707,7 +743,8 @@ private func runSnapshot(regenerate: Bool) -> Int32 {
         }
     }
     let mode = regenerate ? "重生成" : "对比"
-    print("快照\(mode)：\(passed)/\(cases.count) 通过")
+    let scope = onlyPrefixes.isEmpty ? "" : "（限定 \(onlyPrefixes.joined(separator: ","))）"
+    print("快照\(mode)\(scope)：\(passed)/\(cases.count) 通过")
     if !failures.isEmpty {
         print("失败清单：")
         for failure in failures {
@@ -761,7 +798,13 @@ private func runL10nGate() -> Int32 {
 
 let arguments = Set(CommandLine.arguments.dropFirst())
 let regenerate = arguments.contains("--regen")
+// --only=<name 前缀>（可多个）：限定本轮处理案例——--regen 只跑新增 case 的
+// golden 纪律落点（不带 --only = 全矩阵）。
+let onlyPrefixes = CommandLine.arguments.dropFirst()
+    .filter { $0.hasPrefix("--only=") }
+    .map { String($0.dropFirst("--only=".count)) }
+    .filter { !$0.isEmpty }
 if arguments.contains("--l10n") {
     exit(runL10nGate())
 }
-exit(runSnapshot(regenerate: regenerate))
+exit(runSnapshot(regenerate: regenerate, onlyPrefixes: onlyPrefixes))

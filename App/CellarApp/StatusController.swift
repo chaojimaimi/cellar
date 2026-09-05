@@ -457,6 +457,42 @@ final class StatusController: ObservableObject {
         return ChargeScheduleStatus(config: config, activeEntryId: status.scheduleActiveId)
     }
 
+    // MARK: - Phase 5 v1.7 原生限充（方案 §4 App 侧数据通路）
+
+    /// 原生限充状态（nil = 旧 daemon 未上报 → App 侧功能整体隐藏，照 fanStatus
+    /// 版本门控先例；字段在 + known=false = 检测器未知态，App 不猜测——注记行
+    /// 不渲染、按钮不禁用 = fail-open 对齐，方案 §4.1/§3.1）。
+    var nativeLimitStatus: NativeLimitStatus? {
+        daemonStatus?.nativeLimit
+    }
+
+    /// 原生限充激活（守卫口径 active，校准/fullOnce 按钮禁用依据——与 daemon
+    /// 拒绝行为一致；unknown 态 active 恒 false 自然放行）。
+    var nativeLimitActive: Bool {
+        nativeLimitStatus?.active == true
+    }
+
+    /// 按钮辅助文案词汇位（方案 §4.1 双口径，与 daemon 拒绝文案同语义——App 侧
+    /// 为提前禁用提示）：manualSocLimit 有值 → 手动口径（「请先在系统设置中
+    /// 关闭」）；仅非手动策略（OBC 等）→ 通用口径。nil = 未激活（不禁用不提示）。
+    /// review P2-1 拆分：校准与 fullOnce 主语不同，词汇位分立、不得互相复用。
+    var nativeLimitCalibrationHintWord: VocabularyWord? {
+        nativeLimitHintWord(.nativeLimitCalibrationHintManual,
+                            generic: .nativeLimitCalibrationHintGeneric)
+    }
+
+    /// fullOnce（充满一次）按钮辅助文案词汇位（主语「充满一次」，review P2-1）。
+    var nativeLimitFullOnceHintWord: VocabularyWord? {
+        nativeLimitHintWord(.nativeLimitFullOnceHintManual,
+                            generic: .nativeLimitFullOnceHintGeneric)
+    }
+
+    private func nativeLimitHintWord(_ manual: VocabularyWord,
+                                     generic: VocabularyWord) -> VocabularyWord? {
+        guard let native = daemonStatus?.nativeLimit, native.active else { return nil }
+        return native.manualSocLimit == nil ? generic : manual
+    }
+
     /// 充电日程设置（照 applyCalibrationSchedule runControl 先例，方案 §3.2）：
     /// **全量配置 JSON** 下发（宿主页把完整 config encode 后传入——daemon 三级
     /// 校验长度/JSON/validated，任一失败 daemonError 原文上屏；旧 daemon 回

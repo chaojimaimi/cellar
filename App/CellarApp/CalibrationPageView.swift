@@ -82,7 +82,9 @@ struct CalibrationPageView: View {
                 busy: statusController.busy,
                 onStart: { statusController.calibrateStart() },
                 onCancel: { statusController.calibrateCancel() },
-                showsTitle: false
+                showsTitle: false,
+                // 原生限充守卫辅助文案（v1.7 M3，照面板 CalibrationSection 桥接同款）。
+                nativeLimitHint: statusController.nativeLimitCalibrationHintWord.map(theme.word)
             )
         }
     }

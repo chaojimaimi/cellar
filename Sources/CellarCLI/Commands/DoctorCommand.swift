@@ -2,7 +2,7 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十二项只读诊断（不写任何 SMC 键）。
+/// cellar doctor —— 十五项只读诊断（不写任何 SMC 键）。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -12,7 +12,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十二项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：十五项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。
@@ -164,6 +164,15 @@ struct DoctorCommand: ParsableCommand {
         let btmOutput = runProcessCapture("/bin/launchctl", ["print", "system/com.cellar.daemon"]).output
         let btmState = BTMState.parseLaunchctlPrint(btmOutput)
 
+        // 检查 15：原生限充共存（/Library powerd 策略 plist 只读——0644 用户态可读，
+        // D4；wire 映射与 daemon getStatus 同源 `NativeChargeLimit.wireStatus`——
+        // status/doctor 三方一致口径，真机走查第 5 项）。读失败 → known=false 形态
+        // （INFO 未知，不计失败）。Cellar 执法上限口径与校准进行中判定在检查函数内
+        // 依 daemonStatus 派生（mode=="active" 的 upperLimit / isCalibrationAction）。
+        let nativeReading = NativeChargeLimit.load(
+            rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
+        )
+
         // 检查 10：版本矩阵（CLI 编译期常量 + daemon XPC 版本 + App Info.plist）。
         let versionMatrix = VersionMatrix(
             cliVersion: DaemonXPC.daemonVersion,
@@ -197,7 +206,9 @@ struct DoctorCommand: ParsableCommand {
             thermal: thermalStatus,
             thermalProbeAttempted: true,
             chargeSchedule: chargeScheduleProbe,
-            chargeScheduleProbeAttempted: true
+            chargeScheduleProbeAttempted: true,
+            nativeLimit: NativeChargeLimit.wireStatus(nativeReading),
+            nativeLimitProbeAttempted: true
         )
     }
 

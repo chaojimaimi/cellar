@@ -38,7 +38,9 @@ extension DaemonCore {
     /// lock**——调用方必须已持锁，工单提示 1）：幂等拆分（在轨且 kind==calibration →
     /// .alreadyActive；在轨且 kind≠calibration → **上抛 .actionOccupied**——防 App
     /// 误弹「校准已启动」假成功）→ 能力守卫（XPC 纵深防御）→ 前置快照 +
-    /// calibrationStartPrecondition → startIfIdle + setCalibrationPhase(.chargeFull)
+    /// calibrationStartPrecondition → **原生限充守卫**（v1.7 M2，方案 §3.1：态机
+    /// 进入之前拒绝——无锚点写入；检测明确阻断 fail-closed，detectorError fail-open
+    /// + warn）→ startIfIdle + setCalibrationPhase(.chargeFull)
     /// → actionStore.save（失败 → cancel + 上抛 persistenceFailed，锚点不写）→
     /// **记锚点 state.lastStartedAt**（UD-4：启动即记——手动+自动统一刷新；前置
     /// 不满足不写锚点——当日窗口内顺延重试）。单一 now 纪律（工单提示 2）：一次
@@ -92,6 +94,25 @@ extension DaemonCore {
             capabilityPresent: true    // 已由能力守卫拦截（XPC 纵深防御）
         ) {
             throw rejection
+        }
+        // Phase 5 v1.7 M2 原生限充守卫（方案 §3.1，precondition 之后 startIfIdle 之前
+        // ——态机进入之前拒绝，无 startedAt/无锚点写入）：任何未终止且 <100 的原生
+        // 策略都会卡死充满相（blockingPolicies 不限 reason，物理执法事实）。
+        // 检测明确阻断 → 拒绝（fail-closed）；检测器自身故障（detectorError）→
+        // 放行 + warn（fail-open 唯一边界——降级后果 = 充满相按既有 timeout 终态
+        // 收敛，非新增机制）。两入口（手动 XPC 臂/调度臂）共用本锁内核心 → 单点
+        // 守卫自动全覆盖；调度臂拒绝落 DaemonCore.swift 既有静默顺延 catch（零新增
+        // 终态语义、零锚点写入）。
+        let nativeReading = NativeChargeLimit.load(
+            rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
+        )
+        if nativeReading.detectorError {
+            events.append(LogEvent(
+                category: .control, level: .warn,
+                message: "startCalibration 前置：原生限充检测失败（detectorError）——fail-open 放行（若确有原生限充，充满相将按超时收敛）"
+            ))
+        } else if !nativeReading.blockingPolicies.isEmpty {
+            throw CalibrationStartRejection.nativeChargeLimit(socLimit: nativeReading.manualSocLimit)
         }
         let now = Date()
         _ = actionTrack.startIfIdle(now: now, kind: Calibration.kind, timeout: Calibration.totalDeadline)

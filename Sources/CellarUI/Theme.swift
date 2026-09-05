@@ -305,6 +305,18 @@ public struct CellarTheme: Sendable {
         case .dashboardStateCharging: return "充电中"
         case .dashboardStateHolding: return "已停充"
         case .dashboardStateBattery: return "电池供电"
+        // Phase 5 v1.7 M3：注记行 N 占位与 catalog 同形（%lld%%——消费侧
+        // String(format:) 填充，兜底路径可格式化）。
+        case .nativeLimitNote: return "系统限充 %lld%% 生效中"
+        case .nativeLimitOpenSettings: return "打开系统电池设置"
+        case .nativeLimitCalibrationHintManual:
+            return "系统充电上限已激活，校准需充满 100%，请先在系统设置中关闭"
+        case .nativeLimitCalibrationHintGeneric:
+            return "检测到系统充电策略占用，校准需充满 100%"
+        case .nativeLimitFullOnceHintManual:
+            return "系统充电上限已激活，充满一次需充满 100%——请先在系统设置中关闭"
+        case .nativeLimitFullOnceHintGeneric:
+            return "检测到系统充电策略占用，充满一次需充满 100%"
         }
     }
 

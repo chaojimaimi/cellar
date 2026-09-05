@@ -43,6 +43,11 @@ public struct BatterySnapshot: Equatable, Sendable {
     /// 适配器信息（AdapterDetails 直接字典；缺席 → nil）。
     /// AppleRawAdapterDetails 数组形状 WP3 不解析（登记，风险表）。
     public let adapter: AdapterInfo?
+    /// 停充原因位集（ChargerData.NotChargingReason；v1.7 原生限充检测的运行态签名）。
+    /// ⚠️ D5：位语义仅本机实测（Cellar CHTE 抑制=2^59、powerd 原生持有=2^24），
+    /// hint-only 不作行为判据；UInt64 全域位集。缺席/类型不符 → nil 容错（照可选
+    /// 字段既有模式，v1.7 ChargerData 此前无提取面）。
+    public let notChargingReason: UInt64?
     /// 快照时刻（调用方注入，见 BatterySnapshotParser.parse）。
     public let timestamp: Date
 }

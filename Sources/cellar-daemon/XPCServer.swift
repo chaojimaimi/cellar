@@ -346,7 +346,19 @@ final class XPCServer: @unchecked Sendable {
     }
 
     /// 状态编码 + okReply 回传（编码失败（不可达）→ 错误回包，不崩溃）。
+    /// Phase 5 v1.7（review P1）：nativeLimit 在此统一附加——sendStatus 仅服务 XPC
+    /// 响应路径（getStatus + 全部变更类回包），不进 buildStatusLocked/tick（该函数
+    /// 每 tick 组装 lastStatus，挂点置此即「不进 enforce tick」）。**必须全回包恒携带**：
+    /// App 侧变更回包经 ingest 整体覆盖 daemonStatus，字段缺席会被「nil = 旧 daemon」
+    /// 语义瞬态误判（注记行/横幅闪断、门控按钮误点亮）——与 fan 字段全回包语义一致。
+    /// 每请求一次读盘（/Library 域 0644 只读）；读失败 → load 的 detectorError 形态，
+    /// 三态形态由 wireStatus 钉死；旧 CLI/App 收到多出的键按合成 Codable
+    /// decodeIfPresent 天然忽略。
     private func sendStatus(_ status: DaemonStatus, to peer: Peer) {
+        var status = status
+        status.nativeLimit = NativeChargeLimit.wireStatus(
+            NativeChargeLimit.load(rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL))
+        )
         guard let json = DaemonXPC.encodeStatus(status) else {
             send(errorReply("状态编码失败"), to: peer.connection)
             return

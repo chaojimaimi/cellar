@@ -35,6 +35,12 @@ public struct CalibrationSectionView: View {
     /// 时传 false，防同文重复；默认 true——面板与快照矩阵既有构造不传此参 →
     /// 渲染字节不变（112 张 golden 零 regen 全靠该默认路径）。
     public let showsTitle: Bool
+    /// 原生限充守卫辅助文案（Phase 5 v1.7 M3 方案 §4.1；App 侧按双口径词汇化后
+    /// 注入——manualSocLimit 有值 → 手动口径，仅非手动 → 通用口径，与 daemon
+    /// 拒绝文案同语义的提前禁用提示）。非 nil = 开始/确认按钮禁用 + 文案呈现
+    /// （照 v1.1 风扇拒写灰显先例）；默认 nil = 无原生阻断，既有形态字节不变
+    /// （§4.2：禁用灰显态不进快照矩阵，由 App 侧门控与真机走查覆盖）。
+    public let nativeLimitHint: String?
 
     @State private var showConfirm: Bool
 
@@ -51,7 +57,8 @@ public struct CalibrationSectionView: View {
         onStart: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         initialConfirmVisible: Bool = false,
-        showsTitle: Bool = true
+        showsTitle: Bool = true,
+        nativeLimitHint: String? = nil
     ) {
         self.calibrationActive = calibrationActive
         self.phase = phase
@@ -64,6 +71,7 @@ public struct CalibrationSectionView: View {
         self.onCancel = onCancel
         self.initialConfirmVisible = initialConfirmVisible
         self.showsTitle = showsTitle
+        self.nativeLimitHint = nativeLimitHint
         _showConfirm = State(initialValue: initialConfirmVisible)
     }
 
@@ -82,6 +90,12 @@ public struct CalibrationSectionView: View {
                     confirmBlock
                 } else {
                     startButton
+                    if let nativeLimitHint {
+                        Text(nativeLimitHint)
+                            .font(.caption2)
+                            .foregroundStyle(theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,7 +145,7 @@ public struct CalibrationSectionView: View {
                     onStart()
                 }
                 .controlSize(.small)
-                .disabled(busy)
+                .disabled(busy || nativeLimitHint != nil)
                 Button(CellarL10n.s("panel.action.back")) {
                     showConfirm = false
                 }
@@ -147,6 +161,6 @@ public struct CalibrationSectionView: View {
             Label(CellarL10n.s("calibration.start"), systemImage: "wrench.and.screwdriver.fill")
         }
         .controlSize(.small)
-        .disabled(busy)
+        .disabled(busy || nativeLimitHint != nil)
     }
 }
