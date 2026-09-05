@@ -9,6 +9,8 @@ public enum PanelStyle: String, Sendable {
     case native
     /// 酒窖琥珀（Phase 3 WP3 B 风格）。
     case amber
+    /// 仪表盘工业（PLAN.md:145 C 风格：等宽数字、单信号色；0.12.0-alpha 补齐）。
+    case industrial
 
     /// 解析持久化的原始值。返回 nil 的两种语义由调用方日志分界：
     /// - 入参 nil = 「未设置」（用户从未选择过，取 native 属默认合法态，**不记日志**）；

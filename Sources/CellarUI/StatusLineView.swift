@@ -48,14 +48,16 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 单段统一样式（规格 §7.2：caption 标签 + monospacedDigit 值）。
+    /// 单段统一样式（规格 §7.2：caption 标签 + monospacedDigit 值）。数值字体
+    /// design 随 token（UD-5：工业等宽读出感，六段全施加——语汇词 mono 可接受；
+    /// A/B token 为 nil 落回 .default = 与裸 .caption 等价，golden 零扰动）。
     private func segment(caption: String, @ViewBuilder value: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(caption)
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
             value()
-                .font(.caption)
+                .font(.system(.caption, design: theme.numericFontDesign ?? .default))
                 .monospacedDigit()
                 .foregroundStyle(theme.secondaryText)
         }

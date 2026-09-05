@@ -46,7 +46,8 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3）；
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
-// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增）
+// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
+// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -140,19 +141,20 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 156 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 234 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
 // 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增；
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
-// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增）
+// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
+// Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
     var cases: [SnapshotCase] = []
-    let styles: [PanelStyle] = [.native, .amber]
+    let styles: [PanelStyle] = [.native, .amber, .industrial]
     let schemes: [ColorScheme] = [.light, .dark]
 
     // 仪表 5 态（充电中/保持/电池供电/无数据/band==nil）×4。

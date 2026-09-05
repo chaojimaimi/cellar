@@ -36,10 +36,8 @@ struct AboutSections: View {
 
                 LabeledContent(CellarL10n.s("settings.connectionStatus"), value: connectionText)
                 // 用户可见行用本地化展示名；原始存储值只进诊断摘要（排障需要）。
-                LabeledContent(CellarL10n.s("settings.panelStyle"),
-                               value: styleController.style == .amber
-                                   ? CellarL10n.s("settings.styleAmber")
-                                   : CellarL10n.s("settings.styleNative"))
+                // 全风格映射（UD-7：二元 ternary 在第三风格下会误显「原生」）。
+                LabeledContent(CellarL10n.s("settings.panelStyle"), value: styleDisplayName)
             } header: {
                 Text(CellarL10n.s("settings.section.version"))
             }
@@ -79,6 +77,17 @@ struct AboutSections: View {
         case .connected: return CellarL10n.s("settings.connected")
         case .unreachable: return CellarL10n.s("settings.unreachable")
         case .unknown: return CellarL10n.s("common.unknown")
+        }
+    }
+
+    /// 风格展示名映射（UD-7：二元 ternary 修复为 switch 三 case 穷举，新 case
+    /// 漏臂 = 编译错——全库唯一允许的风格枚举分支点）。styleController.style 已
+    /// 经 validating 收敛为非可选（未知值回落 native），此处无 nil 面。
+    private var styleDisplayName: String {
+        switch styleController.style {
+        case .native: return CellarL10n.s("settings.styleNative")
+        case .amber: return CellarL10n.s("settings.styleAmber")
+        case .industrial: return CellarL10n.s("settings.styleIndustrial")
         }
     }
 

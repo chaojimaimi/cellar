@@ -4574,6 +4574,23 @@
         }
       }
     },
+    "settings.styleIndustrial": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Industrial"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仪表盘工业"
+          }
+        }
+      }
+    },
     "settings.styleNative": {
       "extractionState": "manual",
       "localizations": {

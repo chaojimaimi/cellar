@@ -13,7 +13,8 @@ import os
 /// 视觉回归；语汇串一律经 word(_:) 读取（非可选，评审 P1-5，组件层禁止对
 /// vocabulary 做可选下标/强解/兜底字面量）。⚠️ Sendable：token 值全为值类型
 /// （Color/LinearGradient/AccentGlow/词典），Swift 6 全并发检查下 static let
-/// 主题常量（native/amberLight/amberDark）与 EnvironmentKey 默认值要求之。
+/// 主题常量（native/amberLight/amberDark/industrialLight/industrialDark）与
+/// EnvironmentKey 默认值要求之。
 public struct CellarTheme: Sendable {
     /// 电量弧 / 充电徽标。
     public var accent: Color
@@ -47,8 +48,14 @@ public struct CellarTheme: Sendable {
     /// 已解析语汇表（组合根构建 theme 时经 CellarL10n 一次性解析；
     /// 组件经 word(_:) 读取）。
     public var vocabulary: [VocabularyWord: String]
-    /// 展示字体（A/B 同值系统字体——占位字段，登记：第三风格消费时启用）。
+    /// 展示字体（A/B 同值系统字体 .body——占位；C 消费：
+    /// .system(.body, design: .monospaced)，工业等宽读出感）。
     public var displayFont: Font
+    /// 数字字体 design（UD-5：单一 Font token 表达不了「保留现字号字重只换
+    /// design」——消费点 GaugeView 中心数字现值 .rounded、StatusLine 段现值
+    /// .default，均非 .body）。**nil = 各消费点维持现 design**（A/B 哑值纪律，
+    /// golden 零扰动的唯一保证）；C = .monospaced（等宽数字）。
+    public var numericFontDesign: Font.Design?
 
     /// 默认主题：系统语义色（原生极简基线）。vocabulary 留空——word(_:) 以内置
     /// 常量兜底（与现 UI 中文原文一字不差），environment 默认值路径永不落空。
@@ -72,7 +79,8 @@ public struct CellarTheme: Sendable {
         ),
         accentGlow: AccentGlow(color: .clear, radius: 0),
         vocabulary: [:],
-        displayFont: .body
+        displayFont: .body,
+        numericFontDesign: nil
     )
 
     /// B 风格浅色（暖纸）。色值全部提取自设计 demo 双色板/光晕/渐变（WP3 §1.6
@@ -98,7 +106,8 @@ public struct CellarTheme: Sendable {
         ),
         accentGlow: AccentGlow(color: Color(hex: 0xD9A441).opacity(0.35), radius: 5),  // demo 光晕
         vocabulary: [:],
-        displayFont: .body
+        displayFont: .body,
+        numericFontDesign: nil
     )
 
     /// B 风格深色（暖夜）。告警红取 demo 复审 WCAG 修正值 #E05252。
@@ -122,7 +131,64 @@ public struct CellarTheme: Sendable {
         ),
         accentGlow: AccentGlow(color: Color(hex: 0xE3A94F).opacity(0.4), radius: 7),  // demo 光晕（深 7px .4）
         vocabulary: [:],
-        displayFont: .body
+        displayFont: .body,
+        numericFontDesign: nil
+    )
+
+    /// C 风格浅色（仪表浅灰）。⚠️ 无 demo 事实源——色值为本批设计产出（PLAN.md:145
+    /// 唯一约束 =「单信号色/等宽数字/细线网格/刻度盘」四词，UD-2 色表逐 token 落地），
+    /// 对比度自查：accent #0E8A63 vs 面板底 #F3F5F4 实测 ≈3.97:1（小字号 accent
+    /// 文本低于 AA 4.5:1，与 amber 浅色同场景 ≈3.6:1 同水位；仪表大数字/弧线等
+    /// large-text/非文本 3:1 门槛通过）、alert #C0392B ≈4.97:1 达标。单信号色 =
+    /// 品牌维度单一（accent/success/band 同源信号绿），
+    /// alert/warning 保持行业标准红/橙不牺牲语义分辨。
+    public static let industrialLight = CellarTheme(
+        accent: Color(hex: 0x0E8A63),                          // 仪表信号绿（唯一品牌色）
+        band: Color(hex: 0x0E8A63).opacity(0.25),              // band 弧 = accent 同源 @ 0.25
+        holding: Color(hex: 0x4A5A64),                         // 石板灰蓝（停充强调，非绿族）
+        alert: Color(hex: 0xC0392B),                           // 沿用 amber 浅色告警红（WCAG 达标值）
+        bannerBackground: Color(hex: 0xB8722C).opacity(0.12),  // 警示底 = warning 同族（amber 先例推导）
+        track: Color(hex: 0x5B6770).opacity(0.18),             // 仪表底环（仪器灰）
+        secondaryText: Color(hex: 0x55606A),                   // 冷灰次级文本
+        tertiaryText: Color(hex: 0x55606A).opacity(0.6),       // 次级文本降档
+        success: Color(hex: 0x0E8A63),                         // 单信号色：success = accent 同源
+        warning: Color(hex: 0xB8722C),                         // 行业标准橙（语义色不品牌化）
+        panelBackground: Color(hex: 0xF3F5F4).opacity(0.95),   // 仪表浅灰面板底
+        panelBorder: Color(hex: 0x2A3439).opacity(0.14),       // 石墨面板边框（浅）
+        accentGradient: LinearGradient(                        // 平坦双绿（工业少渐变，起止近同为预期）
+            colors: [industrialGradientColors(scheme: .light).start, industrialGradientColors(scheme: .light).end],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        accentGlow: AccentGlow(color: .clear, radius: 0),      // 工业无光晕（哑值 = radius 0）
+        vocabulary: [:],
+        displayFont: .system(.body, design: .monospaced),
+        numericFontDesign: .monospaced
+    )
+
+    /// C 风格深色（石墨）。告警红沿用 demo 复审 WCAG 修正值 #E05252（amber 深色同源）。
+    public static let industrialDark = CellarTheme(
+        accent: Color(hex: 0x35D08E),                          // 信号绿（深色提亮档）
+        band: Color(hex: 0x35D08E).opacity(0.22),
+        holding: Color(hex: 0x8FA3AD),                         // 石板灰蓝（深）
+        alert: Color(hex: 0xE05252),                           // 沿用深色告警红（WCAG 修正值）
+        bannerBackground: Color(hex: 0xD99A4E).opacity(0.10),  // 警示底 = warning 同族（amber 先例推导）
+        track: Color(hex: 0x8FA3AD).opacity(0.24),             // 仪表底环（深）
+        secondaryText: Color(hex: 0x98A4AC),                   // 冷灰次级文本（深）
+        tertiaryText: Color(hex: 0x98A4AC).opacity(0.6),
+        success: Color(hex: 0x35D08E),                         // 单信号色：success = accent 同源
+        warning: Color(hex: 0xD99A4E),                         // 行业标准橙（深）
+        panelBackground: Color(hex: 0x1B1F23).opacity(0.94),   // 石墨面板底
+        panelBorder: Color(hex: 0x35D08E).opacity(0.16),       // 信号绿面板边框（深）
+        accentGradient: LinearGradient(                        // 平坦双绿（深）
+            colors: [industrialGradientColors(scheme: .dark).start, industrialGradientColors(scheme: .dark).end],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        accentGlow: AccentGlow(color: .clear, radius: 0),      // 工业无光晕（哑值 = radius 0）
+        vocabulary: [:],
+        displayFont: .system(.body, design: .monospaced),
+        numericFontDesign: .monospaced
     )
 
     /// demo 135° 渐变端点（浅 #D9A441→#B4793B / 深 #EAB765→#D99B46）。独立成对
@@ -133,8 +199,19 @@ public struct CellarTheme: Sendable {
             : (Color(hex: 0xD9A441), Color(hex: 0xB4793B))
     }
 
+    /// 工业 135° 渐变端点（浅 #128A66→#0E7C5C / 深 #35D08E→#1FA372）。工业语言
+    /// 少渐变——起止近同色的「平坦双绿」，外观页色板行第 2/3 块视觉相近为预期
+    /// （非缺陷）。独立成对存放同 amber 先例：LinearGradient 无公开端点访问器，
+    /// 色板行须展示起止色。
+    private static func industrialGradientColors(scheme: ColorScheme) -> (start: Color, end: Color) {
+        scheme == .dark
+            ? (Color(hex: 0x35D08E), Color(hex: 0x1FA372))
+            : (Color(hex: 0x128A66), Color(hex: 0x0E7C5C))
+    }
+
     /// 组合根唯一解析入口：native 与系统色深浅无关（语汇仍按词条表解析）；amber
-    /// 按 scheme 二选一。switch 穷举两 case、无 default——新增风格漏实现 = 编译错。
+    /// 与 industrial 按 scheme 二选一。switch 穷举三 case、无 default——新增风格
+    /// 漏实现 = 编译错。
     public static func resolve(style: PanelStyle, scheme: ColorScheme) -> CellarTheme {
         switch style {
         case .native:
@@ -144,6 +221,14 @@ public struct CellarTheme: Sendable {
         case .amber:
             var theme = scheme == .dark ? amberDark : amberLight
             theme.vocabulary = vocabularyTable(style: .amber)
+            return theme
+        case .industrial:
+            // 语汇复用 native 词条（UD-3：工业语言取向 = 直白技术措辞，与 native
+            // 现词「外接 · 充电中」「退出 Cellar」同族，零新增 l10n 键）——不走
+            // resolvedWord 查 vocabulary.industrial.*，避免 16 词条全量 miss 的
+            // error 日志噪音。工业专属语汇如有，Tier 2 登记后在此切独立表。
+            var theme = scheme == .dark ? industrialDark : industrialLight
+            theme.vocabulary = vocabularyTable(style: .native)
             return theme
         }
     }
@@ -161,6 +246,10 @@ public struct CellarTheme: Sendable {
         case .amber:
             let theme = scheme == .dark ? amberDark : amberLight
             let gradient = amberGradientColors(scheme: scheme)
+            return [theme.accent, gradient.start, gradient.end, theme.panelBackground ?? .clear]
+        case .industrial:
+            let theme = scheme == .dark ? industrialDark : industrialLight
+            let gradient = industrialGradientColors(scheme: scheme)
             return [theme.accent, gradient.start, gradient.end, theme.panelBackground ?? .clear]
         }
     }

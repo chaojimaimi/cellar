@@ -3,7 +3,7 @@ import CellarUI
 import SwiftUI
 
 /// 外观分节内容（Phase 5 v1.2 §4.2 自 AppearanceTab 提取——设置窗 Tab 与主
-/// 窗口「外观与关于」页共用的共享子视图）：风格 Picker（原生 / 酒窖琥珀）
+/// 窗口「外观与关于」页共用的共享子视图）：风格 Picker（原生 / 酒窖琥珀 / 仪表盘工业）
 /// 即时生效——`styleController.setStyle` 内存先行驱动 environment 全树重算
 /// （§3.3 链路），持久化经共享 store 原子 update；loaded 前 Picker 禁用（防
 /// 半程态回写，评审 P2-3 登记）。色板行 4 色块（accent / 渐变起止 / 面板底）
@@ -26,6 +26,7 @@ struct AppearanceSections: View {
             )) {
                 Text(CellarL10n.s("settings.styleNative")).tag(PanelStyle.native)
                 Text(CellarL10n.s("settings.styleAmber")).tag(PanelStyle.amber)
+                Text(CellarL10n.s("settings.styleIndustrial")).tag(PanelStyle.industrial)
             }
             .disabled(!styleController.loaded)
 

@@ -85,8 +85,8 @@ public struct GaugeView: View {
                 VStack(spacing: 2) {
                     Text(centerText)
                         .font(size == .hero
-                            ? .system(size: 56, design: .rounded).weight(.semibold)
-                            : .system(.title2, design: .rounded).weight(.semibold))
+                            ? .system(size: 56, design: theme.numericFontDesign ?? .rounded).weight(.semibold)
+                            : .system(.title2, design: theme.numericFontDesign ?? .rounded).weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(state.percent == nil ? theme.secondaryText : theme.accent)
                         .contentTransition(.numericText())

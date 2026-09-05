@@ -2364,26 +2364,27 @@ struct Main {
 
         // MARK: - 场景（Phase 3 WP3 风格系统，用例 105–107）
         // PanelStyle.validating 矩阵（§3.1：nil=未设置 vs 未知串语义分界在调用方日志）、
-        // vocabularyKey 完整性（§3.5 对账表 2 风格 × 7 词条）、AppConfigStore.update
+        // vocabularyKey 完整性（§3.5 对账表 3 风格 × 16 词条）、AppConfigStore.update
         // 原子读改写（评审 P0-1：字段互不覆盖矩阵 + 写失败上抛）。
 
-        // 用例 105：validating 矩阵——nil/空串/未知串 → nil；"native"/"amber" 合法；
-        // 大小写敏感（"Amber" 必须未知——手改 JSON 不猜意图）。
+        // 用例 105：validating 矩阵——nil/空串/未知串 → nil；"native"/"amber"/
+        // "industrial" 合法；大小写敏感（"Amber" 必须未知——手改 JSON 不猜意图）。
         do {
             check(PanelStyle.validating(nil) == nil, "用例105", "nil → nil（未设置 = 默认合法态，调用方不记日志）")
             check(PanelStyle.validating("") == nil, "用例105", "空串 → nil（未知值路径，调用方须 os_log）")
             check(PanelStyle.validating("native") == .native, "用例105", "\"native\" → .native")
             check(PanelStyle.validating("amber") == .amber, "用例105", "\"amber\" → .amber")
+            check(PanelStyle.validating("industrial") == .industrial, "用例105", "\"industrial\" → .industrial（风格 C，0.12.0-alpha）")
             check(PanelStyle.validating("Amber") == nil, "用例105", "\"Amber\" → nil（大小写敏感）")
             check(PanelStyle.validating("dark") == nil, "用例105", "\"dark\" → nil（未知串）")
         }
 
-        // 用例 106：vocabularyKey 完整性——2 风格 × 全词条产出合法 key
-        // （非空 + 前缀 vocabulary.<style>. + 词条名落尾）+ 词条集合钉死 7 个
+        // 用例 106：vocabularyKey 完整性——3 风格 × 全词条产出合法 key
+        // （非空 + 前缀 vocabulary.<style>. + 词条名落尾）+ 词条集合钉死 16 个
         // （延后词条不建死键，§3.5）。
         do {
             var allOK = true
-            for style in [PanelStyle.native, .amber] {
+            for style in [PanelStyle.native, .amber, .industrial] {
                 for word in VocabularyWord.allCases {
                     let key = PanelStyle.vocabularyKey(style: style, word: word)
                     if key.isEmpty { allOK = false }
@@ -2391,7 +2392,7 @@ struct Main {
                     if !key.hasSuffix(word.rawValue) { allOK = false }
                 }
             }
-            check(allOK, "用例106", "2 风格 × 全词条 key 非空且含正确前缀/词条名落尾")
+            check(allOK, "用例106", "3 风格 × 全词条 key 非空且含正确前缀/词条名落尾")
             check(
                 PanelStyle.vocabularyKey(style: .amber, word: .statusHoldingExternal)
                     == "vocabulary.amber.statusHoldingExternal",
