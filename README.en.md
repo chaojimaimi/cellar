@@ -20,7 +20,7 @@
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
 - **Discharge to Limit**: temporarily disconnects the adapter and runs on battery until the charge drops to the limit target, then automatically restores (real-time supply power visualization; support conditions below)
 - **Root-free read-only monitoring**: charge level, charging/discharging state, voltage, current, temperature, cycle count, battery health, design/full charge capacity, cell voltages, adapter details
-- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command twelve-point diagnostics (including a device compatibility line)
+- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command thirteen-point diagnostics (including a device compatibility line)
 
 ## GUI (App)
 
@@ -118,7 +118,7 @@ GUI route: open `App/CellarApp.xcodeproj` in Xcode and build; place the resultin
 
 ```bash
 cellar status          # status overview (backend, level, charging state, control key, daemon state)
-cellar doctor          # twelve-point diagnostic report (exit codes 0/1/2 usable in scripts)
+cellar doctor          # thirteen-point diagnostic report (exit codes 0/1/2 usable in scripts)
 cellar doctor --devices  # single-line device compatibility output (welcome in issue reports)
 sudo cellar set 80     # set limit 80% (range 60–100; --hysteresis n available)
 sudo cellar disable    # stop limit management, restore default system charging
@@ -141,14 +141,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 358 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 408 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 88.12%)
-swift run CellarUICheck     # 112 UI snapshot comparisons + localization completeness gate
+                            # pure logic, ≥80% · currently 88.66%)
+swift run CellarUICheck     # 140 UI snapshot comparisons + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -162,7 +162,9 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 5 · v1.2 polish batch (0.6.0-alpha / 0.6.1-alpha)**: low-corner lightweight panel footer + adaptive settings window height and sectioned visual polish (released)
 - ✅ **Phase 5 · v1.2 dashboard (0.7.0-alpha)**: live dashboard main window + sidebar navigation (power flow / charge gauge / time estimates / health profile) + charge control / general / appearance / about pages + settings window retirement (released)
 - ✅ **Phase 5 · v1.3 statistics (0.8.0-alpha)**: SQLite periodic sampling + battery level / temperature / power history charts + max capacity trend (released)
-- Phase 5+: calibration auto-scheduling, complete thermal protection, charging schedule, Shortcuts integration
+- ✅ **Phase 5 · v1.4 calibration scheduling (0.9.0-alpha)**: calibration page with status / schedule / last-run cards + automatic periodic calibration — overnight window, opt-in off by default, deferred when conditions unmet, cancellable anytime (released)
+- ✅ **Phase 5 · v1.5 thermal protection completion (0.10.0-alpha)**: configurable charge-side thermal thresholds (pause 35–45 °C / hysteresis 1–8 °C, defaults 40/37 unchanged) + derived resume point + thermal guard extended to charging-enable paths (Charge-to-Full / calibration) (released)
+- Phase 5+: charging schedule, Shortcuts integration
 
 The full roadmap and design documents are published in the release notes.
 
