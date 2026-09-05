@@ -36,6 +36,9 @@ enum ControlAttempt: Equatable {
     case setFan(FanWire)
     /// Phase 5 v1.4 校准调度（重试 = 重发上次全键 wire——全键覆盖语义下幂等无害）。
     case setCalibrationSchedule(CalibrationScheduleWire)
+    /// Phase 5 v1.5 充电热暂停（重试 = 重发上次全键 wire——全键覆盖语义下幂等
+    /// 无害，照 setCalibrationSchedule 形态）。
+    case setThermal(ThermalWire)
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -62,6 +65,8 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.setFan")
         case .setCalibrationSchedule:
             return CellarL10n.s("status.summary.setCalibrationSchedule")
+        case .setThermal:
+            return CellarL10n.s("status.summary.setThermal")
         }
     }
 }

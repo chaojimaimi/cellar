@@ -14,7 +14,7 @@
 
 - **Any charge limit (60–100%)**: including the sub-80% range not natively supported by the system
 - **Hysteresis**: charging stops at the limit and only resumes after self-discharge down to the recovery threshold (default: limit −2%), avoiding frequent on/off cycling
-- **Charge-side thermal pause**: charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce); no hot restart of charging after a thermally terminated discharge
+- **Charge-side thermal pause**: by default charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce), with thresholds configurable on the General page; no hot restart of charging after a thermally terminated discharge
 - **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
 - **Optional auto-discharge**: automatically discharges back to the limit when charge is above it (off by default; enabling requires double confirmation; after completion it needs to cool down and the adapter to be replugged before it can trigger again)
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)

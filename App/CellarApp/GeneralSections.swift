@@ -109,6 +109,21 @@ struct GeneralSections: View {
             } header: {
                 Text(CellarL10n.s("settings.section.fan"))
             }
+
+            Section {
+                // Phase 5 v1.5：充电热保护区（参数驱动组件照风扇区先例——门控二态：
+                // 旧 daemon（therm 两键缺席）整卡升级提示；**无开关**——热保护不可
+                // 关闭，§4 红线 3。showsTitle false——标题由节头承担，防同文重复，
+                // 风扇区同款）。
+                ThermalSectionView(
+                    thermal: statusController.thermalStatus,
+                    busy: statusController.busy,
+                    onApply: { statusController.setThermal($0) },
+                    showsTitle: false
+                )
+            } header: {
+                Text(CellarL10n.s("settings.section.thermal"))
+            }
         }
         .onAppear {
             loginItems.load()

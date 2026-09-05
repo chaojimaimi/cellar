@@ -44,7 +44,8 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 v1.2 首页 自 84 扩 92——页脚链接 2 态 8 新增；
 // Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12 新增 + 占位页 1 态 4 新增；
 // Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3）；
-// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增）
+// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
+// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -138,12 +139,13 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 132 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 140 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
 // 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增；
-// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增）
+// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
+// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -442,6 +444,29 @@ private func buildCases() -> [SnapshotCase] {
             for (stateName, section) in lastCalibrations {
                 cases.append(SnapshotCase(
                     name: "LastCalibration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // 充电热保护卡 2 态（legacy/configured）×4（Phase 5 v1.5 §3.3 新增 8 张，
+            // 132 → 140）：门控二态照方案 §7-M3-2——thermal nil = 旧 daemon 升级提示
+            // （照 ScheduleSection legacy 先例）/ 非 nil = 配置态（configured 钉死默认
+            // 40.0/3.0——恢复点派生 37.0 同帧验证）。onApply 空闭包——渲染无副作用；
+            // 滑杆/恢复点数值走 String(format:) printf 通路，无钟面/本地区化风险，
+            // 无需预格式化注入（fan 阈值行同款先例）。
+            let thermalSections: [(String, ThermalSectionView)] = [
+                ("legacy", ThermalSectionView(thermal: nil, busy: false, onApply: { _ in })),
+                ("configured", ThermalSectionView(
+                    thermal: ThermalStatus(pauseCentiC: 4000, hysteresisCentiC: 300),
+                    busy: false, onApply: { _ in })),
+            ]
+            for (stateName, section) in thermalSections {
+                cases.append(SnapshotCase(
+                    name: "ThermalSection_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {

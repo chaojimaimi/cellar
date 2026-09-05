@@ -1826,13 +1826,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fan threshold is independent of the charge thermal pause (pause at 40°C / resume at 37°C)."
+            "value": "Fan threshold is independent of the charge thermal pause configuration (adjustable on the General page)."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "风扇阈值与充电热暂停（40°C 暂停 / 37°C 恢复）相互独立，互不影响"
+            "value": "风扇阈值与充电热暂停配置（通用页可调）相互独立，互不影响"
           }
         }
       }
@@ -4574,6 +4574,23 @@
         }
       }
     },
+    "settings.section.thermal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charge Thermal Protection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电热保护"
+          }
+        }
+      }
+    },
     "settings.section.version": {
       "extractionState": "manual",
       "localizations": {
@@ -5237,6 +5254,23 @@
         }
       }
     },
+    "status.summary.setThermal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thermal pause settings changed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已应用热暂停设置"
+          }
+        }
+      }
+    },
     "statusline.adapter": {
       "extractionState": "manual",
       "localizations": {
@@ -5352,6 +5386,142 @@
           "stringUnit": {
             "state": "translated",
             "value": "电压"
+          }
+        }
+      }
+    },
+    "thermal.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically pauses charging when battery temperature reaches the pause point, and resumes automatically once it cools below the resume point"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池温度达到暂停阈值时自动暂停充电，冷却至恢复点以下后自动恢复"
+          }
+        }
+      }
+    },
+    "thermal.footnote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Independent of the fan cooling threshold; thermal protection cannot be turned off; by default charging pauses at ≥40.0°C with 3.0°C hysteresis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与风扇降温阈值相互独立，互不影响；热保护不可关闭；默认 ≥40.0°C 暂停 / 滞回 3.0°C"
+          }
+        }
+      }
+    },
+    "thermal.hysteresis": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hysteresis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "滞回幅度"
+          }
+        }
+      }
+    },
+    "thermal.legacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charge thermal protection requires a daemon upgrade (uninstall and reinstall from the panel)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电热保护需升级守护进程（面板卸载重装后可用）"
+          }
+        }
+      }
+    },
+    "thermal.pause": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause Threshold"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂停阈值"
+          }
+        }
+      }
+    },
+    "thermal.resumeLine": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charging resumes below %.1f%@ (= pause point − hysteresis)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复充电：< %.1f%@（= 暂停点 − 滞回）"
+          }
+        }
+      }
+    },
+    "thermal.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charge Thermal Protection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电热保护"
+          }
+        }
+      }
+    },
+    "thermal.unit.celsius.short": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "°C"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "°C"
           }
         }
       }

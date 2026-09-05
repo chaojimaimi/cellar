@@ -406,6 +406,29 @@ final class StatusController: ObservableObject {
         )
     }
 
+    // MARK: - Phase 5 v1.5 充电热暂停
+
+    /// 充电热暂停配置（nil = 旧 daemon 未上报 therm 两键 → 热节 legacy 升级提示；
+    /// 新 daemon buildStatusLocked 恒填 → 恒非 nil，UD-7 照 fanStatus 先例）。
+    var thermalStatus: ThermalStatus? {
+        guard let status = daemonStatus,
+              let pause = status.thermPauseCentiC,
+              let hysteresis = status.thermHysteresisCentiC else { return nil }
+        return ThermalStatus(pauseCentiC: pause, hysteresisCentiC: hysteresis)
+    }
+
+    /// 充电热暂停设置（照 setFan runControl 先例，方案 §2.3）：组件侧以
+    /// `ThermalWire(policy)` 组**全键**下发（缺席保持是 daemon 侧语义，App 不
+    /// 依赖）；旧 daemon 回「未知命令」→ detectStaleBeforeReject 升级提示既有
+    /// 闭环（R-4）。成功反馈由统一通道上屏。
+    func setThermal(_ wire: ThermalWire) {
+        runControl(
+            attempt: .setThermal(wire),
+            operation: { try DaemonXPCClient().setThermal(wire) },
+            successFeedback: CellarL10n.s("status.summary.setThermal")
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -430,6 +453,8 @@ final class StatusController: ObservableObject {
             setFan(wire)
         case .setCalibrationSchedule(let wire):
             applyCalibrationSchedule(wire)
+        case .setThermal(let wire):
+            setThermal(wire)
         }
     }
 
