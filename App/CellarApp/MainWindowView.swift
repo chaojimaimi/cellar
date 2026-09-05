@@ -249,7 +249,10 @@ struct MainWindowView: View {
         case .stats:
             // v1.3 实页（方案 §3.0）：替换占位；侧栏徽章同步移除。
             StatsPageView()
-        case .calibration, .automation:
+        case .calibration:
+            // v1.4 实页（方案 §3）：替换占位；侧栏徽章与 scope 文案随实页化退役。
+            CalibrationPageView()
+        case .automation:
             TBDPlaceholderView(
                 icon: selection.icon,
                 title: pageTitle(selection),
@@ -263,19 +266,18 @@ struct MainWindowView: View {
         CellarL10n.s(String.LocalizationValue(page.titleKey))
     }
 
-    /// 占位页范围说明（仅校准/自动化消费；统计 scope key 已随 v1.3 实页化退役
-    /// ——含早前 control/about 两 scope key 一并清出 catalog）。
+    /// 占位页范围说明（仅自动化占位消费；校准 scope key 已随 v1.4 实页化退役
+    /// ——含统计/control/about 三 scope key 先例一并清出 catalog）。
     private func pageScope(_ page: MainWindowPage) -> String {
         CellarL10n.s(String.LocalizationValue(page.scopeKey))
     }
 
-    /// 版本徽章（侧栏与占位页共用）：校准/自动化标注 v1.4/v1.6；统计已 v1.3
-    /// 实页化不再有徽章；其余页无徽章（占位页版本 chip 落 main.page.version.alpha）。
+    /// 版本徽章（侧栏与占位页共用）：自动化标注 v1.6；统计（v1.3）/校准（v1.4）
+    /// 已实页化不再有徽章；其余页无徽章（占位页版本 chip 落 main.page.version.alpha）。
     private func pageVersionBadge(_ page: MainWindowPage) -> String? {
         switch page {
-        case .calibration: return CellarL10n.s("main.page.calibration.version")
         case .automation: return CellarL10n.s("main.page.automation.version")
-        case .dashboard, .control, .general, .about, .stats: return nil
+        case .dashboard, .control, .general, .about, .stats, .calibration: return nil
         }
     }
 }
@@ -317,7 +319,7 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
         "main.page.\(rawValue)"
     }
 
-    /// 占位页范围说明 key（仅规划组消费——主组实页无 scope）。
+    /// 占位页范围说明 key（仅自动化占位消费——校准随 v1.4 实页化退役）。
     var scopeKey: String {
         "main.page.\(rawValue).scope"
     }

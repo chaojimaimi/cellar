@@ -43,7 +43,8 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // WP3 自 64 扩 76——校准区 3 态 12 新增；Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；
 // Phase 5 v1.2 首页 自 84 扩 92——页脚链接 2 态 8 新增；
 // Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12 新增 + 占位页 1 态 4 新增；
-// Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3））
+// Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3）；
+// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -137,11 +138,12 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 112 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 132 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
-// 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增）
+// 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增；
+// Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -397,6 +399,56 @@ private func buildCases() -> [SnapshotCase] {
             ) {
                 AnyView(wrap(style, scheme) { placeholder.frame(width: 460) })
             })
+
+            // 校准调度卡 3 态（legacy/off/on）×4（Phase 5 v1.4 §3.3 新增 12 张，
+            // 112 → 124）：门控二态照方案 §7-M3-2——schedule nil = 旧 daemon 升级
+            // 提示 / 非 nil 且 false = off 态（勿把未配置当旧 daemon）；on 态
+            // nextEstimateText 以 zh 原文字面量钉死（墙钟文案含本地时区语义，不进
+            // 组件——上方占位页同款手法，golden 跨时区逐字节不变）。
+            // onApply 空闭包——渲染无副作用。
+            let scheduleSections: [(String, ScheduleSectionView)] = [
+                ("legacy", ScheduleSectionView(
+                    schedule: nil, busy: false, nextEstimateText: nil, onApply: { _ in })),
+                ("off", ScheduleSectionView(
+                    schedule: CalibrationSchedulePolicy(enabled: false, intervalDays: 30, startHour: 1),
+                    busy: false, nextEstimateText: nil, onApply: { _ in })),
+                ("on", ScheduleSectionView(
+                    schedule: CalibrationSchedulePolicy(enabled: true, intervalDays: 30, startHour: 1),
+                    busy: false,
+                    nextEstimateText: "下次自动校准：11 月 15 日 01:00 前后",
+                    onApply: { _ in })),
+            ]
+            for (stateName, section) in scheduleSections {
+                cases.append(SnapshotCase(
+                    name: "ScheduleSection_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // 上次校准卡 2 态（有记录/无记录）×4（124 → 132，新增 8 张）：记录态
+            // timeText/outcomeText 以 zh 原文字面量钉死（墙钟文案，同上手法）；
+            // durationSeconds = 27_000 秒 = 7 小时 30 分（组件内纯间隔格式化，跨机
+            // 确定——真实格式化路径入 golden）。
+            let lastCalibrations: [(String, LastCalibrationView)] = [
+                ("record", LastCalibrationView(
+                    timeText: "11 月 15 日 01:00", outcomeText: "完成", durationSeconds: 27_000)),
+                ("never", LastCalibrationView(
+                    timeText: nil, outcomeText: nil, durationSeconds: nil)),
+            ]
+            for (stateName, section) in lastCalibrations {
+                cases.append(SnapshotCase(
+                    name: "LastCalibration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
         }
     }
     return cases

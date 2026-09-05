@@ -31,6 +31,10 @@ public struct CalibrationSectionView: View {
     public let onCancel: () -> Void
     /// 快照矩阵注入：初始展开确认块（渲染 inactive 形态的确认态；生产恒默认 false）。
     public let initialConfirmVisible: Bool
+    /// 首行标题开关（照 FanSectionView showsTitle 先例）：校准页由卡片头承担标题
+    /// 时传 false，防同文重复；默认 true——面板与快照矩阵既有构造不传此参 →
+    /// 渲染字节不变（112 张 golden 零 regen 全靠该默认路径）。
+    public let showsTitle: Bool
 
     @State private var showConfirm: Bool
 
@@ -46,7 +50,8 @@ public struct CalibrationSectionView: View {
         busy: Bool,
         onStart: @escaping () -> Void,
         onCancel: @escaping () -> Void,
-        initialConfirmVisible: Bool = false
+        initialConfirmVisible: Bool = false,
+        showsTitle: Bool = true
     ) {
         self.calibrationActive = calibrationActive
         self.phase = phase
@@ -58,15 +63,19 @@ public struct CalibrationSectionView: View {
         self.onStart = onStart
         self.onCancel = onCancel
         self.initialConfirmVisible = initialConfirmVisible
+        self.showsTitle = showsTitle
         _showConfirm = State(initialValue: initialConfirmVisible)
     }
 
     public var body: some View {
         if capabilityPresent && (calibrationActive || (modeActive && actionIdle)) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(CellarL10n.s("calibration.title"))
-                    .font(.caption2)
-                    .foregroundStyle(theme.tertiaryText)
+                // 标题条件渲染（showsTitle）：App 校准页卡片头承担标题 → 传 false。
+                if showsTitle {
+                    Text(CellarL10n.s("calibration.title"))
+                        .font(.caption2)
+                        .foregroundStyle(theme.tertiaryText)
+                }
                 if calibrationActive {
                     runningRow
                 } else if showConfirm {

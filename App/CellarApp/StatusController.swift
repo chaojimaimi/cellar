@@ -392,6 +392,20 @@ final class StatusController: ObservableObject {
         )
     }
 
+    // MARK: - Phase 5 v1.4 校准调度
+
+    /// 校准调度设置（照 setFan runControl 先例，方案 §3.2/§7-M3-3）：组件侧以
+    /// `CalibrationScheduleWire(policy)` 组**全键**下发（缺席保持是 daemon 侧
+    /// 语义，App 不依赖）；旧 daemon 回「未知命令」→ detectStaleBeforeReject
+    /// 升级提示（既有闭环）。成功反馈由统一通道上屏。
+    func applyCalibrationSchedule(_ wire: CalibrationScheduleWire) {
+        runControl(
+            attempt: .setCalibrationSchedule(wire),
+            operation: { try DaemonXPCClient().setCalibrationSchedule(wire) },
+            successFeedback: CellarL10n.s("status.summary.setCalibrationSchedule")
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -414,6 +428,8 @@ final class StatusController: ObservableObject {
             calibrateCancel()
         case .setFan(let wire):
             setFan(wire)
+        case .setCalibrationSchedule(let wire):
+            applyCalibrationSchedule(wire)
         }
     }
 
