@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0-alpha] - 2026-09-05
+
+### Added
+
+- **充电日程（v1.6 自动化，默认关闭）**：主窗口新增「自动化」页——按星期与时段自动切换限充上限或完全放开充电（最多 8 条，30 分钟步进，支持跨午夜窗口）。**边沿触发语义**：进窗快照当前策略、出窗恢复快照（时段内手动修改仅临时生效）；A→B 相邻窗口无缝直切；重启 / 错过边沿自动补判；关总开关立即恢复。守护进程侧日程引擎含状态落盘（原子写 + 损坏自愈）与配置三级校验（长度 / JSON / 结构值域）；配置成功后 ≤1 tick 生效。当前生效条目带「生效中」徽章，日程进入 / 恢复推送本地通知。
+- **`cellar status --json`（CLI 脚本化）**：机器可读单行 JSON 输出（`daemon` 状态段键名对齐内部结构——旧 daemon 缺席的扩展字段自动省略；`route` 安装路线；`local` 本地电池读数段），退出码约定不变；默认人读输出不变。`cellar doctor` 同步新增第 14 项充电日程检查。
+
 ## [0.10.0-alpha] - 2026-09-05
 
 ### Added

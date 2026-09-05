@@ -33,6 +33,11 @@ struct CellarApp: App {
         statusController.onNotificationEvent = { [notifications] event, lastPercent in
             notifications.deliver(event, lastPercent: lastPercent)
         }
+        // Phase 5 v1.6 日程边沿通知（UD-7）：不走 CellarNotificationEvent 映射的
+        // 第二出口——deliverSchedule 直投（identifier 内嵌 epoch 豁免冷却）。
+        statusController.onScheduleEvent = { [notifications] notification in
+            notifications.deliverSchedule(notification)
+        }
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in
             notifications.requestAuthorization()

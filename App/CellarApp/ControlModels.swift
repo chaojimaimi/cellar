@@ -39,6 +39,9 @@ enum ControlAttempt: Equatable {
     /// Phase 5 v1.5 充电热暂停（重试 = 重发上次全键 wire——全键覆盖语义下幂等
     /// 无害，照 setCalibrationSchedule 形态）。
     case setThermal(ThermalWire)
+    /// Phase 5 v1.6 充电日程（重试 = 重发上次整包配置 JSON——全键覆盖语义下幂等
+    /// 无害，照 setThermal 形态；payload = 宿主页 encode 的紧凑 JSON）。
+    case setChargeSchedule(String)
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -67,7 +70,45 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.setCalibrationSchedule")
         case .setThermal:
             return CellarL10n.s("status.summary.setThermal")
+        case .setChargeSchedule:
+            return CellarL10n.s("status.summary.setChargeSchedule")
         }
+    }
+}
+
+// MARK: - Phase 5 v1.6 充电日程（App 侧派生值与通知事件）
+
+/// 充电日程状态快照（方案 §3.2；daemonStatus.scheduleJson 解码 + 当前命中条目
+/// id 透传——照 fanStatus/thermalStatus 派生形态，nil = 旧 daemon 门控）。
+struct ChargeScheduleStatus: Equatable {
+    /// 日程配置（scheduleJson 解码；daemon 侧 encode 产物解码失败理论不可达，
+    /// 消费侧回落 .default——仅影响渲染初值，不误判 legacy）。
+    var config: ChargeScheduleConfig
+    /// 当前命中窗口条目 id（daemon state 内存缓存回读；nil = 无在窗应用/旧 daemon）。
+    var activeEntryId: String?
+}
+
+/// 充电日程边沿通知事件（UD-7：ingest 对 scheduleActiveId 前后比对的产出）。
+/// **不走 CellarNotificationEvent**（UD-7 不新增 case、不动 daemon 字面量→通知
+/// 映射）——经 StatusController.onScheduleEvent 出口由 NotificationService
+/// deliverSchedule 直投。
+enum ScheduleNotification: Equatable {
+    /// 窗口进入（含 A→B 无缝直切——命中条目变更按进入语义上报）；条目摘要段 =
+    /// ChargeScheduleSummary.line（与列表行同源装配）。
+    case entered(entrySummary: String)
+    /// 窗口退出恢复（恢复进窗快照 base / 关总开关立即恢复）。
+    case restored
+}
+
+extension StatusController {
+    /// 通知文案的条目摘要段（id → scheduleJson 内条目 → 一行摘要）。条目不存在
+    ///（配置刚被删除的竞态）→ 短 id 兜底，不空转也不猜测语义。
+    func scheduleEntrySummary(_ id: String, in status: DaemonStatus) -> String {
+        let config = status.scheduleJson.flatMap { try? ChargeScheduleConfig.decoded(from: $0) }
+        guard let entry = config?.entries.first(where: { $0.id == id }) else {
+            return String(id.prefix(8))
+        }
+        return ChargeScheduleSummary.line(entry)
     }
 }
 

@@ -42,6 +42,11 @@ final class StatusController: ObservableObject {
     /// event.kind + status.lastPercent 组装（评审 P2-6：参数不进 lastAction 线格式）。
     var onNotificationEvent: ((CellarNotificationEvent, Int?) -> Void)?
 
+    /// 充电日程边沿事件出口（Phase 5 v1.6 UD-7；CellarApp 注入
+    /// NotificationService.deliverSchedule 直投——不走 CellarNotificationEvent
+    /// 映射，不新增 case、不动 daemon 字面量→通知映射）。
+    var onScheduleEvent: ((ScheduleNotification) -> Void)?
+
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
 
@@ -186,6 +191,18 @@ final class StatusController: ObservableObject {
     func ingest(status: DaemonStatus?) {
         if let status {
             let events = notificationEvents(previous: notificationBaseline, current: status)
+            // 充电日程边沿通知（UD-7）：scheduleActiveId 前后比对——nil→id = 窗口
+            // 进入 / id→id 变更 = A→B 直切（按进入语义上报新条目）/ id→nil = 恢复；
+            // **首样本不通知**（baseline nil，照 notificationEvents 基线语义）。
+            // 须在基线推进前比对（与 notificationEvents 同拍）。
+            if let previous = notificationBaseline,
+               previous.scheduleActiveId != status.scheduleActiveId {
+                if let activeId = status.scheduleActiveId {
+                    onScheduleEvent?(.entered(entrySummary: scheduleEntrySummary(activeId, in: status)))
+                } else {
+                    onScheduleEvent?(.restored)
+                }
+            }
             notificationBaseline = status
             for event in events {
                 onNotificationEvent?(event, status.lastPercent)
@@ -429,6 +446,30 @@ final class StatusController: ObservableObject {
         )
     }
 
+    // MARK: - Phase 5 v1.6 充电日程
+
+    /// 充电日程状态（nil = 旧 daemon——daemonStatus.scheduleJson 缺席；新 daemon
+    /// 恒填，UD-7 照 thermalStatus 先例）。解码失败（理论不可达——daemon 侧
+    /// encode 产物）→ 回落空配置，不误判 legacy。
+    var scheduleStatus: ChargeScheduleStatus? {
+        guard let status = daemonStatus, let json = status.scheduleJson else { return nil }
+        let config = (try? ChargeScheduleConfig.decoded(from: json)) ?? .default
+        return ChargeScheduleStatus(config: config, activeEntryId: status.scheduleActiveId)
+    }
+
+    /// 充电日程设置（照 applyCalibrationSchedule runControl 先例，方案 §3.2）：
+    /// **全量配置 JSON** 下发（宿主页把完整 config encode 后传入——daemon 三级
+    /// 校验长度/JSON/validated，任一失败 daemonError 原文上屏；旧 daemon 回
+    /// 「未知命令」→ detectStaleBeforeReject 升级提示既有闭环，R-7）。成功反馈
+    /// 由统一通道上屏。
+    func applyChargeSchedule(_ json: String) {
+        runControl(
+            attempt: .setChargeSchedule(json),
+            operation: { try DaemonXPCClient().setChargeSchedule(json) },
+            successFeedback: CellarL10n.s("status.summary.setChargeSchedule")
+        )
+    }
+
     /// 横幅「重试」= 重发上次动作（分支 ①；lastAttempt 在 runControl 入口记录）。
     func retryLastAttempt() {
         guard let attempt = lastAttempt, !busy else { return }
@@ -455,6 +496,8 @@ final class StatusController: ObservableObject {
             applyCalibrationSchedule(wire)
         case .setThermal(let wire):
             setThermal(wire)
+        case .setChargeSchedule(let json):
+            applyChargeSchedule(json)
         }
     }
 

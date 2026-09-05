@@ -9,8 +9,8 @@ import SwiftUI
 /// 空白、选中行蓝块跳出窗顶的怪癖）；左列定宽 216（VStack：品牌区 + 三导航
 /// 组 + footer daemon 状态行）+ Divider + 右侧 detail 切页。
 ///
-/// 路由七页：主组（仪表板/充电控制）→ 规划组（统计 v1.3 实页 / 校准 v1.4 /
-/// 自动化 v1.6 占位）→ 设置组（通用 / 外观与关于合并页）；设置组页消费共享
+/// 路由七页：主组（仪表板/充电控制）→ 规划组（统计 v1.3 / 校准 v1.4 /
+/// 自动化 v1.6 三页全实页化）→ 设置组（通用 / 外观与关于合并页）；设置组页消费共享
 /// 内容子视图（GeneralSections/AppearanceSections/AboutSections，设置窗内容
 /// 统一并入，双入口收敛为单入口）。
 /// 采样多表面仲裁：onAppear/onDisappear 对称上报主窗口表面（§2.3——最小化不
@@ -106,8 +106,8 @@ struct MainWindowView: View {
                     .frame(width: 16)
                 Text(pageTitle(page))
                 Spacer(minLength: 0)
-                // 版本徽章（mock nav small：校准/自动化标注目标版本；
-                // 统计已 v1.3 实页化，其余页无徽章）。
+                // 版本徽章（v1.6 起规划组三页全部实页化——全页无徽章，
+                // pageVersionBadge 恒 nil 保留结构）。
                 if let badge = pageVersionBadge(page) {
                     Text(badge)
                         .font(.system(size: 9.5))
@@ -231,7 +231,7 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: - 路由（七页：主组/设置组实页 + 规划组占位）
+    // MARK: - 路由（七页全实页化——v1.6 起占位面清零）
 
     @ViewBuilder
     private var detailPage: some View {
@@ -253,12 +253,8 @@ struct MainWindowView: View {
             // v1.4 实页（方案 §3）：替换占位；侧栏徽章与 scope 文案随实页化退役。
             CalibrationPageView()
         case .automation:
-            TBDPlaceholderView(
-                icon: selection.icon,
-                title: pageTitle(selection),
-                scope: pageScope(selection),
-                version: pageVersionBadge(selection) ?? CellarL10n.s("main.page.version.alpha")
-            )
+            // v1.6 实页（方案 §3.1）：替换占位；侧栏徽章与 scope 文案随实页化退役。
+            AutomationPageView()
         }
     }
 
@@ -266,18 +262,12 @@ struct MainWindowView: View {
         CellarL10n.s(String.LocalizationValue(page.titleKey))
     }
 
-    /// 占位页范围说明（仅自动化占位消费；校准 scope key 已随 v1.4 实页化退役
-    /// ——含统计/control/about 三 scope key 先例一并清出 catalog）。
-    private func pageScope(_ page: MainWindowPage) -> String {
-        CellarL10n.s(String.LocalizationValue(page.scopeKey))
-    }
-
-    /// 版本徽章（侧栏与占位页共用）：自动化标注 v1.6；统计（v1.3）/校准（v1.4）
-    /// 已实页化不再有徽章；其余页无徽章（占位页版本 chip 落 main.page.version.alpha）。
+    /// 版本徽章（侧栏行）：统计（v1.3）/校准（v1.4）/自动化（v1.6）已实页化
+    /// 均无徽章；其余页无徽章（main.page.version.alpha 随最后一页实页化退役）。
     private func pageVersionBadge(_ page: MainWindowPage) -> String? {
         switch page {
-        case .automation: return CellarL10n.s("main.page.automation.version")
-        case .dashboard, .control, .general, .about, .stats, .calibration: return nil
+        case .dashboard, .control, .general, .about, .stats, .calibration, .automation:
+            return nil
         }
     }
 }
@@ -291,8 +281,8 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// 侧栏三段导航组（v1.5 打磨）：主组（本期实页）→ 规划组（占位页——版本
-    /// 徽章标注目标版本）→ 设置组（通用 + 外观与关于合并页）。
+    /// 侧栏三段导航组（v1.5 打磨）：主组 → 规划组（v1.6 起统计/校准/自动化
+    /// 三页全部实页化）→ 设置组（通用 + 外观与关于合并页）。
     static var navigationGroups: [[MainWindowPage]] {
         [
             [.dashboard, .control],
@@ -301,7 +291,7 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
         ]
     }
 
-    /// 侧栏/占位页图标（SF Symbol——macOS 26 全存在：general/about 沿用设置
+    /// 侧栏页图标（SF Symbol——macOS 26 全存在：general/about 沿用设置
     /// 窗同款图标，入口语义延续；外观图标随独立页退役一并移除）。
     var icon: String {
         switch self {
@@ -319,8 +309,6 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
         "main.page.\(rawValue)"
     }
 
-    /// 占位页范围说明 key（仅自动化占位消费——校准随 v1.4 实页化退役）。
-    var scopeKey: String {
-        "main.page.\(rawValue).scope"
-    }
+    // scopeKey 已随 v1.6 自动化实页化删除（占位面清零——统计/校准 scope key
+    // 同款退役；main.page.version.alpha 随最后一页实页化成为零消费 key）。
 }

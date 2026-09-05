@@ -7,13 +7,24 @@ import Foundation
 /// daemon 段：XPC 成功 → 模式/策略/最近动作；XPC 失败（未安装/未运行）→ 打印固定指引，
 /// 不阻断本地只读信息（降级视图）。退出码：本地读数全部成功 0；任一本地产失败 1
 /// （评审 P1-8：不静默——daemon 缺失不影响本地诊断可见性，本地故障必须显式非零）。
+/// Phase 5 v1.6（UD-9）：`--json` 机器可读输出（键名对齐 DaemonStatus 字段名 +
+/// 本地读数段；旧 daemon 缺席的可选字段按存在与否输出——合成 Codable encodeIfPresent；
+/// 退出码约定不变）。
 struct StatusCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "status",
         abstract: "状态一览：daemon 段 + 后端、电量、充放状态、控制键状态、电压等"
     )
 
+    /// UD-9：--json 结构化输出（脚本化第一步，方案 §3.4）。
+    @Flag(name: .long, help: "以 JSON 输出（脚本化；daemon/route/local 三段，键名对齐 DaemonStatus）")
+    var json = false
+
     func run() throws {
+        if json {
+            try runJson()
+            return
+        }
         let identity = RuntimeProbe.isRunningAsRoot
             ? "root（具备写入能力）"
             : "非 root（读取可用；写入需 root，限充控制经 daemon）"
@@ -35,6 +46,97 @@ struct StatusCommand: ParsableCommand {
         if localFailed {
             throw ExitCode(1)
         }
+    }
+
+    // MARK: - --json（UD-9）
+
+    /// 结构化输出（单行紧凑 JSON + sortedKeys，jq 等脚本工具直读）：
+    /// `{"daemon": {…DaemonStatus 全字段…}, "route": "appManaged"|"manual"|"unknown",
+    ///   "local": {…电池读数…}}；route 键仅在 daemon 可达时存在（缺席 = 不可达）。`。
+    /// - daemon 段 = DaemonStatus 直接 encode（键名对齐零漂移；可选字段 nil 省略
+    ///   ——旧 daemon 的 scheduleJson/scheduleActiveId/fan/calSched 三键/therm
+    ///   两键按存在与否输出；scheduleJson 为嵌套 JSON 串，脚本侧二次解析即得配置）；
+    /// - daemon 不可达 → `"daemon": null` + `"error"` 原文（本地段照常输出——
+    ///   与人读路径同口径的降级视图，不阻断本地诊断）；
+    /// - 本地读数失败 → `"local": null` + 退出码 1（评审 P1-8 不静默同口径）；
+    /// - SMC 后端/控制键段不进 JSON（v1.6 脚本面收敛于 daemon + 电池读数——
+    ///   充放状态经 local.charging/external 表达，方案 §3.4）。
+    private func runJson() throws {
+        var root: [String: Any] = [:]
+        do {
+            let status = try DaemonXPCClient().getStatus()
+            // secondsSince1970：脚本友好的 epoch 秒（timestamp 一致口径）。
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            let data = try encoder.encode(status)
+            root["daemon"] = try JSONSerialization.jsonObject(with: data)
+            root["route"] = daemonRouteName(DaemonCommandHelpers.queryDaemonRoute())
+        } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
+            root["daemon"] = NSNull()
+            root["error"] = DaemonCommandHelpers.daemonUnavailableMessage
+        } catch DaemonClientError.daemonError(let message) {
+            root["daemon"] = NSNull()
+            root["error"] = message
+        }
+
+        var localFailed = false
+        do {
+            root["local"] = try localReadings()
+        } catch {
+            localFailed = true
+            root["local"] = NSNull()
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+        print(String(data: data, encoding: .utf8) ?? "{}")
+        if localFailed {
+            throw ExitCode(1)
+        }
+    }
+
+    /// 路由词（DaemonRoute → 稳定 camelCase 串 appManaged/manual/unknown——脚本分支依据，不本地化）。
+    private func daemonRouteName(_ route: DaemonRoute) -> String {
+        switch route {
+        case .appManaged: return "appManaged"
+        case .manual: return "manual"
+        case .unknown: return "unknown"
+        }
+    }
+
+    /// 本地电池读数段（IOKit；键名对齐 BatterySnapshot 字段语义——percent/
+    /// charging/external/temperature/voltage/amperage/cycle/designCapacity 等的可
+    /// 选段按存在与否输出）。
+    private func localReadings() throws -> [String: Any] {
+        let snapshot = try BatteryMonitor.makeDefault().snapshot()
+        var local: [String: Any] = [
+            "percent": snapshot.percent,
+            "charging": snapshot.isCharging,
+            "external": snapshot.externalConnected,
+            "temperature": snapshot.temperatureC,
+            "voltage": snapshot.voltageMV,
+            "amperage": snapshot.amperageMA,
+            "cycle": snapshot.cycleCount,
+            "designCapacity": snapshot.designCapacityMAh,
+            "timestamp": Int(snapshot.timestamp.timeIntervalSince1970),
+        ]
+        if let max = snapshot.maxCapacityPercent {
+            local["maxCapacity"] = max
+        }
+        // 健康度（WP2' 口径：Nominal/Design 同源；缺席/异常源 → 字段省略）。
+        if let health = batteryHealthPercent(
+            nominal: snapshot.nominalChargeCapacityMAh, design: snapshot.designCapacityMAh
+        ) {
+            local["health"] = health
+        }
+        if let adapter = snapshot.adapter {
+            var adapterObject: [String: Any] = [:]
+            if let watts = adapter.watts { adapterObject["watts"] = watts }
+            if let voltage = adapter.voltageMV { adapterObject["voltage"] = voltage }
+            if let current = adapter.currentMA { adapterObject["current"] = current }
+            if let name = adapter.name { adapterObject["name"] = name }
+            local["adapter"] = adapterObject
+        }
+        return local
     }
 
     // MARK: - daemon 段（XPC，尽力而为）

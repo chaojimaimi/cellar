@@ -45,7 +45,8 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12 新增 + 占位页 1 态 4 新增；
 // Phase 5 v1.2 走查批 自 108 扩 112——功率流三角图 nodata 空态 4 新增（前 3 态 12 张 M regen：Canvas 测量自适应 F2 + 流动语义统一 F3）；
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
-// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增）
+// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
+// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -139,13 +140,14 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 140 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 156 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
 // 新增 + 占位页 1 态 4 新增；走查批 自 108 扩 112——功率流三角图 nodata 4 新增；
 // Phase 5 v1.4 自 112 扩 132——校准调度卡 3 态 12 新增 + 上次校准卡 2 态 8 新增；
-// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增）
+// Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
+// Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -388,7 +390,9 @@ private func buildCases() -> [SnapshotCase] {
             // 版本全参数）×4（104 → 108，新增 4 张）：⚠️ v1.3 统计实页化后
             // main.page.stats.scope 退役（App 层零消费、catalog 已删）——本态
             // 以退役前 zh 原文字面量钉死，golden 逐字节不变（swift build 形态
-            // s() 本就恒解析 zh-Hans，语义等价）；组件仍被校准/自动化占位消费。
+            // s() 本就恒解析 zh-Hans，语义等价）；v1.6 起校准/自动化亦实页化，
+            // TBDPlaceholderView 已无 App 消费面——快照矩阵保留钉死形态
+            // （组件仍在 CellarUI，Intents/场景联动复活时可能复用）。
             let placeholder = TBDPlaceholderView(
                 icon: "chart.bar",
                 title: CellarL10n.s("main.page.stats"),
@@ -474,6 +478,57 @@ private func buildCases() -> [SnapshotCase] {
                     })
                 })
             }
+
+            // 充电日程卡 3 态（legacy/off 空态/on 条目+生效徽章）×4（Phase 5 v1.6
+            // §3.5 新增 12 张，140 → 152）：门控二态照方案 §7-M3-3——config nil =
+            // 旧 daemon 升级提示 / 非 nil = 配置态（勿把空配置当旧 daemon——新
+            // daemon 恒填空配置 JSON）。on 态钉死两条目（工作日限充 70 + 周末跨
+            // 午夜放开充电——动作两形态同帧），entry1 命中 activeEntryId（生效
+            // 徽章代表形态）。回调全空闭包——渲染无副作用；时段摘要 String(format:)
+            // printf 通路跨机确定，星期/动作词全 key（zh-Hans 钉死 swift build
+            // 形态）——无需预格式化注入。
+            let scheduleWorkday = ChargeScheduleEntry(
+                id: "0A1B2C3D-0000-4000-8000-00000000E001", weekdays: [1, 2, 3, 4, 5],
+                startMinute: 540, endMinute: 1080, upperLimit: 70, chargingDisabled: nil)
+            let scheduleWeekend = ChargeScheduleEntry(
+                id: "0A1B2C3D-0000-4000-8000-00000000E002", weekdays: [6, 7],
+                startMinute: 1320, endMinute: 420, upperLimit: nil, chargingDisabled: true)
+            let chargeSchedules: [(String, ChargeScheduleConfig?, String?)] = [
+                ("legacy", nil, nil),
+                ("offEmpty", ChargeScheduleConfig(enabled: false, entries: []), nil),
+                ("onEntries", ChargeScheduleConfig(
+                    enabled: true, entries: [scheduleWorkday, scheduleWeekend]),
+                 scheduleWorkday.id),
+            ]
+            for (stateName, scheduleConfig, activeId) in chargeSchedules {
+                cases.append(SnapshotCase(
+                    name: "ChargeScheduleList_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        ChargeScheduleListView(
+                            config: scheduleConfig, activeEntryId: activeId, busy: false,
+                            onToggleEnabled: { _ in }, onAdd: {}, onEdit: { _ in }, onDelete: { _ in }
+                        )
+                        .frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            // 充电日程编辑器 1 态（editing）×4（152 → 156）：编辑现有条目钉死
+            // 种子（工作日 09:00–18:00 限充 70）——星期 chips/起止 Picker/滑杆/
+            // 取消保存全控件显形；onCancel/onSave 空闭包——渲染无副作用。
+            cases.append(SnapshotCase(
+                name: "ChargeScheduleEditor_editing_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    ChargeScheduleEntryEditor(
+                        seed: scheduleWorkday, busy: false, onCancel: {}, onSave: { _ in }
+                    )
+                    .frame(width: 304, alignment: .leading)
+                })
+            })
         }
     }
     return cases

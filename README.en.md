@@ -17,10 +17,11 @@
 - **Charge-side thermal pause**: by default charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce), with thresholds configurable on the General page; no hot restart of charging after a thermally terminated discharge
 - **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
 - **Optional auto-discharge**: automatically discharges back to the limit when charge is above it (off by default; enabling requires double confirmation; after completion it needs to cool down and the adapter to be replugged before it can trigger again)
+- **Charge schedule** (new in v1.6, off by default): automatically switches the charge limit or fully unlimited charging by weekday and time window (up to 8 entries, 30-minute granularity); edge-triggered — the policy is snapshotted when a window opens and restored when it closes, so manual changes inside a window only last until it ends
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
 - **Discharge to Limit**: temporarily disconnects the adapter and runs on battery until the charge drops to the limit target, then automatically restores (real-time supply power visualization; support conditions below)
 - **Root-free read-only monitoring**: charge level, charging/discharging state, voltage, current, temperature, cycle count, battery health, design/full charge capacity, cell voltages, adapter details
-- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command thirteen-point diagnostics (including a device compatibility line)
+- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command fourteen-point diagnostics (including a device compatibility line)
 
 ## GUI (App)
 
@@ -32,6 +33,7 @@ A menu-bar icon resident GUI (App/CellarApp.xcodeproj), sharing the same core an
 - **Power-flow graph**: real-time visualization of three states — adapter supply / floating at stop / battery supply — including measured battery-side power
 - **One-shot actions**: “Charge to Full once” (charges to 100% then automatically restores the limit) and “Discharge to Limit” (adapter off, automatically restores when the level drops to the target)
 - **Battery calibration**: one-click four-phase calibration (full charge → rest/balance → discharge to 10% → restore limit), fully notified, cancellable anytime, auto-aborted on reboot
+- **Automation page (v1.6)**: charge-schedule card — master switch, entry add/edit/delete (seven-weekday picker / 30-minute-granularity start/end / charge limit or unlimited charging), an “Active” badge on the currently matching entry; local notifications on schedule entry / restore
 - **Themes**: native minimal / Cellar Amber dual themes with instant switching, light/dark adaptive; zh/en bilingual
 - **Settings window**: appearance switch, launch at login, login-item repair, auto-discharge toggle, notifications entry
 - **First-launch 4-step onboarding**: welcome → environment check (conflict gate) → daemon install authorization → set limit
@@ -118,7 +120,8 @@ GUI route: open `App/CellarApp.xcodeproj` in Xcode and build; place the resultin
 
 ```bash
 cellar status          # status overview (backend, level, charging state, control key, daemon state)
-cellar doctor          # thirteen-point diagnostic report (exit codes 0/1/2 usable in scripts)
+cellar status --json   # same, machine-readable JSON (daemon/route/local sections, for scripting)
+cellar doctor          # fourteen-point diagnostic report (exit codes 0/1/2 usable in scripts)
 cellar doctor --devices  # single-line device compatibility output (welcome in issue reports)
 sudo cellar set 80     # set limit 80% (range 60–100; --hysteresis n available)
 sudo cellar disable    # stop limit management, restore default system charging
@@ -127,6 +130,7 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ```
 
 - `cellar status` / `doctor` give trustworthy conclusions without `sudo`
+- `cellar status --json` emits single-line JSON (readable by `jq`): `.daemon` is the daemon state (keys mirror the internal status struct; extension fields absent on older daemons are omitted; `.daemon.scheduleJson` holds the schedule config as a nested JSON string), `.route` is the install route, `.local` holds local battery readings; when the daemon is unreachable `.daemon` is `null` and exit codes are unchanged. Example: `cellar status --json | jq -r '.daemon.upperLimit'`
 - after either the daemon or the CLI is updated, re-run `sudo .build/release/cellar install` to upgrade
 - `cellar doctor` detects other charge-management tools on the machine (installed directories and running processes, two levels) and warns about coexistence
 
@@ -141,14 +145,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 408 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 438 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 88.66%)
-swift run CellarUICheck     # 140 UI snapshot comparisons + localization completeness gate
+                            # pure logic, ≥80% · currently 88.95%)
+swift run CellarUICheck     # 156 UI snapshot comparisons + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -164,7 +168,8 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 5 · v1.3 statistics (0.8.0-alpha)**: SQLite periodic sampling + battery level / temperature / power history charts + max capacity trend (released)
 - ✅ **Phase 5 · v1.4 calibration scheduling (0.9.0-alpha)**: calibration page with status / schedule / last-run cards + automatic periodic calibration — overnight window, opt-in off by default, deferred when conditions unmet, cancellable anytime (released)
 - ✅ **Phase 5 · v1.5 thermal protection completion (0.10.0-alpha)**: configurable charge-side thermal thresholds (pause 35–45 °C / hysteresis 1–8 °C, defaults 40/37 unchanged) + derived resume point + thermal guard extended to charging-enable paths (Charge-to-Full / calibration) (released)
-- Phase 5+: charging schedule, Shortcuts integration
+- **Phase 5 · v1.6 automation (0.11.0-alpha)**: charge schedule (auto-switch limit / unlimited charging by weekday and time, edge-triggered with enter-window snapshot restore) + `status --json` CLI scripting — Shortcuts integration moved to a v1.7 candidate due to the system restriction on ad-hoc-signed apps without a Team ID
+- Phase 5+: Shortcuts integration (v1.7 candidate), scene automation
 
 The full roadmap and design documents are published in the release notes.
 

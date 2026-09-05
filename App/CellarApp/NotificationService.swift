@@ -150,4 +150,31 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         [.list]
     }
+
+    // MARK: - Phase 5 v1.6 充电日程边沿（UD-7）
+
+    /// 日程边沿通知直投（不走 CellarNotificationEvent 映射——UD-7 不新增 case）。
+    /// identifier 内嵌投递时刻 epoch **豁免 10 分钟同型冷却**（照校准事件先例——
+    /// 相邻窗口边沿是真事件，冷却会吞掉切换可见性；边沿本身有 daemon 30s tick
+    /// 粒度，不会高频重复）。
+    func deliverSchedule(_ notification: ScheduleNotification) {
+        let now = Date()
+        let content = UNMutableNotificationContent()
+        content.title = "Cellar"
+        let identifier: String
+        switch notification {
+        case .entered(let summary):
+            identifier = "schedule.entered.\(Int(now.timeIntervalSince1970))"
+            content.body = CellarL10n.s("notification.scheduleEntered", summary)
+        case .restored:
+            identifier = "schedule.restored.\(Int(now.timeIntervalSince1970))"
+            content.body = CellarL10n.s("notification.scheduleRestored")
+        }
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Self.log.error("日程通知投递失败：\(error.localizedDescription)")
+            }
+        }
+    }
 }
