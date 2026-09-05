@@ -5424,19 +5424,19 @@
         }
       }
     },
-    "thermal.hysteresis": {
+    "thermal.gap": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hysteresis"
+            "value": "Hysteresis gap: %.1f°C (derived)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "滞回幅度"
+            "value": "滞回温差：%.1f°C（= 暂停点 − 恢复点）"
           }
         }
       }
@@ -5475,19 +5475,19 @@
         }
       }
     },
-    "thermal.resumeLine": {
+    "thermal.resume": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Charging resumes below %.1f%@ (= pause point − hysteresis)"
+            "value": "Resume charging at"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复充电：< %.1f%@（= 暂停点 − 滞回）"
+            "value": "恢复充电温度"
           }
         }
       }

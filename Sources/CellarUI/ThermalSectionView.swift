@@ -9,10 +9,14 @@ import SwiftUI
 ///   **勿把默认配置当旧 daemon**（新 daemon 恒填 `.default` 展开）；
 /// - **无开关**——热保护不可关闭（UD-2 值域钳制的 UI 面，§4 红线 3），与风扇节
 ///   （有 Toggle）的结构性差异，脚注言明；
-/// - 暂停阈值 Slider 35...45°C 步进 0.5 + 滞回 Slider 1...8°C 步进 0.5，均**松手
-///   提交**（onEditingChanged(false) 才应用——照 fan 先例，防逐档洪水式 XPC）；
-/// - 恢复点只读行（resume = pause − hysteresis 派生展示，不可调——UD-2 消除
-///   「resume ≥ pause」非法组合的 UI 表达）；
+/// - 暂停阈值 Slider 35...45°C 步进 0.5，**松手提交**（onEditingChanged(false)
+///   才应用——照 fan 先例，防逐档洪水式 XPC）；
+/// - **恢复温度 Slider（v1.5 走查重构）**：用户心智模型是「两个温度点」而非
+///   「阈值 + 差值量」——第二滑杆直接表示恢复温度（值 = 暂停点 − 滞回），随暂停
+///   阈值拖动实时跟随；值域 [暂停−8, 暂停−1] 动态钳制，拖动改写滞回
+///   （hysteresis = pause − resume），非法组合（恢复 ≥ 暂停）在滑杆域内天然
+///   不可表达——数据模型（pause + hysteresis）与 XPC 契约零变化；
+/// - 滞回温差只读行（pause − resume 派生展示）；
 /// - 变更即**全键下发**（onApply(ThermalWire)——`ThermalWire(_:)` 便捷构造；
 ///   缺席保持是 daemon 侧语义，App 不依赖，照 ScheduleSectionView apply 先例）。
 public struct ThermalSectionView: View {
@@ -34,6 +38,19 @@ public struct ThermalSectionView: View {
     private static let hysteresisRangeC: ClosedRange<Double> =
         (Double(ThermalPolicy.hysteresisRangeCentiC.lowerBound) / 100)
         ... (Double(ThermalPolicy.hysteresisRangeCentiC.upperBound) / 100)
+
+    /// 恢复温度滑杆动态值域：[暂停−8, 暂停−1]（由滞回区间常量换算——暂停点
+    /// 变化时域随之平移，resume 恒在域内，见 resumeRow 注释）。
+    private static func resumeRangeC(currentPauseC: Double) -> ClosedRange<Double> {
+        (currentPauseC - Double(ThermalPolicy.hysteresisRangeCentiC.upperBound) / 100)
+            ... (currentPauseC - Double(ThermalPolicy.hysteresisRangeCentiC.lowerBound) / 100)
+    }
+
+    /// 恢复温度投影（滑杆值 = 暂停点 − 滞回；@State 只存 pause/hysteresis 两源，
+    /// resume 恒派生——两滑杆与温差行三者自洽，无第二真相源）。
+    private var resumeC: Double {
+        pauseC - hysteresisC
+    }
 
     @State private var pauseC: Double
     @State private var hysteresisC: Double
@@ -75,8 +92,8 @@ public struct ThermalSectionView: View {
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
                 pauseRow
-                hysteresisRow
                 resumeRow
+                gapRow
                 Text(CellarL10n.s("thermal.footnote"))
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
@@ -114,27 +131,37 @@ public struct ThermalSectionView: View {
         }
     }
 
-    /// 滞回幅度行（1...8°C 步进 0.5，松手提交；恢复点随动派生）。
-    private var hysteresisRow: some View {
+    /// 恢复温度行（v1.5 走查重构：滑杆直接表示恢复温度——值 = 暂停点 − 滞回，
+    /// 随暂停阈值实时跟随；值域 [暂停−8, 暂停−1] 动态钳制，拖动即改写滞回）。
+    /// 动态值域由滞回区间常量换算（单一事实源），resume 恒在域内：resume =
+    /// pause − hysteresis 且 hysteresis ∈ [1,8] ⟹ resume ∈ [pause−8, pause−1]。
+    private var resumeRow: some View {
         Group {
             HStack {
-                Text(CellarL10n.s("thermal.hysteresis"))
+                Text(CellarL10n.s("thermal.resume"))
                 Spacer()
-                Text(celsiusText(hysteresisC))
+                Text(celsiusText(resumeC))
                     .monospacedDigit()
             }
             .font(.caption)
-            Slider(value: $hysteresisC, in: Self.hysteresisRangeC, step: 0.5, onEditingChanged: { editing in
-                if !editing { apply() }
-            })
+            Slider(
+                value: Binding(
+                    get: { resumeC },
+                    set: { hysteresisC = pauseC - $0 }
+                ),
+                in: Self.resumeRangeC(currentPauseC: pauseC),
+                step: 0.5,
+                onEditingChanged: { editing in
+                    if !editing { apply() }
+                }
+            )
                 .disabled(busy)
         }
     }
 
-    /// 恢复点只读行（UD-2：resume = pause − hysteresis 派生展示，不可调——消除
-    /// 非法组合的 UI 表达；滑杆 0.5 步进值均为二进有理数，差值精确无浮点尾差）。
-    private var resumeRow: some View {
-        Text(CellarL10n.s("thermal.resumeLine", pauseC - hysteresisC, CellarL10n.s("thermal.unit.celsius.short")))
+    /// 滞回温差只读行（派生展示：pause − resume；数值恒与两滑杆一致）。
+    private var gapRow: some View {
+        Text(CellarL10n.s("thermal.gap", pauseC - resumeC, CellarL10n.s("thermal.unit.celsius.short")))
             .font(.caption)
             .foregroundStyle(theme.secondaryText)
     }
