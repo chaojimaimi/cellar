@@ -159,7 +159,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.11.0-alpha"
+    public static let daemonVersion = "0.12.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

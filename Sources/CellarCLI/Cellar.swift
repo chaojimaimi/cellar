@@ -11,7 +11,7 @@ struct Cellar: ParsableCommand {
         abstract: "macOS 电池管理工具（限充管理 + 诊断；App 菜单栏面板见项目主页）",
         // WP2' L1：与 DaemonXPC.daemonVersion 同步（0.11.0-alpha——防 CLI 对
         // stale daemon 诊断混淆，评审 F-3 同款核对依据）。
-        version: "0.11.0-alpha",
+        version: "0.12.0-alpha",
         subcommands: [
             StatusCommand.self,
             DoctorCommand.self,

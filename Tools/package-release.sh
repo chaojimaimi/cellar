@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 版本号单变量：zip/dmg 文件名由此派生；发布时与 App/CLI/daemon 版本串保持一致。
-VERSION=0.11.0-alpha
+VERSION=0.12.0-alpha
 
 PROJECT="App/CellarApp.xcodeproj"
 SCHEME="CellarApp"

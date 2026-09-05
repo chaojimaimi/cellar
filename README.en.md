@@ -152,7 +152,7 @@ swift run CellarCoreCheck   # 438 scenarios, hundreds of checks: exhaustive deci
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
                             # pure logic, ≥80% · currently 88.95%)
-swift run CellarUICheck     # 156 UI snapshot comparisons + localization completeness gate
+swift run CellarUICheck     # 234 UI snapshot comparisons (three-style matrix) + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

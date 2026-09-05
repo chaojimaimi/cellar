@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0-alpha] - 2026-09-05
+
+### Added
+
+- **第三 UI 风格「仪表盘工业」**：外观页新增第三选项——仪表信号绿单信号色板（品牌维度单一，语义红橙保留）、等宽数字（仪表中心读数与状态行数值段等宽化）、石墨 / 浅灰仪器面板双色板；与原生 / 酒窖琥珀并存即时切换，快照回归矩阵扩至三风格（234 张）。
+- 语汇沿用原生直白措辞；工业专属语汇与刻度盘仪表变体列入后续打磨。
+
 ## [0.11.0-alpha] - 2026-09-05
 
 ### Added
