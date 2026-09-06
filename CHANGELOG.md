@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0-alpha] - 2026-09-06
+
+### Added
+
+- **风格 C「仪表盘工业」Tier 2 打磨（v1.9）**：
+  - 仪表内圈刻度盘：主刻度 12 + 副刻度 48，Canvas 静态绘制，仅 C 风格生效（A/B 视觉零变化）
+  - 面板细线网格底纹：菜单栏弹窗 + 主窗口内容区 24pt 方格，仅 C 风格生效
+  - 等宽数字扩面：仪表 hero 限充区间行、仪表板时间估算与健康卡主读出
+  - 快照矩阵 258 → 270（hero 仪表 + 网格容器 2 态 12 张，三风格全列）
+
+### Changed
+
+- **风扇策略「抬升下限」退役（v1.9）**：v1.1 起因固件拒写风扇最低转速键（实测 result=134）而从未可配置的灰显占位策略，正式从设计移除、后续不再实现——策略 Picker 三项（恒速降温 / 两级分段 / 全速应急），线格式值 1 永久保留不复用，daemon 对其拒绝语义不变。对既有用户零行为影响（该策略此前不可选中）。本地化词条 411 → 408。
+
 ## [0.14.0-alpha] - 2026-09-06
 
 ### Added
