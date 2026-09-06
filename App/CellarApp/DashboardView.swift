@@ -363,7 +363,10 @@ struct DashboardView: View {
                 .foregroundStyle(theme.tertiaryText)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
-                    .font(.system(size: 22, weight: .semibold))
+                    // v1.9 D-B4：tile 主数字面 design 随 token（时间估算等四 tile
+                    // 共用本读出面；A/B nil 落回 .default 零扰动；caption/副词级
+                    // 标签行不接——宁缺勿滥）。
+                    .font(.system(size: 22, weight: .semibold, design: theme.numericFontDesign ?? .default))
                     .monospacedDigit()
                     .foregroundStyle(theme.secondaryText)
                 if let unit {

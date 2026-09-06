@@ -56,6 +56,14 @@ public struct CellarTheme: Sendable {
     /// .default，均非 .body）。**nil = 各消费点维持现 design**（A/B 哑值纪律，
     /// golden 零扰动的唯一保证）；C = .monospaced（等宽数字）。
     public var numericFontDesign: Font.Design?
+    /// 仪表内圈刻度线色（v1.9 D-B1：nil = 不画——A/B 无刻度盘语汇哑值，组件层
+    /// `if let` 为 token 值分支非风格枚举分支；C = 刻度盘工业语汇，hex 落 G2 门
+    /// 内。R1 P2-2 定版 Color? 与 panelGrid 同型：track 已是低透明度乘积色，
+    /// SwiftUI opacity 只降不升，「刻度透明度高于 track」须独立 token 表达）。
+    public var gaugeTick: Color?
+    /// 面板细线网格底纹色（v1.9 D-B2：nil = 不画——A/B 哑值；C = 工业面板语汇；
+    /// token 透明度 ≤0.08，网格只铺背景层，保证其上文本可读性（R-2））。
+    public var panelGrid: Color?
 
     /// 默认主题：系统语义色（原生极简基线）。vocabulary 留空——word(_:) 以内置
     /// 常量兜底（与现 UI 中文原文一字不差），environment 默认值路径永不落空。
@@ -80,7 +88,9 @@ public struct CellarTheme: Sendable {
         accentGlow: AccentGlow(color: .clear, radius: 0),
         vocabulary: [:],
         displayFont: .body,
-        numericFontDesign: nil
+        numericFontDesign: nil,
+        gaugeTick: nil,
+        panelGrid: nil
     )
 
     /// B 风格浅色（暖纸）。色值全部提取自设计 demo 双色板/光晕/渐变（WP3 §1.6
@@ -107,7 +117,9 @@ public struct CellarTheme: Sendable {
         accentGlow: AccentGlow(color: Color(hex: 0xD9A441).opacity(0.35), radius: 5),  // demo 光晕
         vocabulary: [:],
         displayFont: .body,
-        numericFontDesign: nil
+        numericFontDesign: nil,
+        gaugeTick: nil,
+        panelGrid: nil
     )
 
     /// B 风格深色（暖夜）。告警红取 demo 复审 WCAG 修正值 #E05252。
@@ -132,7 +144,9 @@ public struct CellarTheme: Sendable {
         accentGlow: AccentGlow(color: Color(hex: 0xE3A94F).opacity(0.4), radius: 7),  // demo 光晕（深 7px .4）
         vocabulary: [:],
         displayFont: .body,
-        numericFontDesign: nil
+        numericFontDesign: nil,
+        gaugeTick: nil,
+        panelGrid: nil
     )
 
     /// C 风格浅色（仪表浅灰）。⚠️ 无 demo 事实源——色值为本批设计产出（PLAN.md:145
@@ -163,7 +177,9 @@ public struct CellarTheme: Sendable {
         accentGlow: AccentGlow(color: .clear, radius: 0),      // 工业无光晕（哑值 = radius 0）
         vocabulary: [:],
         displayFont: .system(.body, design: .monospaced),
-        numericFontDesign: .monospaced
+        numericFontDesign: .monospaced,
+        gaugeTick: Color(hex: 0x55606A).opacity(0.30),         // 仪表内圈刻度（冷灰次级同源，内圈低存在感）
+        panelGrid: Color(hex: 0x2A3439).opacity(0.07)          // 面板细线网格（石墨 ≤0.08，R-2 可读性）
     )
 
     /// C 风格深色（石墨）。告警红沿用 demo 复审 WCAG 修正值 #E05252（amber 深色同源）。
@@ -188,7 +204,9 @@ public struct CellarTheme: Sendable {
         accentGlow: AccentGlow(color: .clear, radius: 0),      // 工业无光晕（哑值 = radius 0）
         vocabulary: [:],
         displayFont: .system(.body, design: .monospaced),
-        numericFontDesign: .monospaced
+        numericFontDesign: .monospaced,
+        gaugeTick: Color(hex: 0x98A4AC).opacity(0.30),         // 仪表内圈刻度（冷灰次级同源，深）
+        panelGrid: Color(hex: 0x98A4AC).opacity(0.07)          // 面板细线网格（冷灰 ≤0.08，深）
     )
 
     /// demo 135° 渐变端点（浅 #D9A441→#B4793B / 深 #EAB765→#D99B46）。独立成对
@@ -327,34 +345,6 @@ public struct CellarTheme: Sendable {
     }
 }
 
-/// accent 光晕（color + radius 小 struct，非可选 token 的值类型；Equatable 供
-/// 组件比对；Sendable 随 CellarTheme 传递跨隔离界）。
-public struct AccentGlow: Equatable, Sendable {
-    public var color: Color
-    public var radius: CGFloat
-
-    public init(color: Color, radius: CGFloat) {
-        self.color = color
-        self.radius = radius
-    }
-}
-
-// 本地化解析门面 CellarL10n 独立于本文件（CellarL10n.swift）——含 bundle 资源
-// 双形态兜底（xcodebuild 编译 lproj / swift build 拷贝原始 xcstrings）。
-
-// MARK: - environment 注入
-
-private struct CellarThemeKey: EnvironmentKey {
-    public static let defaultValue = CellarTheme.native
-}
-
-public extension EnvironmentValues {
-    var cellarTheme: CellarTheme {
-        get { self[CellarThemeKey.self] }
-        set { self[CellarThemeKey.self] = newValue }
-    }
-}
-
 // MARK: - 十六进制色便捷构造
 
 /// demo 提取色值唯一落点（执行门 G2：Color 字面量仅 CellarUI/Theme.swift）。
@@ -365,30 +355,5 @@ private extension Color {
             green: Double((hex >> 8) & 0xFF) / 255,
             blue: Double(hex & 0xFF) / 255
         )
-    }
-}
-
-// MARK: - 风格注入包装（§3.3）
-
-/// 组合根包装 View：在 **View 上下文**读取 colorScheme（App 结构体层级取值不可靠
-/// ——评审 P1-1；取值路径按 spike S3 结论定版 environment，无 KVO 降级），resolve
-/// 后注入 cellarTheme；MenuBarExtra 与 Settings 内容各自包裹一层。
-public struct ThemeProvider<Content: View>: View {
-    @Environment(\.colorScheme) private var scheme
-    let style: PanelStyle
-    @ViewBuilder let content: () -> Content
-
-    public init(style: PanelStyle, @ViewBuilder content: @escaping () -> Content) {
-        self.style = style
-        self.content = content
-    }
-
-    public var body: some View {
-        let theme = CellarTheme.resolve(style: style, scheme: scheme)
-        return content()
-            .environment(\.cellarTheme, theme)
-            // 系统控件（滑杆/开关/选择器/按钮）跟随主题 accent——琥珀风格下不再
-            // 泄漏系统蓝（走查 2026-09-04）；native 的 accent token = 系统色，零变化。
-            .tint(theme.accent)
     }
 }

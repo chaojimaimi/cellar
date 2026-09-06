@@ -111,7 +111,9 @@ extension DashboardView {
             cardTitle(CellarL10n.s("dashboard.tile.health"), icon: "shield.lefthalf.filled")
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(healthPercent.map(String.init) ?? CellarL10n.s("common.nodata"))
-                    .font(.system(size: 44, weight: .semibold))
+                    // v1.9 D-B4：健康卡 44pt 主读出数字面 design 随 token（App 层
+                    // 最显要数字读出面；A/B nil 落回 .default 零扰动）。
+                    .font(.system(size: 44, weight: .semibold, design: theme.numericFontDesign ?? .default))
                     .monospacedDigit()
                     .foregroundStyle(theme.accent)
                 Text(CellarL10n.s("dashboard.unit.percent"))

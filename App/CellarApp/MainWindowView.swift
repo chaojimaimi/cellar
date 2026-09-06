@@ -31,6 +31,12 @@ struct MainWindowView: View {
             Divider()
             detailPage
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // 主窗口内容区网格底纹（v1.9 D-B2 消费点②）：路由页容器之下
+                // 叠放——A/B panelGrid = nil 零绘制（零条件分支，helper 自身按
+                // token 收敛）。
+                .background {
+                    GridPatternBackground()
+                }
         }
         .frame(minWidth: 920, minHeight: 620)
         .onAppear { statusController.setMainWindowVisible(true) }

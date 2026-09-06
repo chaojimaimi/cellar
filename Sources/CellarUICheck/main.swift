@@ -142,7 +142,7 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 246 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 270 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
@@ -151,7 +151,9 @@ private func wrap(
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
 // Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
 // Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
-// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增）
+// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增；
+// Phase 5 v1.8 自 246 扩 258——MagSafe 指示灯区 2 态 12 新增；
+// Phase 5 v1.9 自 258 扩 270——hero 仪表 + 网格底纹容器 2 态 12 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -182,6 +184,46 @@ private func buildCases() -> [SnapshotCase] {
                     AnyView(wrap(style, scheme) { GaugeView(state: state) })
                 })
             }
+
+            // Phase 5 v1.9 风格 C Tier 2（D-B6）新增 2 case ×3 风格 ×2 外观
+            // = 12 张（258 → 270，全部全新文件含 A/B 列——新增非扰动）：
+            // ①GaugeHero：hero 形态 196 固定 frame + TARGET 副词行 + 刻度可见
+            //   性（C 列显内侧刻度环；A/B gaugeTick = nil 哑值零刻度）；
+            // ②GridPattern：GridPatternBackground 容器形态——panelBackground 底
+            //   + 网格（消费点 PanelView/MainWindow 同款叠放序；panelBackground
+            //   直取 resolve 同源）。A/B panelGrid = nil 呈纯底色空容器（合法
+            //   golden），C 列显网格。App target 两消费点结构性不可快照（R1
+            //   P1-2）→ 本 case 覆盖组件容器形态，着装效果列人工走查项。
+            cases.append(SnapshotCase(
+                name: "GaugeHero_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 196, height: 196, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    GaugeView(
+                        state: GaugeState(percent: 85, band: 78...80, isCharging: false,
+                                          axLabel: "当前电量 85%，充电上限 80%，已停充"),
+                        size: .hero
+                    )
+                })
+            })
+            cases.append(SnapshotCase(
+                name: "GridPattern_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 300, height: 200, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    // ⚠️ 固定 frame（工单 D-B6）：native 列 panelBackground 与
+                    // panelGrid 双 nil → ZStack 零子视图，无 frame 时 ImageRenderer
+                    // 对空视图返回 cgImage nil；显式 frame 保证空容器渲染为
+                    // 300×200 透明位图（合成底色后 = 合法空容器 golden）。
+                    ZStack {
+                        if let panelBackground = CellarTheme.resolve(style: style, scheme: scheme).panelBackground {
+                            panelBackground
+                        }
+                        GridPatternBackground()
+                    }
+                    .frame(width: 300, height: 200)
+                })
+            })
 
             // 状态行 5 态（充电/停充漂浮/电池供电/温度暂停/遥测不可用）×4。
             let charging = makeSnapshot(percent: 85, isCharging: true, externalConnected: true,

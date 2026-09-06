@@ -51,6 +51,43 @@ public struct GaugeView: View {
             // 环心半径 = 半宽 - 半线宽（bolt 徽标贴环顶、随尺寸缩放）。
             let ringRadius = proxy.size.width / 2 - Self.lineWidth / 2
             ZStack {
+                // 刻度层（v1.9 D-B1）：C 仪表盘工业语汇——**内侧刻度环**，置于
+                // ZStack 最底（底环 Circle 之下）。⚠️ 机械保证：起点半径 =
+                // ringRadius − lineWidth/2 − 4（底环内缘再退 4pt），刻度只向内
+                // 延伸——组件外框尺寸（150/196 布局）零改变，A/B golden 布局
+                // 安全的布局不变式（R-1）。Canvas 单次静态绘制，不参与任何
+                // .animation(value:) 路径、无 TimelineView/常驻重绘。A/B 哑值
+                // （gaugeTick = nil）整层不进入视图树——`if let` 为 token 值
+                // 分支（numericFontDesign 先例），非风格枚举分支。
+                if let tick = theme.gaugeTick {
+                    Canvas { context, size in
+                        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                        // 起点半径 = ringRadius − lineWidth/2 − 4（ringRadius =
+                        // width/2 − lineWidth/2，代数展开同式）——底环内缘
+                        // （width/2 − lineWidth）再退 4pt，刻度与底环间留 4pt
+                        // 间隙，且只向内延伸：外框尺寸零改变的布局不变式（R-1）。
+                        let startRadius = size.width / 2 - Self.lineWidth - 4
+                        // 主刻度 12 根（每 30°，向内 10pt）+ 副刻度 48 根（每
+                        // 30° 内 4 个 6° 中间位，向内 5pt）——60 位循环 i%5 区分，
+                        // 恰 12 主 + 48 副。线宽 1、色 = gaugeTick。
+                        for index in 0..<60 {
+                            let isMain = index % 5 == 0
+                            let angle = Double(index) * 6 * .pi / 180
+                            let length: CGFloat = isMain ? 10 : 5
+                            let sine = sin(angle)
+                            let cosine = cos(angle)
+                            var path = Path()
+                            path.move(to: CGPoint(
+                                x: center.x + startRadius * sine,
+                                y: center.y - startRadius * cosine))
+                            path.addLine(to: CGPoint(
+                                x: center.x + (startRadius - length) * sine,
+                                y: center.y - (startRadius - length) * cosine))
+                            context.stroke(path, with: .color(tick), lineWidth: 1)
+                        }
+                    }
+                }
+
                 Circle()
                     .stroke(theme.track, lineWidth: Self.lineWidth)
 
@@ -92,9 +129,11 @@ public struct GaugeView: View {
                         .contentTransition(.numericText())
 
                     // hero 副词行（§3.3：TARGET 限充区间）；regular 路径零变化。
+                    // v1.9 D-B4：数字面 design 随 token（A/B nil 落回 .default =
+                    // 与裸 .system(size:) 构造等价；styleC 方案 :102 Tier 2 候选）。
                     if size == .hero, let band = state.band {
                         Text(CellarL10n.s("gauge.target", band.lowerBound, band.upperBound))
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, design: theme.numericFontDesign ?? .default))
                             .monospacedDigit()
                             .foregroundStyle(theme.tertiaryText)
                             .tracking(1)

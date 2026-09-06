@@ -125,6 +125,10 @@ struct PanelView: View {
             if let panelBackground = theme.panelBackground {
                 panelBackground
             }
+            // 面板网格底纹（v1.9 D-B2 消费点①）：panelBackground 之上、内容
+            // 之下叠放——不改变边框/圆角/材质逻辑；A/B panelGrid = nil 零绘制
+            // （零条件分支，helper 自身按 token 收敛）。
+            GridPatternBackground()
         }
         // 面板边框（amber 专属；native nil 不画）。圆角对齐 MenuBarExtra 容器
         // （精确值 S8 真机走查复核）。
