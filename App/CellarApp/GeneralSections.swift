@@ -158,7 +158,7 @@ struct GeneralSections: View {
             sectionHeader("settings.section.fan")
 
             // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
-            // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
+            // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/八态状态行；
             // 旧 daemon（fan==nil）控件禁用 + 升级提示）。
             FanSectionView(
                 fan: statusController.fanStatus,

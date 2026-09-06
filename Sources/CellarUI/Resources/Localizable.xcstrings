@@ -2058,23 +2058,6 @@
         }
       }
     },
-    "fan.status.strategyUnsupported": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Strategy Not Available Yet"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暂不支持该策略"
-          }
-        }
-      }
-    },
     "fan.status.unsupported": {
       "extractionState": "manual",
       "localizations": {
@@ -2139,40 +2122,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "全速应急"
-          }
-        }
-      }
-    },
-    "fan.strategy.minRaise": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Raise Minimum"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "抬升下限"
-          }
-        }
-      }
-    },
-    "fan.strategy.minRaise.comingSoon": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Coming Soon"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "即将支持"
           }
         }
       }

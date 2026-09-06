@@ -225,7 +225,6 @@ struct MainWindowView: View {
     private func fanStrategyWord(_ fan: FanStatus) -> String {
         switch fan.strategy {
         case .constantSpeed: return CellarL10n.s("fan.strategy.constantSpeed")
-        case .minRaise: return CellarL10n.s("fan.strategy.minRaise")
         case .twoStage: return CellarL10n.s("fan.strategy.twoStage")
         case .emergency: return CellarL10n.s("fan.strategy.emergency")
         }

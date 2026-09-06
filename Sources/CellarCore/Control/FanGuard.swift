@@ -66,12 +66,8 @@ public enum FanGuard {
                 ? .release(stateWord: .probing)
                 : .idle(stateWord: .probing)
         }
-        // C：进入 boost（!boostActive ∧ t ≥ 阈值 ∧ 策略可执行；minRaise → 状态词
-        // 「暂不支持该策略」，v1.1 §0.5b——枚举保留、语义不实现）。
+        // C：进入 boost（!boostActive ∧ t ≥ 阈值 → 两步写进入，目标 = targetRPM）。
         if !boostActive && temperatureC >= Double(policy.thresholdCentiC) / 100 {
-            if policy.strategy == .minRaise {
-                return .idle(stateWord: .strategyUnsupported)
-            }
             return .enterBoost(targetRPM: targetRPM(policy: policy, facts: facts!, temperatureC: temperatureC))
         }
         // G：boost 期能力观察窗到期（capability == .unverified ∧ boostTicks ≥ 10）
@@ -110,14 +106,13 @@ public enum FanGuard {
 
     /// 目标转速纯函数（方案 §4.1 三策略语义；全部 clamp 进 [F0Mn, F0Mx]——
     /// **boost-only 红线**（方案 §6.2）：值取自运行时探测 facts，绝不硬编码机型
-    /// 数值；绝不写低于基线的值去压转速。minRaise 语义不实现（v1.1 拒绝——
-    /// C 行拦截后本函数不可达，此处仅保持可编译的防御语义）。
+    /// 数值；绝不写低于基线的值去压转速。
     public static func targetRPM(policy: FanPolicy, facts: FanFacts, temperatureC: Double) -> Float {
         let minRPM = facts.minRPM
         let maxRPM = facts.maxRPM
         func clamped(_ v: Float) -> Float { min(max(v, minRPM), maxRPM) }
         switch policy.strategy {
-        case .constantSpeed, .minRaise:
+        case .constantSpeed:
             return clamped(Float(policy.speedPercent) / 100 * maxRPM)
         case .twoStage:
             let stage2Cross = Double(policy.thresholdCentiC + policy.stage2RiseCentiC) / 100

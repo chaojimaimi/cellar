@@ -492,8 +492,8 @@ public struct DaemonXPCClient: Sendable {
         try exchange(cmd: "cancelCalibration")
     }
 
-    /// Phase 5 v1.1：设置风扇策略（可选字段缺席 = daemon 保持现值；minRaise →
-    /// daemonError 原文「该策略在当前版本暂未开放」）。**不改 mode**（与
+    /// Phase 5 v1.1：设置风扇策略（可选字段缺席 = daemon 保持现值；策略值域
+    /// 0/2/3 非法值 daemonError 原文回传）。**不改 mode**（与
     /// setLimits 的「更新即切 active」语义正交）；boost 期立即按新配置重算重写。
     public func setFan(_ fan: FanWire) throws -> DaemonStatus {
         try exchange(cmd: FanWireKeys.command, upper: 0, hysteresis: 0, auto: nil, fan: fan)

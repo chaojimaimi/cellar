@@ -48,8 +48,8 @@ extension DaemonCore {
 
     // MARK: - setFan XPC（方案 §8）
 
-    /// setFanConfig：校验（缺席保持合并且行 + validated 整包强校验；minRaise →
-    /// 抛错「该策略在当前版本暂未开放」，§0.5b）→ 应用 policy（**不改 mode**——
+    /// setFanConfig：校验（缺席保持合并且行 + validated 整包强校验；策略值域已由
+    /// XPCServer validateRequest 前置拒绝）→ 应用 policy（**不改 mode**——
     /// setLimits 的「更新即切 active」语义不适用，方案 §8）→ 持久化 → 开关翻转
     /// 重置（§5.2）→ 关闭立即释放 / boost 期立即按新配置重算重写（§5.1 D 例外②）
     /// → 开启路径即时 tick（不等 10s 节拍）→ 返回状态。
@@ -68,13 +68,6 @@ extension DaemonCore {
                 message: "setFan 拒绝：风扇参数越界（validated 整包 nil——绝不落半合法策略）"
             ))
             throw FanSetError.invalidParameters
-        }
-        guard merged.strategy != .minRaise else {
-            events.append(LogEvent(
-                category: .control, level: .error,
-                message: "setFan 拒绝：minRaise 策略 v1.1 暂未开放（§0.5b）"
-            ))
-            throw FanSetError.strategyUnsupported
         }
         let oldFan = policy.fan
         let wasBoost = fanState.boostActive
@@ -668,13 +661,10 @@ struct FanRuntimeState {
 enum FanSetError: Error, Equatable, Sendable, CustomStringConvertible {
     /// 参数越界（validated 整包 nil——不落半合法策略）。
     case invalidParameters
-    /// minRaise 策略 v1.1 暂未开放（§0.5b fail-visible）。
-    case strategyUnsupported
 
     public var message: String {
         switch self {
         case .invalidParameters: return "风扇参数越界（阈值 30-55°C，转速 40-100%，滞回 1-5°C）"
-        case .strategyUnsupported: return FanWireKeys.strategyUnsupportedMessage
         }
     }
 

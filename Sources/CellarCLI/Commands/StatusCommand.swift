@@ -181,7 +181,7 @@ struct StatusCommand: ParsableCommand {
 
     // MARK: - Phase 5 v1.1 风扇行（方案 §8 CLI 段）
 
-    /// 风扇状态行（九态词 + 策略 + 阈值；fan==nil = 旧 daemon 未上报 —— 升级提示）。
+    /// 风扇状态行（八态词 + 策略 + 阈值；fan==nil = 旧 daemon 未上报 —— 升级提示）。
     private func printFanLine(_ status: DaemonStatus) {
         guard let fan = status.fan else {
             print("风扇：旧版守护进程未上报（升级后可查看）")
@@ -204,7 +204,6 @@ struct StatusCommand: ParsableCommand {
         case .hold: return "保持"
         case .degraded: return "已暂停介入（采样异常）"
         case .unsupported: return "本机不支持"
-        case .strategyUnsupported: return "暂不支持该策略"
         case .conflict: return "检测到其他风扇控制写入者"
         }
     }
@@ -212,7 +211,6 @@ struct StatusCommand: ParsableCommand {
     private func fanStrategyName(_ strategy: FanStrategy) -> String {
         switch strategy {
         case .constantSpeed: return "恒速降温"
-        case .minRaise: return "抬升下限"
         case .twoStage: return "两级分段"
         case .emergency: return "全速应急"
         }

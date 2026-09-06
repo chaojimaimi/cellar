@@ -157,7 +157,7 @@ final class XPCServer: @unchecked Sendable {
                 return
             }
             if let value = fan.strategy, !FanWireKeys.validStrategy(value) {
-                send(errorReply("风扇策略参数越界（0-3）"), to: peer.connection)
+                send(errorReply("风扇策略参数非法（0/2/3，1 已退役）"), to: peer.connection)
                 return
             }
             if let value = fan.threshold, !FanWireKeys.validThreshold(value) {
@@ -184,7 +184,7 @@ final class XPCServer: @unchecked Sendable {
                 let status = try core.setFanConfig(fan)
                 sendStatus(status, to: peer)
             } catch {
-                // FanSetError（参数越界/minRaise 未开放）→ 原文回传（App 上屏）。
+                // FanSetError（参数越界）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
 

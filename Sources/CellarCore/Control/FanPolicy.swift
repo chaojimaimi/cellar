@@ -2,15 +2,12 @@ import Foundation
 
 // MARK: - Phase 5 v1.1 风扇智能降温（方案 §4-§8）—— CellarCore 纯函数/纯值层
 
-/// 风扇策略目录（方案 §4；rawValue 定版**只追加不重排**——fanStrategy 线格式映射
-/// 0...3 同源，重排即旧客户端静默错配，R1 P3-3）。
+/// 风扇策略目录（方案 §4；rawValue 映射定版：**0=constantSpeed, 2=twoStage,
+/// 3=emergency；1 = 退役洞，永久 reserved 不得赋予任何未来策略**——fanStrategy
+/// 线格式映射同源，重排/填补退役洞都会让曾按旧目录发值的客户端静默错配）。
 public enum FanStrategy: String, Codable, Sendable, CaseIterable {
     /// 恒速降温【默认】：t ≥ 阈值 → 恒定 speedPercent% × F0Mx。
     case constantSpeed
-    /// 抬升下限（**v1.1 仅保留枚举**：UI 灰显「即将支持」+ setFan 拒绝 + FanGuard
-    /// C 行拦截，方案 §0.5b——U6 实测 F0Mn 写被固件 result=134 拒绝，基线持久化
-    /// sidecar 设计完成后在 v1.x 放开）。
-    case minRaise
     /// 两级分段：t ≥ 阈值 → stage1；t ≥ 阈值+rise → stage2（升档写、降档不写）。
     case twoStage
     /// 全速应急：t ≥ 阈值 → F0Mx。
@@ -121,7 +118,7 @@ public struct FanFacts: Equatable, Sendable {
     }
 }
 
-/// 状态行词汇（方案 §7 九态；wire 格式永不本地化，App 侧同源映射展示词）。
+/// 状态行词汇（方案 §7 八态；wire 格式永不本地化，App 侧同源映射展示词）。
 /// 机内态 idle/boost/hold/release/degraded 由决策承载，本词汇仅为展示面。
 public enum FanStateWord: String, Codable, Sendable, Equatable {
     /// 已关闭（开关关闭 / daemon 停用的交还路径）。
@@ -138,8 +135,6 @@ public enum FanStateWord: String, Codable, Sendable, Equatable {
     case degraded
     /// 本机不支持（能力不可用）。
     case unsupported
-    /// 暂不支持该策略（minRaise，v1.1 拒绝）。
-    case strategyUnsupported
     /// 检测到其他风扇控制写入者（冲突漂移检测，方案 §5.3）。
     case conflict
 }
@@ -169,7 +164,7 @@ public enum FanDecision: Equatable, Sendable {
 public struct FanStatus: Codable, Equatable, Sendable {
     public let enabled: Bool
     public let strategy: FanStrategy
-    /// 状态行词（方案 §7 九态）。
+    /// 状态行词（方案 §7 八态）。
     public let state: FanStateWord
     /// 加速目标 rpm（boost/hold 期最近一次写入目标；nil = 未进入过 boost）。
     public let targetRPM: Float?
@@ -254,12 +249,12 @@ extension FanWire {
         )
     }
 
-    /// fanStrategy 线格式映射（方案 §8 定版：0=constantSpeed, 1=minRaise,
-    /// 2=twoStage, 3=emergency；**只追加不重排**——写入 SMC-PROTOCOL 公共协议段）。
+    /// fanStrategy 线格式映射（定版：0=constantSpeed, 2=twoStage, 3=emergency；
+    /// **1 = 退役洞，永久 reserved 不重排不填补**——写入 SMC-PROTOCOL 公共协议段；
+    /// 退役值与未知值同语义返回 nil，调用方按值域白名单拒绝）。
     public static func strategy(fromWire raw: UInt64) -> FanStrategy? {
         switch raw {
         case 0: return .constantSpeed
-        case 1: return .minRaise
         case 2: return .twoStage
         case 3: return .emergency
         default: return nil
@@ -269,7 +264,6 @@ extension FanWire {
     public static func wireValue(_ strategy: FanStrategy) -> UInt64 {
         switch strategy {
         case .constantSpeed: return 0
-        case .minRaise: return 1
         case .twoStage: return 2
         case .emergency: return 3
         }
@@ -289,10 +283,6 @@ public enum FanWireKeys {
     public static let stage2Rise = "fanStage2Rise"
     /// XPC 命令字面量（XPCServer 臂 / DaemonXPCClient 共用）。
     public static let command = "setFan"
-
-    /// setFan 不在 v1.1 可执行集内的策略（minRaise）→ daemon 拒绝原文
-    /// （fail-visible，方案 §0.5b）。
-    public static let strategyUnsupportedMessage = "该策略在当前版本暂未开放"
 
     public static func validEnabled(_ raw: UInt64) -> Bool { raw <= 1 }
     public static func validStrategy(_ raw: UInt64) -> Bool { FanWire.strategy(fromWire: raw) != nil }

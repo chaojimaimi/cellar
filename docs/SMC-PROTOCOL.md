@@ -78,7 +78,7 @@ Protocol facts (verified on macOS 26.x / Apple M2 Max, firmware 18000.161.10):
 - Writes require root, like all SMC control keys — fan writes happen only in the root daemon.
 - The daemon verifies write-follow by checking `F0Ac` ≥ written target − 300 rpm, and detects external writers by read-back drift of `F0Tg`.
 
-The `setFan` XPC command carries fan parameters as UINT64 keys; the `fanStrategy` wire mapping is append-only: `0` = constantSpeed, `1` = minRaise (currently rejected, reserved), `2` = twoStage, `3` = emergency.
+The `setFan` XPC command carries fan parameters as UINT64 keys; the `fanStrategy` wire mapping is append-only: `0` = constantSpeed, `2` = twoStage, `3` = emergency. `1` is retired — it is permanently reserved and must never be reassigned to any future strategy; the daemon rejects it at the value-domain gate.
 
 ## Verification statement
 

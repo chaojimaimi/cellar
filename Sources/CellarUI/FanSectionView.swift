@@ -6,13 +6,13 @@ import SwiftUI
 /// 先例）：
 /// - 开关 Toggle（opt-in 默认关）+ 开启两步内嵌确认块（**不用 confirmationDialog
 ///   ——会收起 MenuBarExtra 窗口，项目踩过**，照自动放电确认块模式）；
-/// - 策略 Picker 四项：minRaise 灰显「即将支持」（§0.5b，不可选）；
+/// - 策略 Picker 三项：恒速降温/两级分段/全速应急；
 /// - 阈值 Slider 30.0...55.0°C 步进 0.5；速度 Slider 40...100%；twoStage 参数
 ///   仅策略为两级分段时显形；
 /// - 脚注固定文案：与充电热暂停配置（通用页可调）相互独立（v1.5 起热暂停
 ///   阈值可配置，脚注不再钉死数值）；
-/// - 状态行九态（fan.status.*）：已关闭/探测中/自动/加速中→N rpm/保持/已暂停介入
-///   （采样异常）/本机不支持/暂不支持该策略/检测到其他风扇控制写入者。
+/// - 状态行八态（fan.status.*）：已关闭/探测中/自动/加速中→N rpm/保持/已暂停介入
+///   （采样异常）/本机不支持/检测到其他风扇控制写入者。
 ///
 /// 变更即应用（onApply(FanWire)——缺席字段 = daemon 保持现值）；本地滑杆态在
 /// init 从 daemon 状态播种（照 CalibrationSectionView 的参数注入先例，快照矩阵
@@ -145,7 +145,7 @@ public struct FanSectionView: View {
         }
     }
 
-    /// 状态行九态（word + boost 目标 rpm；冲突词整行高优先级呈现）。
+    /// 状态行八态（word + boost 目标 rpm；冲突词整行高优先级呈现）。
     private var statusRow: some View {
         HStack(spacing: 4) {
             Image(systemName: statusSymbol)
@@ -168,7 +168,7 @@ public struct FanSectionView: View {
         case .boost: return "fan.fill"
         case .hold: return "slider.horizontal.3"
         case .degraded: return "exclamationmark.triangle"
-        case .unsupported, .strategyUnsupported: return "questionmark.circle"
+        case .unsupported: return "questionmark.circle"
         case .conflict: return "exclamationmark.triangle"
         }
     }
@@ -177,12 +177,12 @@ public struct FanSectionView: View {
         switch effectiveState {
         case .conflict, .degraded: return theme.alert
         case .boost: return theme.accent
-        case .unsupported, .strategyUnsupported: return theme.warning
+        case .unsupported: return theme.warning
         case .off, .probing, .automatic, .hold: return theme.secondaryText
         }
     }
 
-    /// 状态文字（九态；boost 带目标 rpm——「加速中 →3200rpm」）。
+    /// 状态文字（八态；boost 带目标 rpm——「加速中 →3200rpm」）。
     private var statusText: String {
         switch effectiveState {
         case .off: return CellarL10n.s("fan.status.off")
@@ -194,22 +194,15 @@ public struct FanSectionView: View {
         case .hold: return CellarL10n.s("fan.status.hold")
         case .degraded: return CellarL10n.s("fan.status.degraded")
         case .unsupported: return CellarL10n.s("fan.status.unsupported")
-        case .strategyUnsupported: return CellarL10n.s("fan.status.strategyUnsupported")
         case .conflict: return CellarL10n.s("fan.status.conflict")
         }
     }
 
-    /// 策略 Picker（minRaise 灰显 + 「即将支持」注记——不可选中，§0.5b）。
+    /// 策略 Picker（目录三项直渲——退役值不在 allCases，无从选中）。
     private var strategyPicker: some View {
         Picker(CellarL10n.s("fan.strategy"), selection: $strategy) {
             ForEach(FanStrategy.allCases, id: \.self) { s in
-                if s == .minRaise {
-                    Text(CellarL10n.s("fan.strategy.minRaise") + "（" + CellarL10n.s("fan.strategy.minRaise.comingSoon") + "）")
-                        .tag(s)
-                        .disabled(true)
-                } else {
-                    Text(strategyLabel(s)).tag(s)
-                }
+                Text(strategyLabel(s)).tag(s)
             }
         }
         .pickerStyle(.menu)
@@ -222,7 +215,6 @@ public struct FanSectionView: View {
     private func strategyLabel(_ s: FanStrategy) -> String {
         switch s {
         case .constantSpeed: return CellarL10n.s("fan.strategy.constantSpeed")
-        case .minRaise: return CellarL10n.s("fan.strategy.minRaise")
         case .twoStage: return CellarL10n.s("fan.strategy.twoStage")
         case .emergency: return CellarL10n.s("fan.strategy.emergency")
         }

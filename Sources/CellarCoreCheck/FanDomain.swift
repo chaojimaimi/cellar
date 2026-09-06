@@ -2,15 +2,15 @@
 // FanGuard 矩阵 / 能力推进 / validFan* / DaemonStatus 兼容 —— 合计 ≈87 场景）
 //
 // 覆盖清单（方案 §9，逐组对齐；P1/P2 评审修订已并入）：
-// ① FanPolicy 校验 10：默认值 / 边界内 / 各字段越界 → nil / 枚举法定型 /
-//   Codable roundtrip
+// ① FanPolicy 校验 11：默认值 / 边界内 / 各字段越界 → nil / 枚举法定型 /
+//   Codable roundtrip / 退役值解码炸钉死
 // ② F-1 全构造点透传 8：load() 保真；旧 JSON 无 fan 键 → nil；fan 非法值回流
 //   → 整包 nil；setLimits/disable/enable 三处重建形态往返后 fan 保真（逻辑层
 //   以 PolicyStore+临时目录模拟——daemon 为 executable 不可 import）
-// ③ FanGuard 矩阵 39：A/B/F/C'/C/G/D/E/S 全覆盖 + 求值序钉死（F 压过 D、B 压过
+// ③ FanGuard 矩阵 38：A/B/F/C'/C/G/D/E/S 全覆盖 + 求值序钉死（F 压过 D、B 压过
 //   C、A 压过一切、G 先于 E）+ 滞回边界（threshold−hys±ε）+ clamp 边界（Mn/Mx
 //   端点）+ twoStage 升档写去重（P1-1：目标未变 → hold）/降档 hold + facts=nil
-//   探测中 + minRaise 拒绝 + 不变量防御
+//   探测中 + 不变量防御
 // ④ 能力推进 10：unverified→verified / 观察窗到期 →unavailable / sticky /
 //   开关翻转重置（resetRequired）/ 常量钉死
 // ⑤ validFan* 10：各键值域拒绝矩阵 + 与 validated 同源抽查 + 缺席保持合并 +
@@ -184,14 +184,14 @@ private func runFanPolicyScenarios() throws {
         )
         check(below == nil && above == nil, "风扇策-7", "升档温差越界（99/501 厘摄氏度）→ nil")
     }
-    // 风扇策-8：枚举法定型（顺序 = rawValue 不重排）——allCases 顺序与线格式
-    // 映射 0..3 逐位一致（只追加不重排，R1 P3-3）。
+    // 风扇策-8：枚举法定型（策略目录三项）——allCases 顺序与线格式映射 0/2/3
+    // 逐位一致；raw=1 永久 reserved 退役洞（重排/填补即旧客户端错配）。
     do {
         let strategies = FanStrategy.allCases
-        check(strategies == [.constantSpeed, .minRaise, .twoStage, .emergency],
-              "风扇策-8", "allCases 顺序 = 定版目录（constantSpeed/minRaise/twoStage/emergency）")
-        check(zip(strategies, [0, 1, 2, 3]).allSatisfy { FanWire.wireValue($0) == $1 },
-              "风扇策-8", "wire 映射逐个命中（0=恒速 1=抬升 2=两级 3=应急——只追加不重排）")
+        check(strategies == [.constantSpeed, .twoStage, .emergency],
+              "风扇策-8", "allCases 顺序 = 定版目录（constantSpeed/twoStage/emergency）")
+        check(zip(strategies, [0, 2, 3]).allSatisfy { FanWire.wireValue($0) == $1 },
+              "风扇策-8", "wire 映射逐个命中（0=恒速 2=两级 3=应急；1 = 退役洞永不复用）")
     }
     // 风扇策-9：组合非法 → 整包 nil（绝不半合法——A-2 同纪律）。
     do {
@@ -208,6 +208,14 @@ private func runFanPolicyScenarios() throws {
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(FanPolicy.self, from: data)
         check(decoded == original, "风扇策-10", "FanPolicy Codable roundtrip 保真（twoStage/4200 全字段）")
+    }
+    // 风扇策-11：退役值解码炸钉死——policy.json 手工写入 "strategy":"minRaise"
+    // 时 FanPolicy 解码抛错 → PolicyStore.load 整包 nil → 落默认策略（安全方向
+    // 的前置语义：绝不产生半合法策略）。
+    do {
+        let json = "{\"enabled\":true,\"strategy\":\"minRaise\",\"thresholdCentiC\":3700,\"releaseHysteresisCentiC\":200,\"speedPercent\":60,\"stage2Percent\":90,\"stage2RiseCentiC\":300}" // 退役值样本
+        let decodeBombed = (try? JSONDecoder().decode(FanPolicy.self, from: Data(json.utf8))) == nil
+        check(decodeBombed, "风扇策-11", "退役值 \"strategy\":\"minRaise\" 解码抛错（旧值回流整包 nil 安全回落）")
     }
 }
 
@@ -555,11 +563,6 @@ private func runFanGuardScenarios() {
               "风扇矩阵-36", "S 最后序：unavailable 输入不落 S（B 先命中）——求值序钉死")
     }
     // ===== 其他 =====
-    // 风扇矩阵-37：minRaise 拒绝——t ≥ 阈值 ∧ 静息 → idle(暂不支持该策略)（§0.5b）。
-    do {
-        check(decide(temperatureC: 37.5, policy: fanPolicy(strategy: .minRaise)) == .idle(stateWord: .strategyUnsupported),
-              "风扇矩阵-37", "C 拦截：minRaise ∧ 热 → idle(暂不支持该策略)（v1.1 不进入）")
-    }
     // 风扇矩阵-38：不变量防御穷举——boost 输入下 facts=nil / unavailable / !enabled /
     // !modeActive / !sampleHealthy 五种违规组合全部输出 release（不变量条款字面）。
     do {
@@ -646,10 +649,11 @@ private func runFanWireValidationScenarios() {
     check(FanWireKeys.validEnabled(0) && FanWireKeys.validEnabled(1)
             && !FanWireKeys.validEnabled(2) && !FanWireKeys.validEnabled(99),
           "风扇线-1", "fanEnabled 值域 0/1（其余拒绝——UINT64 全值域防呆）")
-    // 风扇线-2：fanStrategy 0-3 合法，4+ 拒绝（映射只追加不重排）。
-    check([0, 1, 2, 3].allSatisfy(FanWireKeys.validStrategy)
-            && !FanWireKeys.validStrategy(4) && !FanWireKeys.validStrategy(0xFFFFFFFF),
-          "风扇线-2", "fanStrategy 0-3 合法（0=恒速 1=抬升 2=两级 3=应急）；4/全 1 拒绝")
+    // 风扇线-2：fanStrategy 0/2/3 合法；1（退役洞）与 4+ 一并拒绝（映射不重排不填补）。
+    check([0, 2, 3].allSatisfy(FanWireKeys.validStrategy)
+            && !FanWireKeys.validStrategy(1) && !FanWireKeys.validStrategy(4)
+            && !FanWireKeys.validStrategy(0xFFFFFFFF),
+          "风扇线-2", "fanStrategy 0/2/3 合法（0=恒速 2=两级 3=应急）；退役值 1/未知值 4/全 1 拒绝")
     // 风扇线-3：fanThreshold 3000...5500。
     check(!FanWireKeys.validThreshold(2999) && FanWireKeys.validThreshold(3000)
             && FanWireKeys.validThreshold(5500) && !FanWireKeys.validThreshold(5501),
@@ -693,13 +697,13 @@ private func runFanWireValidationScenarios() {
         check(thresholdOK && speedBad && absentPreservation,
               "风扇线-8", "validFan* 与 validated 同源（3000 双过 / 101 双拒）+ FanWire 缺席保持合并（只改阈值，其余原样）")
     }
-    // 风扇线-9：minRaise 线格式可达（映射 1 → .minRaise——拒绝发生在 daemon setFanConfig
-    // 层，fail-visible 原文「该策略在当前版本暂未开放」+ 类型混淆整包拒绝
-    // （validateRequest 层：fanEnabled 以 STRING 混入 → 整包 nil，不崩溃）+
-    // 非 setFan 命令全键缺席 → fan == nil（既有命令兼容）。
+    // 风扇线-9：raw=1 已退役拒绝（fromWire(1) == nil——值域白名单前置拒绝，
+    // fail-visible；邻值 0 不受伤）+ 类型混淆整包拒绝（validateRequest 层：
+    // fanEnabled 以 STRING 混入 → 整包 nil，不崩溃）+ 非 setFan 命令全键缺席
+    // → fan == nil（既有命令兼容）。
     do {
-        let minRaiseMapped = FanWire.strategy(fromWire: 1) == .minRaise
-            && FanWire.wireValue(.minRaise) == 1
+        let retiredRejected = FanWire.strategy(fromWire: 1) == nil
+            && FanWire.strategy(fromWire: 0) == .constantSpeed
         let mixed = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(mixed, DaemonXPC.cmdKey, "setFan")
         xpc_dictionary_set_uint64(mixed, DaemonXPC.upperKey, 80)
@@ -711,8 +715,8 @@ private func runFanWireValidationScenarios() {
         xpc_dictionary_set_uint64(plain, DaemonXPC.upperKey, 80)
         xpc_dictionary_set_uint64(plain, DaemonXPC.hysteresisKey, 2)
         let plainOK = DaemonXPC.validateRequest(plain)
-        check(minRaiseMapped && mixedRejected && plainOK?.fan == nil && plainOK?.cmd == "setLimits",
-              "风扇线-9", "minRaise 映射可达（拒绝在 daemon 层）+ STRING 混入整包拒绝 + 非 setFan 全键缺席兼容")
+        check(retiredRejected && mixedRejected && plainOK?.fan == nil && plainOK?.cmd == "setLimits",
+              "风扇线-9", "raw=1 已退役拒绝（邻值 0 不受伤）+ STRING 混入整包拒绝 + 非 setFan 全键缺席兼容")
     }
     // 风扇线-10（P1-2）：键域错误分流——keyNotFound/invalidKey 是机型事实，不进
     // 共享传输失败计数（防键缺席机型周期性拆除充电后端）；仅传输类故障走共享
