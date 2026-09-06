@@ -2642,13 +2642,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Main Window"
+            "value": "Cellar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "主窗口"
+            "value": "芯仓"
           }
         }
       }
@@ -4319,6 +4319,142 @@
         }
       }
     },
+    "settings.magSafeLed.conflict": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another LED control writer detected (MagHue or similar). Cellar paused corrections — pick one."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到其他 LED 控制写入者（疑似 MagHue 类工具），Cellar 已暂停纠偏——请二选一。"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charger-head indicator color: Follow System is the factory behavior; Always Off suits nighttime."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电线插头指示灯颜色：跟随系统为出厂行为，常灭适合夜间环境。"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.mode.amber": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always Amber"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常琥珀"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.mode.green": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always Green"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常绿"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.mode.off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always Off"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常灭"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.mode.system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow System"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随系统"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.modeLabel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模式"
+          }
+        }
+      }
+    },
+    "settings.magSafeLed.unsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Mac doesn't support MagSafe LED control (normal on USB-C charging models)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机不支持 MagSafe 指示灯控制（无 MagSafe 充电口机型常态）。"
+          }
+        }
+      }
+    },
     "settings.notifAuthorized": {
       "extractionState": "manual",
       "localizations": {
@@ -4519,6 +4655,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "智能风扇降温"
+          }
+        }
+      }
+    },
+    "settings.section.magSafeLed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MagSafe LED"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MagSafe 指示灯"
           }
         }
       }
@@ -4825,6 +4978,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "采样累积中"
+          }
+        }
+      }
+    },
+    "stats.maxCapacity.caliber": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Caliber: nominal charge capacity / design capacity (same as dashboard Health)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "口径：标称满充容量 / 设计容量（与仪表板「健康」一致）"
           }
         }
       }
@@ -5233,6 +5403,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "设置上限 %lld%%"
+          }
+        }
+      }
+    },
+    "status.summary.setMagSafeLed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MagSafe LED settings applied"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已应用 MagSafe 指示灯设置"
           }
         }
       }
@@ -5804,13 +5991,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Seal & Quit"
+            "value": "Seal"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "封存退出"
+            "value": "封存"
           }
         }
       }
@@ -6178,13 +6365,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quit Cellar"
+            "value": "Quit"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "退出 Cellar"
+            "value": "退出"
           }
         }
       }

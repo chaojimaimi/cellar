@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.0-alpha] - 2026-09-06
+
+### Added
+
+- **MagSafe LED 控制（v1.8，stretch 池）**：接管 MagSafe 3 充电线插头指示灯——跟随系统（默认，零行为变化）/ 常灭（夜间环境）/ 常绿 / 常琥珀：
+  - 通用页新增「MagSafe 指示灯」分节（Picker 即时生效；旧 daemon 升级提示；无 MagSafe 充电口机型自动隐藏）
+  - daemon tick 纠偏（系统在充放切换时重写灯色，30s 心跳内恢复设定）+ 写后回读校验 + 冲突锁存（检测到 MagHue 类写入者自动停手并在 doctor/通用页提示，单写者原则）
+  - 恢复红线：退出 / 停用 / 卸载一律交还系统（ACLC=0）；crash 尽力恢复（系统充放覆写自愈）
+  - `doctor` 第十六项「MagSafe 指示灯」；`status` 新增 LED 行；`status --json` 携带 `magSafeLed`
+  - 键位实测（ACLC ui8/1B，四值目视验证）记录于 SMC 协议文档
+- **走查 UI 打磨批（5 项）**：面板页脚「退出 Cellar」→「退出」（琥珀「封存退出」→「封存」）；主窗口标题改「芯仓」；六个设置/功能页内容列宽窗下水平居中；通用页弃用 Form 重建为统一行栅格自定义分节（治标签层级参差）；统计「最大容量趋势」口径切换为标称满充容量/设计容量（与仪表板健康一致——原 MaxCapacity 键在本系统恒 100 失真）
+
+### Changed
+
+- 测试栈：CellarCoreCheck 476 → 507 场景（LED 模型/doctor 分支/线格式），快照 246 → 258 张（MagSafeLed 节 ×12 + FooterLinks 文案 12 张重生成），本地化 400 → 411 键
+
 ## [0.13.0-alpha] - 2026-09-06
 
 ### Added

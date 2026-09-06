@@ -227,6 +227,7 @@ private let probeKeys: [(key: String, desc: String)] = [
     ("B0AC", "电池电流 mA"), ("B0AV", "电池电压 mV"),
     ("B0AT", "电池温度(候选)"), ("TB1T", "电池温度传感器1"), ("TB2T", "电池温度传感器2"),
     ("PSTR", "系统总功率 W"), ("ACEN", "适配器使能(候选)"), ("ACFP", "适配器功率(候选)"),
+    ("ACLC", "MagSafe LED 控制 1B（0 系统/1 灭/3 绿/4 琥珀，v1.8 spike）"),
     ("#KEY", "键位总数(旧枚举键)"),
 ]
 

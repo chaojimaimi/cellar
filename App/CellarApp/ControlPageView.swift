@@ -30,6 +30,8 @@ struct ControlPageView: View {
             // 工单 4 页面容器纪律：maxWidth 720——宽窗下内容不无限拉伸（治截图
             // 四松散排版；表单/滑杆列宽与面板 304pt 语义解耦，走查对照）。
             .frame(maxWidth: 720, alignment: .leading)
+            // 内容列 720 居中：外层撑满窗口宽，宽窗两侧均分留白（滚动条仍贴窗口右缘=macOS 惯例）。
+            .frame(maxWidth: .infinity)
         }
     }
 

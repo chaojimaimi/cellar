@@ -52,12 +52,25 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 结构非法仅丢字段（PolicyStore.load 校验块，照 thermal 块）——日程为非关键
     /// opt-in 配置，不连累 mode/限值；类型错乱整包 nil（合成 Codable 行为）。
     public var schedule: ChargeScheduleConfig?
+    /// Phase 5 v1.8 MagSafe LED 模式（SMC ACLC 字节原值；nil = 未设置 = 跟随 system
+    /// 的 opt-in 默认，零行为变化，方案 §0-D1）。⚠️ 类型保持 UInt8 原值（照 `mode`
+    /// String「JSON 原样承载、语义校验在载入块」先例）——若用 MagSafeLEDMode 枚举
+    /// 直存，合成 Codable 对越界值抛 dataCorrupted 会让整包 nil，违背「仅丢字段
+    /// 回落 system」分层（照 thermal 块）；白名单 0/1/3/4 校验在 PolicyStore.load
+    /// 校验块（MagSafeLED.validating）。⚠️ **F-1 全构造点透传强制条款（v1.8 扩面，
+    /// 与 fan/calibrationSchedule/thermal/schedule 同守）**：setLimits/disable/enable
+    /// 三处显式构造都必须携带当前值，走 init 默认 nil 会把用户已配置的 LED 模式
+    /// 静默清空并落盘（与 0.4.1 F-1 同型事故）——M2 接线时逐一透传（本批 M1 仅
+    /// 扩参默认值，既有调用点零改动）。合成 Codable decodeIfPresent——旧 policy.json
+    /// 无本键 → nil 兼容。
+    public var magSafeLedMode: UInt8?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
-        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil
+        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil,
+        magSafeLedMode: UInt8? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
@@ -67,6 +80,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         self.calibrationSchedule = calibrationSchedule
         self.thermal = thermal
         self.schedule = schedule
+        self.magSafeLedMode = magSafeLedMode
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
@@ -74,12 +88,15 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 校验：mode ∈ {active, disabled}；`try LimitPolicy(upperLimit:hysteresis:)` 成功。
     /// 任何非法（含 upperLimit=30 这类可绕过 60 地板的持久化回流）→ nil（评审 A-2/P0）。
     /// fan 一律透传（F-1：fan 的语义合法由 FanPolicy 自身保证——DaemonPolicy
-    /// 不额外校验，nil 与非 nil 都原样携带）。
+    /// 不额外校验，nil 与非 nil 都原样携带）。magSafeLedMode 同 fan 透传——
+    /// 值域白名单（0/1/3/4）由 PolicyStore.load 校验块经 MagSafeLED.validating
+    /// 仅丢字段保证（照 thermal 分层，v1.8）。
     public static func validated(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
-        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil
+        thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil,
+        magSafeLedMode: UInt8? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -88,7 +105,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         return DaemonPolicy(
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
             autoDischargeEnabled: autoDischargeEnabled, fan: fan,
-            calibrationSchedule: calibrationSchedule, thermal: thermal, schedule: schedule
+            calibrationSchedule: calibrationSchedule, thermal: thermal, schedule: schedule,
+            magSafeLedMode: magSafeLedMode
         )
     }
 }
@@ -191,6 +209,22 @@ public struct PolicyStore: Sendable {
                 schedule = nil
             }
         }
+        // Phase 5 v1.8：MagSafe LED 模式校验——**值域非法仅丢该字段**（照 thermal
+        // 块仅丢字段分层：回落 nil = 跟随 system 的 opt-in 默认，零行为变化，不连累
+        // mode/限值/风扇/日程；Logger error 可见化）。类型错乱（整包 JSONDecoder
+        // 解码失败）走上方 decoded == nil → 整包 nil 落默认策略（合成 Codable 行为，
+        // 与 fan/thermal/schedule 同形）。
+        var magSafeLedMode: UInt8?
+        if let raw = decoded.magSafeLedMode {
+            if MagSafeLED.validating(raw) != nil {
+                magSafeLedMode = raw
+            } else {
+                Self.log.error(
+                    "policy.json MagSafe LED 字段值域非法（应 0/1/3/4），仅丢弃该字段（回落跟随 system，mode/限值/风扇不受连累）"
+                )
+                magSafeLedMode = nil
+            }
+        }
         return DaemonPolicy.validated(
             mode: decoded.mode,
             upperLimit: decoded.upperLimit,
@@ -199,7 +233,8 @@ public struct PolicyStore: Sendable {
             fan: fan,
             calibrationSchedule: calibrationSchedule,
             thermal: thermal,
-            schedule: schedule
+            schedule: schedule,
+            magSafeLedMode: magSafeLedMode
         )
     }
 

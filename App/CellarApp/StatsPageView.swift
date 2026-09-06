@@ -114,6 +114,8 @@ struct StatsPageView: View {
             .padding(24)
             // 页面容器纪律：照充电控制页（maxWidth 720，宽窗不无限拉伸）。
             .frame(maxWidth: 720, alignment: .leading)
+            // 内容列 720 居中：外层撑满窗口宽，宽窗两侧均分留白（滚动条仍贴窗口右缘=macOS 惯例）。
+            .frame(maxWidth: .infinity)
         }
         .task(id: rangeWindow) { await refresh() }
     }
@@ -139,8 +141,13 @@ struct StatsPageView: View {
         // 范围快速切换：被取消的旧任务在恢复主线程后放弃写态，防旧结果覆盖新范围。
         if Task.isCancelled { return }
         firstSampleDate = overviewBuckets.first?.start
+        // 口径（v1.8 走查批 F5）：健康度 = 标称满充容量 / 设计容量——MaxCapacity
+        // 键在部分 macOS 版本恒 100（语义漂移，BatterySnapshot 注记），旧口径已
+        // 失真。新样本走 avgHealthPercent，旧样本（容量列缺席 → nil）回落
+        // avgMaxCapacityPercent 兜底；两口径全缺席的桶不产点（空态照旧）。
         capacityPoints = overviewBuckets.compactMap { bucket in
-            bucket.avgMaxCapacityPercent.map { CapacityPoint(date: bucket.start, percent: $0) }
+            (bucket.avgHealthPercent ?? bucket.avgMaxCapacityPercent)
+                .map { CapacityPoint(date: bucket.start, percent: $0) }
         }
         buckets = rangeBuckets
         isLoading = false

@@ -61,6 +61,10 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 可选字段 + 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容
     /// （App 提示升级），照 fan/autoDischargeEnabled 先例。
     public var nativeLimit: NativeLimitStatus?
+    /// Phase 5 v1.8 MagSafe LED 状态载荷（buildStatusLocked **恒填**——内存缓存
+    /// 组装零读盘，v1.7 P1 教训：全回包携带；可选字段 + 合成 Codable
+    /// decodeIfPresent——旧 daemon 回包缺席 → nil，App 提示升级，照 fan 先例）。
+    public var magSafeLed: MagSafeLEDStatus?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -195,7 +199,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.13.0-alpha"
+    public static let daemonVersion = "0.14.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -215,6 +219,9 @@ public enum DaemonXPC {
     public static let hysteresisKey = "hysteresis"
     /// WP2' 自动放电键（UINT64，0/1；缺席 = 保持现值——旧 daemon/CLI 天然兼容）。
     public static let autoKey = "auto"
+    /// Phase 5 v1.8 MagSafe LED 模式键（UINT64，0/1/3/4 白名单；缺席仅限非
+    /// setMagSafeLed 命令——值域校验由 XPCServer 臂负责，照 auto 同纪律）。
+    public static let magSafeLedModeKey = "magSafeLedMode"
     public static let okKey = "ok"
     public static let statusKey = "status"
     public static let errorKey = "error"
@@ -235,7 +242,8 @@ public enum DaemonXPC {
     public static func makeMessage(
         cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil,
         fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
-        thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil
+        thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
+        magSafeLedMode: UInt64? = nil
     ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
@@ -243,6 +251,9 @@ public enum DaemonXPC {
         xpc_dictionary_set_uint64(message, hysteresisKey, hysteresis)
         if let auto {
             xpc_dictionary_set_uint64(message, autoKey, auto)
+        }
+        if let magSafeLedMode {
+            xpc_dictionary_set_uint64(message, magSafeLedModeKey, magSafeLedMode)
         }
         if let fan {
             if let enabled = fan.enabled { xpc_dictionary_set_uint64(message, FanWireKeys.enabled, enabled) }
@@ -291,7 +302,7 @@ public enum DaemonXPC {
         _ msg: xpc_object_t
     ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?,
           calSched: CalibrationScheduleWire?, thermal: ThermalWire?,
-          schedule: ChargeScheduleWire?)? {
+          schedule: ChargeScheduleWire?, magSafeLedMode: UInt64?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -370,11 +381,19 @@ public enum DaemonXPC {
             scheduleJson = String(cString: pointer)
         }
         let anyScheduleKeyPresent = scheduleJson != nil
+        // Phase 5 v1.8 MagSafe LED 模式键：出现即必须 UINT64（类型混淆 → 整包拒绝）；
+        // 值域校验（0/1/3/4 白名单）由 XPCServer 臂负责（照 auto 同纪律）。
+        var magSafeLedMode: UInt64?
+        if let value = xpc_dictionary_get_value(msg, magSafeLedModeKey) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            magSafeLedMode = xpc_dictionary_get_uint64(msg, magSafeLedModeKey)
+        }
         return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis,
                 auto: auto, fan: anyFanKeyPresent ? fan : nil,
                 calSched: anyCalSchedKeyPresent ? calSched : nil,
                 thermal: anyThermalKeyPresent ? thermal : nil,
-                schedule: anyScheduleKeyPresent ? ChargeScheduleWire(scheduleJson: scheduleJson) : nil)
+                schedule: anyScheduleKeyPresent ? ChargeScheduleWire(scheduleJson: scheduleJson) : nil,
+                magSafeLedMode: magSafeLedMode)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -513,6 +532,18 @@ public struct DaemonXPCClient: Sendable {
         )
     }
 
+    /// Phase 5 v1.8：设置 MagSafe LED 模式（0=跟随系统 / 1=常灭 / 3=常绿 / 4=常琥珀；
+    /// **不改 mode**；disabled 期 daemon 仅存配置不写灯，enable 后 tick 重申）。
+    /// 旧 daemon → 「未知命令」daemonError（App detectStaleBeforeReject 升级提示
+    /// 既有闭环）。
+    public func setMagSafeLed(_ mode: UInt8) throws -> DaemonStatus {
+        try exchange(
+            cmd: MagSafeLED.commandName, upper: 0, hysteresis: 0,
+            auto: nil, fan: nil, calSched: nil, thermal: nil,
+            magSafeLedMode: UInt64(mode)
+        )
+    }
+
     // MARK: - 内部
 
     /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
@@ -522,14 +553,16 @@ public struct DaemonXPCClient: Sendable {
     private func exchange(
         cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil,
         fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
-        thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil
+        thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
+        magSafeLedMode: UInt64? = nil
     ) throws -> DaemonStatus {
         // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
         // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
         let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
         let message = DaemonXPC.makeMessage(
             cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto,
-            fan: fan, calSched: calSched, thermal: thermal, schedule: schedule
+            fan: fan, calSched: calSched, thermal: thermal, schedule: schedule,
+            magSafeLedMode: magSafeLedMode
         )
         let waiter = ReplyWaiter()
 

@@ -14,6 +14,9 @@
 // 统计10 同 ts OR REPLACE（后写胜出）
 // 统计11 最大容量 NULL 容错（单 NULL 桶 nil / 混合桶只平均非 NULL）
 // 统计12 chargingState 桶末态折叠（末样本决定 + 乱序防御 + 折叠函数全枚举）
+// 统计13 健康度聚合（nominal/design×100 均值——完整样本入均值，与 maxCap 口径独立）
+// 统计14 健康度混合缺席（缺 nominal / 缺 design / design≤0 跳过，只均完整样本）
+// 统计15 健康度全缺席桶 nil（纯函数 + DB 往返贯通——缺席机型不造数，R-6）
 //
 // ⚠️ DB 一律临时目录注入（不碰真实用户域 ~/Library/Application Support/Cellar）；
 // ⚠️ 场景采样时刻取「当前时刻取整秒」附近——insert 自带的滚动窗口 prune
@@ -349,5 +352,73 @@ func runStatsDomainScenarios() async {
         check(StatsChargingState(charging: false, externalConnected: true) == .holding, "统计12", "折叠：停充∧external→holding")
         check(StatsChargingState(charging: true, externalConnected: false) == .discharging, "统计12", "折叠：无外接→discharging（异常态如实归放电）")
         check(StatsChargingState(charging: false, externalConnected: false) == .discharging, "统计12", "折叠：无外接∧停充→discharging")
+    }
+
+    // 统计13：健康度聚合——健康样本（nominal/design 齐备）逐样本折算 % 后取均值。
+    // 数值取二进制精确组合（4608/8192=56.25、5632/8192=68.75，均值为 62.5），
+    // 断言零浮点容差。与 avgMaxCapacityPercent 口径独立（MaxCapacity 键语义漂移，
+    // 走查批 F5 换源——健康度与仪表板「健康」同源 nominal/design）。
+    do {
+        let t0 = 1_700_000_000
+        let range = Date(timeIntervalSince1970: TimeInterval(t0))..<Date(timeIntervalSince1970: TimeInterval(t0 + 100))
+        let samples = [
+            statsSample(ts: t0 + 1, nominal: 4608, design: 8192),   // 56.25%
+            statsSample(ts: t0 + 2, nominal: 5632, design: 8192),   // 68.75%
+        ]
+        let buckets = StatsBucketing.bucket(samples: samples, bucketSeconds: 100, range: range)
+        guard let bucket = buckets.first else {
+            check(false, "统计13", "聚合产出为空")
+            return
+        }
+        expectEqual(bucket.avgHealthPercent, 62.5, "统计13", "AVG(health)=(56.25+68.75)/2=62.5（两完整样本）")
+        check(bucket.avgMaxCapacityPercent == nil, "统计13", "maxCap 缺席 → avgMaxCapacityPercent=nil（健康度口径独立，互不污染）")
+    }
+
+    // 统计14：健康度混合缺席——缺 nominal / 缺 design / design≤0（除零防御，
+    // 视同缺席）的样本逐个跳过，只均完整样本（缺席不造数，R-6）。
+    do {
+        let t0 = 1_700_000_000
+        let range = Date(timeIntervalSince1970: TimeInterval(t0))..<Date(timeIntervalSince1970: TimeInterval(t0 + 100))
+        let samples = [
+            statsSample(ts: t0 + 1, nominal: 4608, design: 8192),   // 56.25%（参与）
+            statsSample(ts: t0 + 2, nominal: nil, design: 8192),    // 缺 nominal → 跳过
+            statsSample(ts: t0 + 3, nominal: 4608, design: nil),    // 缺 design → 跳过
+            statsSample(ts: t0 + 4, nominal: 4608, design: 0),      // design≤0 → 跳过（防除零毒化均值）
+        ]
+        let buckets = StatsBucketing.bucket(samples: samples, bucketSeconds: 100, range: range)
+        guard let bucket = buckets.first else {
+            check(false, "统计14", "聚合产出为空")
+            return
+        }
+        expectEqual(bucket.sampleCount, 4, "统计14", "4 样本全入桶（缺席只影响健康度均值，不影响桶产出）")
+        expectEqual(bucket.avgHealthPercent, 56.25, "统计14", "仅完整样本参与均值（4608/8192×100=56.25）")
+    }
+
+    // 统计15：健康度全缺席桶 → nil（纯函数不造数）+ DB 往返贯通（nominal/design
+    // 列随采样入出库，query 聚合出同值——存储胶水层不吞列）。
+    do {
+        let t0 = 1_700_000_000
+        let range = Date(timeIntervalSince1970: TimeInterval(t0))..<Date(timeIntervalSince1970: TimeInterval(t0 + 100))
+        let allMissing = [
+            statsSample(ts: t0 + 1, nominal: nil, design: nil),
+            statsSample(ts: t0 + 2, nominal: nil, design: 8192),
+        ]
+        let buckets = StatsBucketing.bucket(samples: allMissing, bucketSeconds: 100, range: range)
+        check(buckets.first?.avgHealthPercent == nil, "统计15", "全缺席桶 avgHealthPercent=nil（缺席机型不造数）")
+
+        let dir = makeStatsTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        guard let store = makeStatsStore(dir.appendingPathComponent("stats.sqlite"), scenario: "统计15") else { return }
+        await store.insert(statsSample(ts: now, nominal: 4608, design: 8192))          // 桶 A：健康样本
+        await store.insert(statsSample(ts: now + 1, nominal: 5632, design: 8192))      // 桶 A：健康样本（异秒防 OR REPLACE 覆盖）
+        await store.insert(statsSample(ts: now + 3600, nominal: nil, design: nil))     // 桶 B：全缺席
+        let stored = await store.query(
+            range: Date(timeIntervalSince1970: TimeInterval(now - 10))..<Date(timeIntervalSince1970: TimeInterval(now + 4000)),
+            bucketSeconds: 60
+        )
+        check(stored.count == 2, "统计15", "DB 两点位（now 桶 + now+3600 桶）")
+        guard stored.count == 2 else { return }
+        expectEqual(stored[0].avgHealthPercent, 62.5, "统计15", "DB 往返：健康列贯通聚合（62.5 与纯函数同值）")
+        check(stored[1].avgHealthPercent == nil, "统计15", "DB 全缺席行聚合 nil（NULL 列不入均值）")
     }
 }

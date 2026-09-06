@@ -150,6 +150,7 @@ struct StatusCommand: ParsableCommand {
             DaemonCommandHelpers.printStatus(status)
             printFanLine(status)
             printNativeLine(status)
+            printMagSafeLedLine(status)
             printRouteLine()
         } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
             if FileManager.default.fileExists(atPath: DaemonInstaller.plistPath) {
@@ -238,6 +239,36 @@ struct StatusCommand: ParsableCommand {
         }
         print("原生限充：\(socLimit)% 注册")
         printNativeMirrorLine()
+    }
+
+    /// MagSafe LED 行（方案 §3.3 CLI 段；`--json` daemon 段经 DaemonStatus 自动
+    /// 携带 magSafeLed）。三态：nil = 旧 daemon 未上报（升级提示）；supported=false
+    /// = 本机不支持或未决（节隐藏同语义）；supported + mode 展示 + 回读三态
+    ///（foreign/unknown 注记）。CLI 输出恒中文（不本地化，既有惯例）。
+    private func printMagSafeLedLine(_ status: DaemonStatus) {
+        guard let led = status.magSafeLed else {
+            print("MagSafe LED：旧版守护进程未上报（升级后可查看）")
+            return
+        }
+        guard led.supported else {
+            print("MagSafe LED：本机不支持或检测未决")
+            return
+        }
+        let modeText: String
+        switch led.mode {
+        case .off: modeText = "常灭"
+        case .green: modeText = "常绿"
+        case .amber: modeText = "常琥珀"
+        case .system, .none: modeText = "跟随系统"
+        }
+        let readbackText: String
+        switch led.readbackState {
+        case .match: readbackText = "回读一致"
+        case .foreign: readbackText = "回读不符（疑似外部写入）"
+        case .unknown: readbackText = "未回读"
+        }
+        let conflictText = led.conflict ? " · 冲突暂停纠偏" : ""
+        print("MagSafe LED：\(modeText) · \(readbackText)\(conflictText)")
     }
 
     /// 用户域 UI 镜像行（方案 §3.3「本地 UI 镜像行」，review P2-2 补齐）——

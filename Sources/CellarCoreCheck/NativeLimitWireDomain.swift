@@ -295,17 +295,21 @@ func runNativeLimitWireDomainScenarios() throws {
               "医生-11", "未知态不抬升 worstStatus（INFO 不参与——与守卫 fail-open 对齐）")
     }
 
-    // 医生-12：CLI 全探测路径输入形态 → 十五项全渲染（编号/顺序钉死：第 15 项追加在末尾）。
+    // 医生-12：CLI 全探测路径输入形态 → 十六项全渲染（编号/顺序钉死：第 16 项追加在末尾）。
     do {
+        var ledDaemon = DaemonStatus(
+            version: "0.14.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2
+        )
+        ledDaemon.magSafeLed = MagSafeLED.wireStatus(
+            mode: nil, supportState: .supported, readbackRaw: 0x04
+        )
         let full = DoctorInputs(
             isRoot: true, smcConnected: true,
             probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
             chargingEnabled: false, chargingError: nil,
             snapshot: snapshot, snapshotError: nil,
             conflict: ConflictScanResult(exact: [], generic: []),
-            daemonStatus: DaemonStatus(
-                version: "0.12.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2
-            ),
+            daemonStatus: ledDaemon,
             daemonProbeAttempted: true,
             keyPresence: KeyPresence(chte: true, chie: true, ch0b: false),
             processHits: [],
@@ -323,12 +327,15 @@ func runNativeLimitWireDomainScenarios() throws {
             chargeSchedule: ChargeScheduleDoctorProbe(enabled: false, entryCount: 0, activeEntry: nil),
             chargeScheduleProbeAttempted: true,
             nativeLimit: NativeLimitStatus(known: true, active: false, socLimit: nil, manualSocLimit: nil),
-            nativeLimitProbeAttempted: true
+            nativeLimitProbeAttempted: true,
+            magSafeLed: ledDaemon.magSafeLed,
+            magSafeLedProbeAttempted: true
         )
         let report = DoctorReportGenerator.generate(full)
-        check(report.checks.count == 15, "医生-12", "全探测输入 → 15 项（7 基础 + daemon + 9-15）")
-        check(report.checks[13].name == "充电日程" && report.checks[14].name == "原生限充共存",
-              "医生-12", "检查 15 追加在检查 14 之后（顺序钉死）")
+        check(report.checks.count == 16, "医生-12", "全探测输入 → 16 项（7 基础 + daemon + 9-16）")
+        check(report.checks[13].name == "充电日程" && report.checks[14].name == "原生限充共存"
+                && report.checks[15].name == "MagSafe 指示灯",
+              "医生-12", "检查 16 追加在检查 15 之后（顺序钉死）")
         check(report.checks[14].status == .pass && report.worstStatus == .pass && report.exitCode == 0,
               "医生-12", "全绿样本（原生未注册）不抬升退出码")
     }

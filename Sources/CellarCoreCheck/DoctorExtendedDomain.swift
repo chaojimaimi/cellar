@@ -335,4 +335,91 @@ func runDoctorExtendedDomainScenarios() {
         check(report.checks[11].status == .pass, "医生-6", "风扇控制：键在位 + F0Md=0 → PASS（全绿样本）")
         check(report.worstStatus == .pass && report.exitCode == 0, "医生-6", "全绿样本不抬升退出码")
     }
+
+    // ---- Phase 5 v1.8 检查 16：MagSafe 指示灯（方案 §3.3 分支矩阵）----
+
+    /// LED wire 便捷构造（daemon 侧 wireStatus 直通形态；函数内嵌套——快照复用
+    /// 本函数既有的 `snapshot` 局部量）。
+    func ledInputs(
+        _ led: MagSafeLEDStatus?, attempted: Bool = true,
+        daemonStatus: DaemonStatus? = nil
+    ) -> DoctorInputs {
+        DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+            chargingEnabled: false, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            daemonStatus: daemonStatus, daemonProbeAttempted: true,
+            magSafeLed: led, magSafeLedProbeAttempted: attempted
+        )
+    }
+
+    // 医生-7：attempted 缺省 → 检查 16 不渲染（缺省零渲染纪律，count 断言）。
+    check(DoctorReportGenerator.generate(ledInputs(nil, attempted: false)).checks.count == 8,
+          "医生-7", "magSafeLedProbeAttempted 缺省 → 检查 16 不渲染（7 基础 + daemon）")
+
+    // 医生-8：旧 daemon（daemonStatus 无 magSafeLed 字段值 → wire nil）→ INFO。
+    check(DoctorReportGenerator.generate(ledInputs(nil)).checks[8].status == .info
+              && DoctorReportGenerator.generate(ledInputs(nil)).checks[8].name == "MagSafe 指示灯",
+          "医生-8", "旧 daemon 缺席 → INFO 升级提示（渲染但不计失败）")
+
+    // 医生-9：unsupported → INFO（机型常态）。
+    check(DoctorReportGenerator.generate(ledInputs(
+        MagSafeLED.wireStatus(mode: nil, supportState: .unsupported, readbackRaw: nil)
+    )).checks[8].status == .info, "医生-9", "unsupported → INFO（通用页隐藏同语义）")
+
+    // 医生-10：跟随系统 + 色值回读（寄存器常态）→ PASS（system 态合法四值=一致）。
+    do {
+        let report = DoctorReportGenerator.generate(ledInputs(
+            MagSafeLED.wireStatus(mode: nil, supportState: .supported, readbackRaw: 0x04)
+        ))
+        check(report.checks[8].status == .pass
+                  && report.checks[8].detail.contains("跟随系统"),
+              "医生-10", "跟随系统 + 琥珀回读 → PASS（系统自管理域不误报他写）")
+    }
+
+    // 医生-11：常灭 + 回读一致 → PASS。
+    check(DoctorReportGenerator.generate(ledInputs(
+        MagSafeLED.wireStatus(mode: .off, supportState: .supported, readbackRaw: 0x01)
+    )).checks[8].status == .pass, "医生-11", "常灭 + 回读一致 → PASS")
+
+    // 医生-12：冲突锁存 → WARN 点名 MagHue。
+    do {
+        var led = MagSafeLED.wireStatus(mode: .green, supportState: .supported, readbackRaw: 0x04)
+        led.conflict = true
+        let ledCheck = DoctorReportGenerator.generate(ledInputs(led)).checks[8]
+        check(ledCheck.status == .warn && ledCheck.detail.contains("MagHue"),
+              "医生-12", "冲突锁存 → WARN 点名 MagHue（二选一指引）")
+    }
+
+    // 医生-13：回读不符（非冲突态）→ WARN（自动纠偏注记）。
+    do {
+        let ledCheck = DoctorReportGenerator.generate(ledInputs(
+            MagSafeLED.wireStatus(mode: .green, supportState: .supported, readbackRaw: 0x04)
+        )).checks[8]
+        check(ledCheck.status == .warn && ledCheck.detail.contains("自动纠偏"),
+              "医生-13", "回读不符 → WARN（非冲突态走纠偏通道）")
+    }
+
+    // 医生-14：全探测输入 → 十六项全渲染（编号 16 追加在检查 15 之后）。
+    do {
+        var daemon = DaemonStatus(
+            version: "0.14.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2
+        )
+        daemon.magSafeLed = MagSafeLED.wireStatus(
+            mode: .system, supportState: .supported, readbackRaw: 0x04
+        )
+        let report = DoctorReportGenerator.generate(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+            chargingEnabled: false, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            daemonStatus: daemon, daemonProbeAttempted: true,
+            magSafeLed: daemon.magSafeLed, magSafeLedProbeAttempted: true
+        ))
+        check(report.checks.count == 9, "医生-14", "本域输入形态 → 9 项（7 基础 + daemon + LED；15/16 类检查需各自探测输入）")
+        check(report.checks[8].name == "MagSafe 指示灯", "医生-14", "检查 16 渲染在位")
+    }
 }

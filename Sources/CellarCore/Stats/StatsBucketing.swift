@@ -47,6 +47,9 @@ public struct StatsBucket: Equatable, Sendable {
     public let avgPowerMW: Double
     /// 最大容量均值（%；桶内全缺席 → nil——缺席机型不造数，R-6）。
     public let avgMaxCapacityPercent: Double?
+    /// 健康度均值（% = 标称满充容量 / 设计容量 × 100，与仪表板「健康」同源；
+    /// 两容量字段任一缺席的样本跳过，桶内全缺席 → nil——缺席机型不造数，R-6）。
+    public let avgHealthPercent: Double?
     /// 桶内末样本的 (charging, external) 折叠态（M3 分色数据源）。
     public let chargingState: StatsChargingState
 }
@@ -77,6 +80,8 @@ public enum StatsBucketing {
             var sumPower = 0.0
             var sumMaxCap = 0.0
             var maxCapCount = 0
+            var sumHealth = 0.0
+            var healthCount = 0
             /// 桶内末样本（ts 最大者；chargingState 折叠源）。
             var lastSample: StatsSample?
         }
@@ -96,6 +101,13 @@ public enum StatsBucketing {
             if let maxCap = sample.maxCapacityPercent {
                 accumulator.sumMaxCap += Double(maxCap)
                 accumulator.maxCapCount += 1
+            }
+            // 健康度采样：两容量字段齐备才入均值（任一缺席跳过）；design ≤ 0 视同
+            // 缺席（防除零——inf/NaN 会毒化整桶均值）。
+            if let nominal = sample.nominalChargeCapacityMAh,
+               let design = sample.designCapacityMAh, design > 0 {
+                accumulator.sumHealth += Double(nominal) / Double(design) * 100
+                accumulator.healthCount += 1
             }
             // 输入乱序防御：仅当样本不早于现末样本才替换（相等也替换——并列取后到者）。
             if accumulator.lastSample.map({ $0.timestamp <= sample.timestamp }) ?? true {
@@ -119,6 +131,9 @@ public enum StatsBucketing {
                 avgPowerMW: accumulator.sumPower / Double(accumulator.count),
                 avgMaxCapacityPercent: accumulator.maxCapCount > 0
                     ? accumulator.sumMaxCap / Double(accumulator.maxCapCount)
+                    : nil,
+                avgHealthPercent: accumulator.healthCount > 0
+                    ? accumulator.sumHealth / Double(accumulator.healthCount)
                     : nil,
                 chargingState: StatsChargingState(
                     charging: last.isCharging,

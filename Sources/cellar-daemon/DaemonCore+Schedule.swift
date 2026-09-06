@@ -175,7 +175,7 @@ extension DaemonCore {
             mode: mode, upperLimit: upperLimit, hysteresis: policy.hysteresis,
             autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
             calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-            schedule: policy.schedule
+            schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
         ) else {
             events.append(LogEvent(
                 category: .control, level: .warn,

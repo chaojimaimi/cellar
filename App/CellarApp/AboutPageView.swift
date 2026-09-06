@@ -22,6 +22,8 @@ struct AboutPageView: View {
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
+            // 内容列 720 居中：外层撑满窗口宽，宽窗两侧均分留白（滚动条仍贴窗口右缘=macOS 惯例）。
+            .frame(maxWidth: .infinity)
         }
     }
 }

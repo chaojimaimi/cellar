@@ -7,6 +7,14 @@ import UserNotifications
 /// 窗退役后并入主窗口通用页；登录项开关 + 注册态 + 通知授权 + 自动放电组 +
 /// 风扇组全部随迁，行为零变化）。
 ///
+/// v1.8 走查批 F4 布局重构（行为零变化，只动布局容器）：macOS Form 各 Section
+/// 的 label 列独立自适应——Toggle 全宽行与 LabeledContent 双列行混用导致行起始
+/// x 参差。改自定义分节：节头 13pt semibold secondaryText（key 复用
+/// settings.section.*）+ 行栅格统一（标签列固定 150pt）——全部行同起点对齐；
+/// 整块包卡片底（容器形态照校准/自动化页 panel 先例：panelBackground 底 +
+/// 圆角 18 描边）。自动放电节保持无头（R1 P1-1 定案：开关标签「自动放电」自任
+/// 标题，带节头必同文相邻重复）。
+///
 /// ⚠️ 不含 ScrollView / 内容理想高测量 / `@Binding contentHeight` 成帧——那些
 /// 是设置窗成帧包装的专属装置，随设置窗一并退役（reportContentHeight /
 /// contentHeightMeasurement 零残留）。
@@ -20,115 +28,191 @@ struct GeneralSections: View {
     @State private var autoDischargeConfirming = false
 
     var body: some View {
-        Form {
-            // 节头一律 CellarL10n.s 构造——App target 查不到 CellarUI bundle 的
-            // 裸 key 字面量会渲染裸字符串，无机械门拦截（R1 P3 红线）。
-            Section {
-                Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
-                    get: { loginItems.launchAtLogin },
-                    set: { loginItems.toggle($0) }
-                ))
-                .disabled(loginItems.busy)
-
-                LabeledContent(CellarL10n.s("settings.registrationStatus")) {
-                    HStack {
-                        Text(registrationText)
-                        // 修复路径落控制器（评审 P2-2）；已注册态按钮无意义，禁用。
-                        Button(CellarL10n.s("settings.reregister")) { loginItems.reregister() }
-                            .disabled(loginItems.busy || loginItems.registration == .enabled)
-                    }
-                }
-
-                LabeledContent(CellarL10n.s("settings.notifications")) {
-                    HStack {
-                        Text(notificationText)
-                        Button(CellarL10n.s("settings.openSystemSettings")) { openNotificationSettings() }
-                    }
-                }
-
-                if let feedback = loginItems.feedback {
-                    Text(feedback)
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                }
-            } header: {
-                Text(CellarL10n.s("settings.section.general"))
-            }
-
-            // WP2' 自动放电组——无头节（R1 P1-1 定案）：开关标签「自动放电」
-            // 自任标题，带节头必同文相邻重复；仅取节间距分组。开关绑定 daemonStatus
-            // 单一真相（daemon 确认后状态回传翻转）；开启两步内嵌确认块，关闭
-            // 直通（关是安全方向）。
-            Section {
-                Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
-                    get: { statusController.daemonStatus?.autoDischargeEnabled == true },
-                    set: { toggleAutoDischarge($0) }
-                ))
-                .disabled(autoDischargeCapabilityAvailable == false)
-
-                // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
-                Text(CellarL10n.s("settings.autoDischarge.desc"))
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-
-                // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
-                // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
-                if let hint = autoDischargeGateHint {
-                    Text(hint)
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                }
-
-                // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
-                // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
-                if autoDischargeConfirming {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(CellarL10n.s("settings.autoDischarge.warning"))
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
-                        HStack {
-                            Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
-                                .disabled(statusController.busy)
-                            Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
-                        }
-                    }
-                }
-            }
-
-            Section {
-                // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
-                // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
-                // 旧 daemon（fan==nil）控件禁用 + 升级提示）。v1.2：showsTitle false——
-                // 标题由节头「智能风扇降温」承担，组件自身标题关掉防同文重复。
-                FanSectionView(
-                    fan: statusController.fanStatus,
-                    busy: statusController.busy,
-                    onApply: { statusController.setFan($0) },
-                    showsTitle: false
-                )
-            } header: {
-                Text(CellarL10n.s("settings.section.fan"))
-            }
-
-            Section {
-                // Phase 5 v1.5：充电热保护区（参数驱动组件照风扇区先例——门控二态：
-                // 旧 daemon（therm 两键缺席）整卡升级提示；**无开关**——热保护不可
-                // 关闭，§4 红线 3。showsTitle false——标题由节头承担，防同文重复，
-                // 风扇区同款）。
-                ThermalSectionView(
-                    thermal: statusController.thermalStatus,
-                    busy: statusController.busy,
-                    onApply: { statusController.setThermal($0) },
-                    showsTitle: false
-                )
-            } header: {
-                Text(CellarL10n.s("settings.section.thermal"))
-            }
+        VStack(alignment: .leading, spacing: 16) {
+            generalSection
+            autoDischargeSection
+            fanSection
+            thermalSection
+            magSafeLedSection
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background {
+            if let panelBackground = theme.panelBackground { panelBackground }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.secondaryText.opacity(0.25)))
         .onAppear {
             loginItems.load()
             loginItems.refreshRegistration()
             queryNotificationAuthorization()
+        }
+    }
+
+    // MARK: - 分节（节间 16 / 行距 10）
+
+    /// 节头（R1 P3 红线：一律 CellarL10n.s 构造——App target 查不到 CellarUI
+    /// bundle 的裸 key 字面量会渲染裸字符串，无机械门拦截；参数取
+    /// LocalizationValue——调用点保持 key 字面量，与既有直调形态一致）。
+    private func sectionHeader(_ key: String.LocalizationValue) -> some View {
+        Text(CellarL10n.s(key))
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(theme.secondaryText)
+    }
+
+    /// 标签:内容行（行栅格统一：标签列固定 150pt leading——全部标签行同起点，
+    /// 治 Form 时代行起始 x 参差；firstTextBaseline 对齐——标签与内容首行基线
+    /// 一致，多行内容不吊顶）。
+    private func labelRow<Content: View>(
+        _ label: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(.body)
+                .frame(width: 150, alignment: .leading)
+            content()
+        }
+    }
+
+    /// 通用节：开机启动开关（全宽 checkbox 行，起始 x=0 与标签列对齐）+
+    /// 注册态/通知两行（标签:内容栅格）+ 反馈行。
+    private var generalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("settings.section.general")
+
+            Toggle(CellarL10n.s("common.launchAtLogin"), isOn: Binding(
+                get: { loginItems.launchAtLogin },
+                set: { loginItems.toggle($0) }
+            ))
+            .disabled(loginItems.busy)
+
+            labelRow(CellarL10n.s("settings.registrationStatus")) {
+                HStack {
+                    Text(registrationText)
+                    // 修复路径落控制器（评审 P2-2）；已注册态按钮无意义，禁用。
+                    Button(CellarL10n.s("settings.reregister")) { loginItems.reregister() }
+                        .disabled(loginItems.busy || loginItems.registration == .enabled)
+                }
+            }
+
+            labelRow(CellarL10n.s("settings.notifications")) {
+                HStack {
+                    Text(notificationText)
+                    Button(CellarL10n.s("settings.openSystemSettings")) { openNotificationSettings() }
+                }
+            }
+
+            if let feedback = loginItems.feedback {
+                Text(feedback)
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
+        }
+    }
+
+    /// 自动放电节（无头节，R1 P1-1 定案——开关标签「自动放电」自任标题）：
+    /// 开关全宽行 + 说明行 + 能力门控提示 + 开启两步确认块，逻辑原样随迁。
+    private var autoDischargeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // WP2' 自动放电组：开关绑定 daemonStatus 单一真相（daemon 确认后状态
+            // 回传翻转）；开启两步内嵌确认块，关闭直通（关是安全方向）。
+            Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
+                get: { statusController.daemonStatus?.autoDischargeEnabled == true },
+                set: { toggleAutoDischarge($0) }
+            ))
+            .disabled(autoDischargeCapabilityAvailable == false)
+
+            // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
+            Text(CellarL10n.s("settings.autoDischarge.desc"))
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+
+            // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
+            // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
+            if let hint = autoDischargeGateHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
+
+            // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
+            // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
+            if autoDischargeConfirming {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(CellarL10n.s("settings.autoDischarge.warning"))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                    HStack {
+                        Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
+                            .disabled(statusController.busy)
+                        Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 风扇节：FanSectionView 原样嵌入（showsTitle false 保持——标题由节头
+    /// 「智能风扇降温」承担，组件自身标题关掉防同文重复；v1.2 先例）。
+    private var fanSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("settings.section.fan")
+
+            // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
+            // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/九态状态行；
+            // 旧 daemon（fan==nil）控件禁用 + 升级提示）。
+            FanSectionView(
+                fan: statusController.fanStatus,
+                busy: statusController.busy,
+                onApply: { statusController.setFan($0) },
+                showsTitle: false
+            )
+        }
+    }
+
+    /// 热保护节：ThermalSectionView 原样嵌入（showsTitle false——标题由节头
+    /// 承担防同文重复，风扇区同款）。
+    private var thermalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("settings.section.thermal")
+
+            // Phase 5 v1.5：充电热保护区（参数驱动组件照风扇区先例——门控二态：
+            // 旧 daemon（therm 两键缺席）整卡升级提示；**无开关**——热保护不可
+            // 关闭，§4 红线 3）。
+            ThermalSectionView(
+                thermal: statusController.thermalStatus,
+                busy: statusController.busy,
+                onApply: { statusController.setThermal($0) },
+                showsTitle: false
+            )
+        }
+    }
+
+    /// MagSafe LED 节（Phase 5 v1.8；三态门控，方案 §4）：nil = 旧 daemon →
+    /// 升级提示行；supported=false → 不支持提示行（照自动放电门控提示先例）；
+    /// supported → MagSafeLedSectionView（showsTitle false——节头承担标题）。
+    private var magSafeLedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("settings.section.magSafeLed")
+            let led = statusController.magSafeLedStatus
+            if let led {
+                if led.supported {
+                    MagSafeLedSectionView(
+                        mode: led.mode,
+                        conflict: led.conflict,
+                        busy: statusController.busy,
+                        showsTitle: false,
+                        onApply: { statusController.setMagSafeLed($0) }
+                    )
+                } else {
+                    Text(CellarL10n.s("settings.magSafeLed.unsupported"))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+            } else {
+                Text(CellarL10n.s("panel.action.needUpgrade"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
         }
     }
 

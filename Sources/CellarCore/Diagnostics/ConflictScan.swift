@@ -33,6 +33,7 @@ public enum ConflictScan {
     /// batterytoolkit / bclm（层 1）。
     public static let knownIdentifiers: [String] = [
         "apphousekitchen",
+        "maghue",
         "aldente-pro",
         "batt.daemon",
         "com.battery.helper",

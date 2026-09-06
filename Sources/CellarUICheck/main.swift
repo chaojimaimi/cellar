@@ -332,9 +332,31 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
+            // Phase 5 v1.8 MagSafe LED 节 2 态（system 跟随 + off 常灭）×6
+            //（246 → 258，新增 12 张）：参数驱动组件直接构造（onApply 空闭包——
+            // 渲染无副作用；system 态回读钉死琥珀=寄存器常态；off 态钉死选中
+            // 常灭）。--regen --only=MagSafeLed 只跑本组。
+            let ledSections: [(String, MagSafeLedSectionView)] = [
+                ("system", MagSafeLedSectionView(
+                    mode: nil, conflict: false, busy: false, showsTitle: true,
+                    onApply: { _ in })),
+                ("off", MagSafeLedSectionView(
+                    mode: .off, conflict: false, busy: false, showsTitle: true,
+                    onApply: { _ in })),
+            ]
+            for (stateName, section) in ledSections {
+                cases.append(SnapshotCase(
+                    name: "MagSafeLed_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
             // Phase 5 v1.2 页脚链接 2 态（idle/hover）×4（84 → 92，新增 8 张）：
             // 参数驱动组件直接构造（onMainWindow/onQuit 空闭包——渲染无副作用）；
-            // M3.5 两链接形态（左「主窗口」+ 右「退出 Cellar」，设置链接随设置窗
+            // M3.5 两链接形态（左「主窗口」+ 右「退出」，设置链接随设置窗
             // 退役移除，共 108 张数量不变）；hover 态钉死 initialHoveredLink:
             // .mainWindow（golden hover 代表形态）——单钮强调、余钮常态（hover
             // 是运行时鼠标态，矩阵以注入钉死）。

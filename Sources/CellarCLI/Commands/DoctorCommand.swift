@@ -2,7 +2,7 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十五项只读诊断（不写任何 SMC 键）。
+/// cellar doctor —— 十六项只读诊断（不写任何 SMC 键）。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -12,7 +12,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十五项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：十六项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。
@@ -208,7 +208,11 @@ struct DoctorCommand: ParsableCommand {
             chargeSchedule: chargeScheduleProbe,
             chargeScheduleProbeAttempted: true,
             nativeLimit: NativeChargeLimit.wireStatus(nativeReading),
-            nativeLimitProbeAttempted: true
+            nativeLimitProbeAttempted: true,
+            // Phase 5 v1.8 检查 16：MagSafe LED 状态（daemonStatus.magSafeLed 直通——
+            // daemon 探测侧权威；daemon 未运行 → nil 走「未上报」INFO 行）。
+            magSafeLed: daemonStatus?.magSafeLed,
+            magSafeLedProbeAttempted: true
         )
     }
 

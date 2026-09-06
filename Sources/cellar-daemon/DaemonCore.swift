@@ -52,6 +52,9 @@ final class DaemonCore: @unchecked Sendable {
     var smcClient: SMCClient?
     /// Phase 5 v1.1 风扇运行时状态（结构体定义在 DaemonCore+Fan.swift——扩展不能加存储属性）。
     var fanState = FanRuntimeState()
+    /// Phase 5 v1.8 MagSafe LED 运行时状态（结构体定义在 DaemonCore+MagSafeLED.swift
+    /// ——扩展不能加存储属性；能力/回读/纠偏动作回路/冲突锁存）。
+    var magSafeLedState = MagSafeLedRuntimeState()
     /// 探测得到的后端；nil = 尚未探测成功（心跳驱动重试/自愈）。
     var backend: (any ChargingBackend)?
     /// daemon 能力清单（WP2' §2.1）：启动探测通过（tahoe ∧ CHIE 在位，评审 P1-1
@@ -209,6 +212,10 @@ final class DaemonCore: @unchecked Sendable {
         // Phase 5 v1.1：风扇启动恢复（F0Md≠0 → 写 0 + warn——崩溃残留窗口收口，
         // 方案 §6.5；逻辑在 DaemonCore+Fan.swift 的 releaseFanLocked 内）。
         releaseFanLocked(events: &events)
+        // Phase 5 v1.8：MagSafe LED 能力探测（**不设启动残留检查**——寄存器常态
+        // 是色值，启动写 0 会踩掉系统语义与第三方写入，方案 §0-D3；probe 只建
+        // 能力态，写灯由 tick 纠偏按 policy 重申）。
+        probeMagSafeLedLocked(events: &events)
         let shouldEnforce = policy.mode == "active"
         lock.unlock()
         emit(events)
@@ -385,7 +392,7 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "active", upperLimit: upper, hysteresis: hys,
                 autoDischargeEnabled: autoFlag, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
             ),
             events: &events
         )
@@ -442,10 +449,13 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
             ),
             events: &events
         )
+        // Phase 5 v1.8：disable 恢复路口——LED 交还系统（方案 §0-D3；写失败仅
+        // 日志不阻断 disable——残留交系统充放覆写自愈）。
+        releaseMagSafeLedLocked(events: &events)
         persistPolicyLocked(events: &events)
         lastStatus = DaemonStatus(
             version: DaemonXPC.daemonVersion,
@@ -473,7 +483,7 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
             ),
             events: &events
         )
@@ -505,6 +515,9 @@ final class DaemonCore: @unchecked Sendable {
         }
         // Phase 5 v1.1：退出恢复风扇（boost 中 → Tg→原值 + Md=0，方案 §6.4 路口①）。
         releaseFanLocked(events: &events)
+        // Phase 5 v1.8：退出恢复 MagSafe LED（配置 mode≠system → ACLC=0 交还系统，
+        // 方案 §0-D3 路口；写失败仅日志不阻断退出）。
+        releaseMagSafeLedLocked(events: &events)
         if let backend {
             do {
                 try backend.setChargingEnabled(true)
@@ -843,6 +856,10 @@ final class DaemonCore: @unchecked Sendable {
             }
         }
 
+        // Phase 5 v1.8：MagSafe LED 纠偏（30s 心跳；方案 §3——置于各早退分支之后
+        // 的尾部，采样/控制键失败 tick 顺延纠偏可接受；充电执法段零交织）。
+        magSafeLedTickLocked(events: &events)
+
         // 6) 更新快照（保留上次状态 = lastStatus 不被失败 tick 覆盖）。
         // lastAction 经终态锁存生效值（P0-2：fullOnce:* 终态不被常规 tick 覆盖）。
         lastStatus = DaemonStatus(
@@ -977,6 +994,9 @@ final class DaemonCore: @unchecked Sendable {
         status.hysteresis = policy.hysteresis
         status.autoDischargeEnabled = policy.autoDischargeEnabled
         status.fan = fanStatusLocked()
+        // Phase 5 v1.8：MagSafe LED **恒填**（内存缓存组装零读盘——v1.7 P1 教训：
+        // 全回包携带，防变更类回包 ingest 覆盖触发「旧 daemon」误判闪断）。
+        status.magSafeLed = magSafeLedStatusLocked()
         // Phase 5 v1.4：校准调度三键**恒填**（未配置 → .default，UD-7——照
         // fanStatusLocked `policy.fan ?? .default` 先例，防新装用户被误判旧 daemon）；
         // lastCal 三键读 state 内存缓存（无记录 → 缺席表达，勿读盘）。

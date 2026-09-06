@@ -22,7 +22,7 @@
 - **充满一次**：临时充电到 100%（出行前满电等），完成后自动恢复限充；完整电池校准请用一键校准（见下）
 - **放电到上限**：将适配器断电，用电池把电量降至限充目标后自动恢复（实时供电功率可视化；支持条件见下文）
 - **只读监测无需 root**：电量、充放状态、电压、电流、温度、循环次数、电池健康度、设计/满充容量、电芯电压、适配器详情
-- **CLI + root daemon**：一次安装，开机自动管理；`doctor` 一键十五项诊断（含设备兼容性行与原生限充共存检查）
+- **CLI + root daemon**：一次安装，开机自动管理；`doctor` 一键十六项诊断（含设备兼容性行、原生限充共存与 MagSafe 指示灯检查）
 
 ## 图形界面（App）
 
@@ -122,7 +122,7 @@ sudo .build/release/cellar install
 ```bash
 cellar status          # 状态一览（后端、电量、充放、控制键、daemon 状态）
 cellar status --json   # 同上，机器可读 JSON（daemon/route/local 三段，脚本化）
-cellar doctor          # 十五项诊断报告（退出码 0/1/2 可用于脚本）
+cellar doctor          # 十六项诊断报告（退出码 0/1/2 可用于脚本）
 cellar doctor --devices  # 输出本机设备兼容性单行（欢迎附于 issue 反馈）
 sudo cellar set 80     # 设置上限 80%（范围 60–100，可加 --hysteresis n）
 sudo cellar disable    # 停用限充管理，恢复系统默认充电
@@ -146,11 +146,11 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 476 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
+swift run CellarCoreCheck   # 507 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
-                            # 放电安全门控、校准调度、热保护配置、原生限充检测、本地化完整性
-bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 89.81%）
-swift run CellarUICheck     # 246 张界面快照对比（三风格矩阵）+ 本地化完整性门
+                            # 放电安全门控、校准调度、热保护配置、原生限充检测、MagSafe LED、本地化完整性
+bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 90.0%）
+swift run CellarUICheck     # 258 张界面快照对比（三风格矩阵）+ 本地化完整性门
 ```
 
 硬件在环验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）随版本发布执行，记录于 CHANGELOG。
@@ -169,6 +169,7 @@ swift run CellarUICheck     # 246 张界面快照对比（三风格矩阵）+ �
 - **Phase 5 · v1.6 自动化（0.11.0-alpha）**：充电日程（按星期/时段自动切换上限与放开充电，边沿触发 + 进窗快照恢复）+ `status --json` CLI 脚本化（已发布）——Shortcuts 集成因 ad-hoc 签名无 Team ID 的系统限制继续挂起
 - ✅ **Phase 5 · 风格 C 仪表盘工业（0.12.0-alpha）**：第三 UI 风格——仪表信号绿单信号色板 + 等宽数字（numericFontDesign token）+ 石墨/浅灰仪器面板；快照矩阵扩至三风格 234 张（已发布）
 - ✅ **Phase 5 · v1.7 原生限充协调（0.13.0-alpha）**：macOS 26.4 原生 Charge Limit 检测与共存——注册态检测（powerd ChargeCtrlPolicy 只读解析）、仪表板「系统限充生效中」注记与冲突横幅（系统设置深链）、校准/充满一次守卫（原生限充激活时拒绝并指引导出）、doctor 共存检查第十五项 + `status` 原生段；实测确认原生机制为 powerd 软件策略（非 SMC 固件键），执法路径零改动
+- ✅ **Phase 5 · v1.8 MagSafe LED 控制（0.14.0-alpha）**：接管 MagSafe 3 充电线插头指示灯（跟随系统/常灭/常绿/常琥珀）——daemon tick 纠偏 + 冲突锁存（MagHue 类工具检测）+ 退出交还系统；同批走查打磨（页脚/窗口标题/页面居中/通用页重建/统计口径）（已发布）
 - Phase 5+：Shortcuts 集成（需签名 Team ID）、场景联动、风格 C 打磨（刻度盘变体 / 网格底纹）
 
 完整路线图与设计文档见发布说明。

@@ -446,6 +446,24 @@ final class StatusController: ObservableObject {
         )
     }
 
+    // MARK: - Phase 5 v1.8 MagSafe LED
+
+    /// MagSafe LED 状态（nil = 旧 daemon → 通用页 LED 节整体隐藏/升级提示，
+    /// 照 fanStatus 版本门控先例；supported=false = 本机不支持或检测未决）。
+    var magSafeLedStatus: MagSafeLEDStatus? {
+        daemonStatus?.magSafeLed
+    }
+
+    /// LED 模式设置（照 setThermal runControl 先例；单键幂等——重试无害；
+    /// 值域白名单在 daemon 臂，App 侧只发合法枚举）。
+    func setMagSafeLed(_ mode: MagSafeLEDMode) {
+        runControl(
+            attempt: .setMagSafeLed(mode),
+            operation: { try DaemonXPCClient().setMagSafeLed(mode.rawValue) },
+            successFeedback: CellarL10n.s("status.summary.setMagSafeLed")
+        )
+    }
+
     // MARK: - Phase 5 v1.6 充电日程
 
     /// 充电日程状态（nil = 旧 daemon——daemonStatus.scheduleJson 缺席；新 daemon
@@ -534,6 +552,8 @@ final class StatusController: ObservableObject {
             setThermal(wire)
         case .setChargeSchedule(let json):
             applyChargeSchedule(json)
+        case .setMagSafeLed(let mode):
+            setMagSafeLed(mode)
         }
     }
 

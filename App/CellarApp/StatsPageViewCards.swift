@@ -106,9 +106,12 @@ extension StatsPageView {
 
     /// 全保留窗小时桶趋势；≥2 点才显示（StatsPageView 门控）——容量变化以周
     /// 计，窄窗内是一条无信息平线，不如如实隐藏。慢变量但断档判据与三张曲线
-    /// 求一致（整夜睡眠在 35 天窗内高频出现，跨连同样是断档造假）。
+    /// 求一致（整夜睡眠在 35 天窗内高频出现，跨连同样是断档造假）。副标题
+    /// 钉死口径（v1.8 走查批 F5：nominal/design——与仪表板「健康」同源，
+    /// MaxCapacity 键语义漂移不再直采）。
     var capacityCard: some View {
-        panel(title: CellarL10n.s("stats.chart.capacity")) {
+        panel(title: CellarL10n.s("stats.chart.capacity"),
+              subtitle: CellarL10n.s("stats.maxCapacity.caliber")) {
             Chart {
                 lineSeries(capacityRuns, yKey: "capacity")
             }

@@ -28,3 +28,4 @@ PLAN.md
 
 # ZCode local markers (commit-gate)
 .zcode/
+*.profraw

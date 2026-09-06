@@ -3,7 +3,8 @@ import CellarUI
 import SwiftUI
 
 /// 通用页（M3.5 工单 4：设置窗退役后并入主窗口）：GeneralSections（自设置窗
-/// 通用 Tab 提取的共享内容——登录项/注册态/通知授权/自动放电/风扇组）+
+/// 通用 Tab 提取的共享内容——登录项/注册态/通知授权/自动放电/风扇组；v1.8
+/// 走查批 F4 起整块卡片底自定义分节，组件内承载）+
 /// DaemonSectionView（面板的 daemon 安装/卸载区块直接实例化复用，App 层组件
 /// 同宿主可用）。页头样式照 DashboardView（页题 26pt secondaryText）。
 ///
@@ -23,6 +24,8 @@ struct GeneralPageView: View {
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
+            // 内容列 720 居中：外层撑满窗口宽，宽窗两侧均分留白（滚动条仍贴窗口右缘=macOS 惯例）。
+            .frame(maxWidth: .infinity)
         }
     }
 }

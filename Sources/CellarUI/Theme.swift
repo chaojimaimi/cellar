@@ -293,7 +293,7 @@ public struct CellarTheme: Sendable {
         case .statusHoldingExternal: return "外接 · 已停充"
         case .statusBattery: return "电池供电"
         case .actionFullOnce: return "充满一次：充电到 100% 后自动恢复限充"
-        case .quit: return "退出 Cellar"
+        case .quit: return "退出"
         case .tempLabel: return "温度"
         case .limitLabel: return "充电上限"
         case .powerFlowCharging: return "充电中"

@@ -34,6 +34,8 @@ struct CalibrationPageView: View {
             .padding(24)
             // 页面容器纪律：照统计页（maxWidth 720，宽窗不无限拉伸）。
             .frame(maxWidth: 720, alignment: .leading)
+            // 内容列 720 居中：外层撑满窗口宽，宽窗两侧均分留白（滚动条仍贴窗口右缘=macOS 惯例）。
+            .frame(maxWidth: .infinity)
         }
     }
 

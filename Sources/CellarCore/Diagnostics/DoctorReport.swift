@@ -127,6 +127,10 @@ public struct DoctorInputs: Sendable {
     public let nativeLimit: NativeLimitStatus?
     /// 检查 15 是否已探测（DoctorCommand 恒 true——plist 读失败亦为 known=false 形态）。
     public let nativeLimitProbeAttempted: Bool
+    /// 检查 16：MagSafe LED 状态（daemonStatus.magSafeLed 直通；nil = 未探测或旧 daemon）。
+    public let magSafeLed: MagSafeLEDStatus?
+    /// 检查 16 是否已探测（DoctorCommand 恒 true——未探测缺省形态零渲染）。
+    public let magSafeLedProbeAttempted: Bool
 
     public init(
         isRoot: Bool,
@@ -151,7 +155,9 @@ public struct DoctorInputs: Sendable {
         chargeSchedule: ChargeScheduleDoctorProbe? = nil,
         chargeScheduleProbeAttempted: Bool = false,
         nativeLimit: NativeLimitStatus? = nil,
-        nativeLimitProbeAttempted: Bool = false
+        nativeLimitProbeAttempted: Bool = false,
+        magSafeLed: MagSafeLEDStatus? = nil,
+        magSafeLedProbeAttempted: Bool = false
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -176,6 +182,8 @@ public struct DoctorInputs: Sendable {
         self.chargeScheduleProbeAttempted = chargeScheduleProbeAttempted
         self.nativeLimit = nativeLimit
         self.nativeLimitProbeAttempted = nativeLimitProbeAttempted
+        self.magSafeLed = magSafeLed
+        self.magSafeLedProbeAttempted = magSafeLedProbeAttempted
     }
 }
 
@@ -258,6 +266,10 @@ public enum DoctorReportGenerator {
         // Phase 5 v1.7 检查 15：原生限充共存（条件渲染同 9-14——attempted 缺省零渲染）。
         if let nativeCheck = nativeLimitCoexistence(inputs) {
             checks.append(nativeCheck)
+        }
+        // Phase 5 v1.8 检查 16：MagSafe 指示灯（条件渲染同 9-15——attempted 缺省零渲染）。
+        if let ledCheck = magSafeLedControl(inputs) {
+            checks.append(ledCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -585,6 +597,51 @@ public enum DoctorReportGenerator {
         return DoctorCheck(
             name: "原生限充共存", status: .info,
             detail: "原生限充 \(nativeLimit)% 生效中（Cellar daemon 未运行或未启用执法——等效原生值）"
+        )
+    }
+
+    // MARK: - 检查 16：MagSafe 指示灯（Phase 5 v1.8）
+
+    /// MagSafe LED 共存/执法检查（只读）：冲突锁存 → 警告（点名 MagHue 类工具）；
+    /// 回读与设定不符（非冲突态）→ 警告；跟随正常 → PASS；undecided/unsupported
+    /// / 旧 daemon 缺席 → INFO 不计失败（三态 wire 形态 supported Bool 合流——
+    /// 分流细节在 daemon 探测侧，此处按 wire 展示口径降级）。
+    private static func magSafeLedControl(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.magSafeLedProbeAttempted else { return nil }
+        guard let led = inputs.magSafeLed else {
+            return DoctorCheck(
+                name: "MagSafe 指示灯", status: .info,
+                detail: "旧版守护进程未上报 LED 状态（升级后可查看）"
+            )
+        }
+        guard led.supported else {
+            return DoctorCheck(
+                name: "MagSafe 指示灯", status: .info,
+                detail: "本机不支持或检测未决（无 MagSafe 充电口机型常态——通用页 LED 节隐藏）"
+            )
+        }
+        if led.conflict {
+            return DoctorCheck(
+                name: "MagSafe 指示灯", status: .warn,
+                detail: "检测到其他 LED 控制写入者（疑似 MagHue 类工具）：Cellar 已暂停纠偏，灯色以对方为准——二选一"
+            )
+        }
+        let modeText: String
+        switch led.mode {
+        case .off: modeText = "常灭"
+        case .green: modeText = "常绿"
+        case .amber: modeText = "常琥珀"
+        case .system, .none: modeText = "跟随系统"
+        }
+        if led.readbackState == .foreign {
+            return DoctorCheck(
+                name: "MagSafe 指示灯", status: .warn,
+                detail: "LED 设定 \(modeText) 但回读与设定不符（疑似外部写入）——下 tick 自动纠偏"
+            )
+        }
+        return DoctorCheck(
+            name: "MagSafe 指示灯", status: .pass,
+            detail: "LED \(modeText)，回读一致"
         )
     }
 }

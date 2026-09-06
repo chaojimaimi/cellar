@@ -5,7 +5,7 @@ import SwiftUI
 /// import CellarCore/CellarUI，App 层 openWindow/terminate 不可达，照
 /// CalibrationSectionView 先例由 App 侧薄包装桥接回调）：
 /// - 两链接布局（M3.5 用户决策「设置窗退役」：设置链接与其入口一并移除——
-///   左端「主窗口」一枚，右端「退出 Cellar」一枚，低角两端形态保持）；
+///   左端「主窗口」一枚，右端「退出」一枚，低角两端形态保持）；
 /// - 纯文字轻量钮（plain 样式、callout、无图标/底色/描边——「不突出」诉求）；
 /// - 常态 secondaryText、hover 强调 accent（两风格共有 token）；
 /// - 命中区 padding(4) + contentShape(Rectangle())——纯文字钮的点击/hover 命中

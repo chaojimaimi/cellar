@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -365,6 +365,11 @@ struct Main {
         // 缺席保持/校准与 fullOnce 守卫拒绝文案双口径/doctor 第 15 项分支——纯函数
         // 面，不触碰真实 plist）。
         try runNativeLimitWireDomainScenarios()
+        // Phase 5 v1.8 M1：MagSafe LED 模型层场景域（方案 §2 清单：validating/
+        // interpreting 白名单穷举/correctionDecision 矩阵穷举（门槛三行/计费
+        // gating/锁存自动解除防卡死）/wire 三态/policy 仅丢字段分层——纯函数面，
+        // 零 IOKit 代码，M1 只依赖读侧事实）。
+        try runMagSafeLEDDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

@@ -7,10 +7,11 @@ import CellarCore
 ///
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
-///   setCalibrationSchedule/setThermal/setChargeSchedule` 仅 **euid==0 或
-///   admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，UI 控制需要
-///   admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/无数据泄露），
-///   否则错误回包（ok=false + 原文）。
+///   setCalibrationSchedule/setThermal/setChargeSchedule/setMagSafeLed` 仅
+///   **euid==0 或 admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，
+///   UI 控制需要 admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/
+///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流），否则错误回包
+///   （ok=false + 原文）。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
 /// - 消息校验经 `DaemonXPC.validateRequest`（xpc_get_type 白名单）；非法回错误包，不崩溃。
@@ -263,6 +264,27 @@ final class XPCServer: @unchecked Sendable {
                 sendStatus(status, to: peer)
             } catch {
                 // ChargeScheduleSetError（长度/JSON/validated 三级）→ 原文回传（App 上屏）。
+                send(errorReply(String(describing: error)), to: peer.connection)
+            }
+
+        case MagSafeLED.commandName:
+            // Phase 5 v1.8：setMagSafeLed（鉴权门同变更命令；单 UINT64 键——类型
+            // 白名单已在 validateRequest，此处只查值域 0/1/3/4；语义决策在
+            // core.setMagSafeLed——persist/立即写/恢复红线全在 DaemonCore+MagSafeLED.swift）。
+            guard authorize(peer, operation: "setMagSafeLed") else { return }
+            guard let rawMode = request.magSafeLedMode else {
+                send(errorReply("setMagSafeLed 缺少模式参数"), to: peer.connection)
+                return
+            }
+            guard MagSafeLED.validating(UInt8(truncatingIfNeeded: rawMode)) != nil else {
+                send(errorReply("MagSafe LED 模式参数越界（0/1/3/4）"), to: peer.connection)
+                return
+            }
+            do {
+                let status = try core.setMagSafeLed(rawMode)
+                sendStatus(status, to: peer)
+            } catch {
+                // MagSafeSetError（越域防御面）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
 
