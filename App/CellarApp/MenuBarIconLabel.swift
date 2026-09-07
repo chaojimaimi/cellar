@@ -15,6 +15,10 @@ import SwiftUI
 struct MenuBarIconLabel: View {
     /// 低电量告警阈值（%）——填充与徽标转红的判定点（具名常量集中调整）。
     static let lowBatteryThresholdPercent = 15
+    /// 电池主符号字号（0.18.4 以来沿用基准）。
+    private static let glyphFont = Font.system(size: 13)
+    /// 状态徽标字号（闪电/插头同为加粗——0.18.6 统一，删逐态 weight 分叉）。
+    private static let badgeFont = Font.system(size: 8, weight: .bold)
     @ObservedObject var controller: StatusController
     /// 显示设置（电量百分比显隐；CellarApp label 闭包注入——组合根组合两观察源）。
     @ObservedObject var settings: DisplaySettingsController
@@ -40,8 +44,9 @@ struct MenuBarIconLabel: View {
     }
 
     /// alert 态非 template 着色增强（形状为主、颜色为辅——模板模式下 tint
-    /// 失效也不丢语义）；其余状态不加 foregroundStyle，保持 template 渲染
-    /// 跟随系统菜单栏着色。百分比文字各分支同附加（间距 3pt）。
+    /// 失效也不丢语义）；其余分支不加全局 foregroundStyle 保持 template 跟随
+    /// 系统菜单栏着色（电池分支内部的低电量红色分叉除外——0.18.6）。百分比
+    /// 文字各分支同附加（间距 3pt；电池分支 2pt——0.18.6 徽标平铺后收紧）。
     ///
     /// 0.18 T3 D-3c 三分支：alert 保留原符号（告警语义优先，电池形态不遮蔽
     /// 失联告警）→ 电池电量形态（开关开 ∧ percent 取值链有值）→ 现状 iconState
@@ -57,15 +62,42 @@ struct MenuBarIconLabel: View {
                 percentageText
             }
         } else if settings.menuBarBatteryIconVisible, let battery = batteryForm {
-            // 电池电量形态（0.18.4 第四轮渲染方案）：**双层 SF Symbols 裁剪**——
-            // 底层空腔轮廓（恒显示）+ 顶层满格电池按电量比例宽度裁剪。渲染路径
-            // 全 Image（0.17 以来在产机制，无 Canvas/variableValue 依赖——前者
-            // 菜单栏 label 不渲染、后者 template 单色下恒满格，两轮教训）。
-            HStack(spacing: 3) {
-                batteryGlyph(percent: battery.percent,
-                             charging: battery.charging,
-                             plugged: battery.plugged)
-                    .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+            // 电池电量形态（0.18.6 第五轮渲染方案）：**五档符号就近映射 + 徽标
+            // HStack 平铺**。渲染纪律（五轮真机实证收敛的硬边界）——菜单栏 label
+            // 管道只渲染裸 Image/Text + HStack 平铺：variableValue ✗（恒满格）、
+            // Canvas ✗（整只不渲染，0.18.4）、frame/clipped 裁剪层 ✗ 与
+            // ZStack/offset 覆盖徽标 ✗（0.18.5 真机截图实证：只有底层空腔轮廓
+            // 上屏）。因此电量填充走五档离散符号（连续填充无可用机制，NSImage
+            // 位图路线留待 spike 实证后再评估），徽标与文字全部同级平铺。
+            HStack(spacing: 2) {
+                if battery.percent < Self.lowBatteryThresholdPercent {
+                    // 低电量转红：.renderingMode(.original) + foregroundStyle
+                    // 照 alert 分支在产先例（彩色告警唯一实证路径）。renderingMode
+                    // 是 Image 专属修饰符——必须紧跟 Image 调用（font 之后即失配）。
+                    Image(systemName: quantizedBatterySymbolName(battery.percent))
+                        .renderingMode(.original)
+                        .font(Self.glyphFont)
+                        .foregroundStyle(Color.red)
+                        .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                    if let badge = statusBadgeName(charging: battery.charging,
+                                                   plugged: battery.plugged) {
+                        Image(systemName: badge)
+                            .renderingMode(.original)
+                            .font(Self.badgeFont)
+                            .foregroundStyle(Color.red)
+                            .accessibilityHidden(true)
+                    }
+                } else {
+                    Image(systemName: quantizedBatterySymbolName(battery.percent))
+                        .font(Self.glyphFont)
+                        .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                    if let badge = statusBadgeName(charging: battery.charging,
+                                                   plugged: battery.plugged) {
+                        Image(systemName: badge)
+                            .font(Self.badgeFont)
+                            .accessibilityHidden(true)
+                    }
+                }
                 percentageText
             }
         } else {
@@ -98,48 +130,37 @@ struct MenuBarIconLabel: View {
         return (percent, isCharging, plugged)
     }
 
-    /// 电池电量图标（0.18.4 第四轮：**双层 SF Symbols 裁剪**——替代两轮失败的
-    /// variableValue/Canvas 路线）：
-    /// - 底层 `battery.0percent` = 空腔轮廓（恒全宽显示）；
-    /// - 顶层 `battery.100percent`（满格填充）按电量比例宽度裁剪——「裁剪显示」
-    ///   是纯 SwiftUI frame/clipped 机制，不依赖 variable 渲染与 Canvas；
-    /// - 充电中叠 bolt 徽标；外接未充电（维持）叠 plug 徽标；电池供电无徽标；
-    /// - 低电量（< Self.lowBatteryThresholdPercent = 15 具名常量）转红
-    ///   （.renderingMode(.original) 照 alert 先例——彩色告警在产）；其余
-    ///   template 单色跟随菜单栏。
-    ///
-    /// 低电量阈值常量 `lowBatteryThresholdPercent = 15`（struct 顶部声明）。
-    ///
-    /// 尺寸基准：font 13pt 下 battery 符号总宽 ≈ 25pt、内腔填充区 ≈ 18pt
-    /// （估算值——真机走查校准点；偏大则填充早于 100% 顶满）。
-    @ViewBuilder
-    private func batteryGlyph(percent: Int, charging: Bool, plugged: Bool) -> some View {
-        let low = percent < Self.lowBatteryThresholdPercent
-        let bodyFont = Font.system(size: 13)
-        // 内腔填充裁剪宽（符号总宽 25 × 内腔占比 ~0.72 × 电量比）。
-        let fillW = 25.0 * 0.72 * Double(percent) / 100
-        ZStack(alignment: .leading) {
-            // 底：空腔轮廓（恒全宽）。
-            Image(systemName: "battery.0percent")
-                .font(bodyFont)
-            // 上：满格填充层，裁剪至电量比例宽度（leading 对齐显左侧部分）。
-            Image(systemName: "battery.100percent")
-                .font(bodyFont)
-                .frame(width: fillW, height: 15, alignment: .leading)
-                .clipped()
-            // 状态徽标（右上角；电池供电无）。
-            HStack {
-                Spacer(minLength: 0)
-                if charging {
-                    Image(systemName: "bolt.fill").font(.system(size: 8, weight: .bold))
-                } else if plugged {
-                    Image(systemName: "plug.fill").font(.system(size: 7, weight: .semibold))
-                }
-            }
-            .offset(x: 1, y: -5)
+    /// 电量 → 五档符号就近映射（阈值 12.5/37.5/62.5/87.5，最大误差 ±12.5%：
+    /// 80% → 75percent，不顶满也不落空）。全族 SF Symbols 1.0 起在档，五档
+    /// 名 macOS 26 本机 NSImage 探测实测全在位——静态表无需回退链。
+    private func quantizedBatterySymbolName(_ percent: Int) -> String {
+        switch percent {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
         }
-        .foregroundStyle(low ? Color.red : .primary)
-        .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+    }
+
+    /// 状态徽标符号名（nil = 无徽标）：充电中 → bolt.fill；外接未充电（维持/
+    /// 停充）→ powerplug.fill；电池供电无徽标。**plug.fill 在 macOS 26 不存在**
+    /// （0.18.5 徽标消失的第二根因——NSImage 探测 MISSING），改用实测在位的
+    /// powerplug.fill；符号经运行时存在性校验，缺失降级为无徽标不伤本体
+    /// （powerplug.slash 验收事故同款守卫）。
+    private func statusBadgeName(charging: Bool, plugged: Bool) -> String? {
+        let candidate: String?
+        if charging {
+            candidate = "bolt.fill"
+        } else if plugged {
+            candidate = "powerplug.fill"
+        } else {
+            candidate = nil
+        }
+        guard let candidate,
+              NSImage(systemSymbolName: candidate, accessibilityDescription: nil) != nil
+        else { return nil }
+        return candidate
     }
 
     /// 电量百分比（v1.10 M2）：开关开 ∧ daemonStatus.lastPercent 非 nil 才渲染

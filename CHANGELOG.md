@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.6-alpha] - 2026-09-07
+
+### Fixed
+
+- **菜单栏电池电量图标真机走查修复（第五轮，五档符号 + 徽标平铺）**：0.18.5 双层裁剪方案真机实证两层不渲染——只有底层空腔轮廓上屏（电量恒显空），顶层 `frame/clipped` 裁剪填充层与 `ZStack/offset` 覆盖定位徽标层均被菜单栏 label 渲染管道丢弃。现收敛为**五轮实证唯一可靠形态**：电量按就近映射取五档符号（`battery.0/25/50/75/100percent`，阈值 12.5/37.5/62.5/87.5，最大误差 ±12.5%，80% → 75percent 不顶满），充电闪电/外接维持插头徽标改 HStack 平铺同级排布。
+- **徽标符号修正**：0.18.5 使用的 `plug.fill` 在 macOS 26 不存在（`NSImage` 探测 MISSING，缺失符号渲染为空）——改用实测在位的 `powerplug.fill`；徽标符号经运行时存在性校验，缺失自动降级为无徽标（不伤电池本体显示）。
+
+### 备注
+
+- 菜单栏 label 渲染边界定版（五轮实证链）：裸 `Image(systemName:)`/`Text` + HStack 平铺 ✅；`variableValue`（恒满格）、`Canvas`（不渲染）、`frame/clipped` 裁剪层、`ZStack/offset` 覆盖层 ✗。连续比例填充在该管道无可用机制，NSImage 位图路线留待后续 spike 实证评估。
+- 低电量（< 15%）红色沿袭 alert 分支 `.renderingMode(.original)` + `foregroundStyle` 在产先例。
+- 仅菜单栏 label 改动，充电执法路径与 App 层组装零改动；既有快照零修改（App 层无 golden 覆盖，走真机走查门）。
+
+## [0.18.5-alpha] - 2026-09-07
+
+### Fixed
+
+- **菜单栏电池电量图标形态修复（第四轮，双层 SF Symbols 裁剪）**：0.18.4 的 Canvas 自绘在菜单栏 label 不渲染（图标不可见）——改用底层空腔轮廓 + 顶层满格电池按电量比例宽度裁剪的全 Image 路径。（后续 0.18.6 真机实证该裁剪层亦不被渲染，已再修正。）
+
+### Changed
+
+- 充电日程全天窗口收尾：守护进程侧拒绝文案同步（0.18.1 遗留）。
+- 退役 Canvas 版电池图形组件（MenuBatteryGlyph，被双层裁剪方案替代）。
+
+### 备注
+
+- 本版 CHANGELOG 条目在发布提交中遗漏，0.18.6 补记。
+
 ## [0.18.4-alpha] - 2026-09-07
 
 ### Fixed
