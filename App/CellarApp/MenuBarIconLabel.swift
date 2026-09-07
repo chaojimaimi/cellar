@@ -55,9 +55,21 @@ struct MenuBarIconLabel: View {
                 percentageText
             }
         } else if settings.menuBarBatteryIconVisible, let battery = batteryForm {
+            // 充电态 bolt 小徽标叠加（R2：bolt 单体变体不支持 variableValue 恒满格
+            // ——改连续填充电池 + 徽标承载充电语义；template 渲染下徽标同色）。
             HStack(spacing: 3) {
-                Image(systemName: battery.name, variableValue: battery.variableValue)
-                    .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                if battery.charging {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: battery.name, variableValue: battery.variableValue)
+                            .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .offset(x: 3, y: -2)
+                    }
+                } else {
+                    Image(systemName: battery.name, variableValue: battery.variableValue)
+                        .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                }
                 percentageText
             }
         } else {
@@ -75,7 +87,7 @@ struct MenuBarIconLabel: View {
     /// 循环不启动、batterySnapshot 冷启动恒 nil，daemonStatus 60s 轮询恒新鲜；
     /// 双 nil → nil 回退）；isCharging 取值链 `batterySnapshot?.isCharging ??
     /// powerOverride?.isCharging ?? false`（powerOverride 经 IOPS 恒新鲜）。
-    private var batteryForm: (name: String, variableValue: Double?)? {
+    private var batteryForm: (name: String, variableValue: Double?, charging: Bool)? {
         guard let percent = controller.batterySnapshot?.percent
                 ?? controller.daemonStatus?.lastPercent else { return nil }
         let isCharging = controller.batterySnapshot?.isCharging
@@ -83,23 +95,21 @@ struct MenuBarIconLabel: View {
         return resolvedBatterySymbol(percent: percent, isCharging: isCharging)
     }
 
-    /// 电池符号解析（三级回退纪律照 MainWindowView.resolvedBatterySymbol——该
-    /// 实现随 brandHeader 图标移除退役，本方法为其唯一承接点；候选表静态维护
+    /// 电池符号解析（三级回退纪律承接自 MainWindowView.resolvedBatterySymbol——
+    /// 该实现随 brandHeader 图标移除已退役、本方法为其唯一存续点；候选表静态维护
     /// 不可靠，主选不存在时 NSImage(systemSymbolName:) 探测降级，保证恒有可见
-    /// 字形）：主选（充电单体 bolt / 非充电连续 variableValue）→ 离散档位
-    /// battery.0/25/50/75/100 → 终极兜底 circle.dashed。
-    private func resolvedBatterySymbol(percent: Int, isCharging: Bool) -> (name: String, variableValue: Double?) {
+    /// 字形）：**全状态统一 `battery.100percent` + variableValue 连续
+    /// 填充**（0.18.3 修正——充电态原走 `battery.100percent.bolt` 单体变体，该
+    /// 符号不支持 variableValue 恒显满格，用户走查实测反馈；充电语义改由 bolt
+    /// 小徽标叠加承载，放电/维持自然由填充电量表达）→ 离散档位 battery.0/25/
+    /// 50/75/100（variableValue 不被档位符号消费，传 nil）→ 终极兜底 circle.dashed。
+    private func resolvedBatterySymbol(percent: Int, isCharging: Bool) -> (name: String, variableValue: Double?, charging: Bool) {
         func exists(_ symbol: String) -> Bool {
             NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
         }
-        if isCharging {
-            let bolt = "battery.100percent.bolt"
-            if exists(bolt) { return (bolt, nil) }
-        } else {
-            let variable = "battery.100percent"
-            if exists(variable) { return (variable, Double(percent) / 100) }
-        }
-        // 回退离散档位（variableValue 不被档位符号消费，传 nil）。
+        let variable = "battery.100percent"
+        if exists(variable) { return (variable, Double(percent) / 100, isCharging) }
+        // 回退离散档位。
         let discrete: String
         switch percent {
         case ..<13: discrete = "battery.0percent"
@@ -108,8 +118,8 @@ struct MenuBarIconLabel: View {
         case ..<88: discrete = "battery.75percent"
         default: discrete = "battery.100percent"
         }
-        if exists(discrete) { return (discrete, nil) }
-        return ("circle.dashed", nil)
+        if exists(discrete) { return (discrete, nil, isCharging) }
+        return ("circle.dashed", nil, false)
     }
 
     /// 电量百分比（v1.10 M2）：开关开 ∧ daemonStatus.lastPercent 非 nil 才渲染

@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.3-alpha] - 2026-09-07
+
+### Fixed
+
+- **菜单栏电池图标充电态恒满格修复**：充电中原走 `battery.100percent.bolt` 单体符号（该符号不支持电量填充，恒显满格）；现全状态统一为随实际电量连续填充的电池图形，充电语义改由叠加的小闪电徽标承载（放电/维持由填充电量自然表达）。
+- **系统负载显示语义修正**：外接供电时「系统负载」原直显遥测 `SystemLoad` 字段——实测该字段语义与「系统负载消耗」不符（静息显示 86.9W 虚高，且与适配器输入/电池充电功率违反守恒）；现改为**守恒推导值**（适配器输入 − 电池充电功率，两字段均已物理验证），静息合理区间 ~20-30W。
+
+### 备注
+
+- `SystemLoad` 字段真实语义登记 v1.12 考证（spike 控制变量实测）。
+- 功率闭环自检口径更新：适配器输入 ≈ 系统负载（推导） + 电池充电功率。
+
 ## [0.18.2-alpha] - 2026-09-07
 
 ### Fixed
