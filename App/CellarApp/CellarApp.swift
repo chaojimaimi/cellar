@@ -19,11 +19,15 @@ struct CellarApp: App {
     // ThemeProvider 全树重算（加载完成前呈现 .native，闪变已登记为已知态）。
     @StateObject private var styleController = StyleController(store: CellarApp.sharedConfigStore)
     // v1.11 M2 T2：显示设置控制器（AppConfig 第四写者；自 MenuBarSettingsController
-    // 改名扩位——menuBarPercentageVisible / windowBatteryIconVisible 双字段统一宿主）
+    // 改名扩位——menuBarPercentageVisible / menuBarBatteryIconVisible 双字段统一宿主）
     // ——load 在自身 init 自标定（App.init 早期访问 @StateObject 临时实例陷阱，
     // StyleController 同款）；MenuBarExtra label 闭包 + 面板页脚 Toggle + 主窗口
     // 通用页 Toggle 多消费源。
     @StateObject private var displaySettings = DisplaySettingsController(store: CellarApp.sharedConfigStore)
+    /// 0.18 T5 D-5a：CPU 表面温度/双风扇采样器（panelVisible 门控经
+    /// StatusController.setPanelVisible 转发——弱引用回填点在 PanelView.panelAppeared；
+    /// @Published 直注 PanelView，不经 statusController 传播的 MenuBarIconLabel 教训）。
+    @StateObject private var cpuFanMonitor = CpuFanMonitor()
     /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
     private let notifications = NotificationService()
     /// Phase 5 v1.3 统计采样器：非可观察（视图不直接读），60s 常驻采样循环——
@@ -67,6 +71,9 @@ struct CellarApp: App {
                     .environmentObject(loginItems)
                     .environmentObject(onboarding)
                     .environmentObject(displaySettings)
+                    // 0.18 T5：面板观察增强采样器注入（@Published 直注——缺注入
+                    // 运行时 crash，照 displaySettings 既有纪律）。
+                    .environmentObject(cpuFanMonitor)
             }
         } label: {
             // v1.10 M2：双观察源直注（StatusController 图标态 + DisplaySettingsController

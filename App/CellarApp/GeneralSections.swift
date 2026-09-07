@@ -86,11 +86,13 @@ struct GeneralSections: View {
             ))
             .disabled(loginItems.busy)
 
-            // v1.11 T2：标题栏电池图标显隐（默认关——开即品牌区追加随电量图标，
-            // 关即回现状；绑定形态照 launchAtLogin 行先例，loaded 前禁用防半程回写）。
-            Toggle(CellarL10n.s("settings.windowBatteryIcon"), isOn: Binding(
-                get: { displaySettings.windowBatteryIconVisible },
-                set: { _ in displaySettings.toggleWindowBatteryIcon() }
+            // 0.18 T3 D-3d：菜单栏电池电量图标显隐（v1.11「标题栏」误解返工——
+            // 开关迁菜单栏形态门控；默认关——开即菜单栏图标切「电池电量」形态，
+            // 关即回现状状态符号；绑定形态照 launchAtLogin 行先例，loaded 前
+            // 禁用防半程回写）。
+            Toggle(CellarL10n.s("settings.menuBarBatteryIcon"), isOn: Binding(
+                get: { displaySettings.menuBarBatteryIconVisible },
+                set: { _ in displaySettings.toggleMenuBarBatteryIcon() }
             ))
             .disabled(!displaySettings.loaded)
 

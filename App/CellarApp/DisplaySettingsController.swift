@@ -5,7 +5,7 @@ import os
 
 /// 显示设置控制器（v1.11 M2 T2 自 MenuBarSettingsController 改名扩位——语义从
 /// 「菜单栏显示」扩为「显示偏好」，双字段 menuBarPercentageVisible /
-/// windowBatteryIconVisible 统一宿主；照 StyleController 同构：AppConfig 第四写者）：
+/// menuBarBatteryIconVisible 统一宿主；照 StyleController 同构：AppConfig 第四写者）：
 /// 启动自标定 load 持久化偏好 → @Published 字段驱动消费面（MenuBarIconLabel /
 /// 面板页脚 Toggle / 主窗口通用页 Toggle）重渲染。加载完成前呈现默认关——加载期
 /// 闪变为登记的已知态（照 StyleController）。
@@ -22,8 +22,9 @@ import os
 final class DisplaySettingsController: ObservableObject {
     /// 菜单栏电量百分比显隐（nil = 未设置 = 关；本文件内自写，可用 private(set)）。
     @Published private(set) var percentageVisible = false
-    /// 标题栏电池图标显隐（v1.11 T2；nil = 未设置 = 关——主窗口品牌区渲染门控）。
-    @Published private(set) var windowBatteryIconVisible = false
+    /// 菜单栏电池电量图标显隐（0.18 T3 D-3b 自 windowBatteryIconVisible 迁移；
+    /// nil = 未设置 = 关——MenuBarIconLabel 电池形态渲染门控）。
+    @Published private(set) var menuBarBatteryIconVisible = false
     /// 持久化偏好是否已加载（Toggle 在 loaded 前禁用，防半程态回写）。
     @Published private(set) var loaded = false
 
@@ -42,7 +43,7 @@ final class DisplaySettingsController: ObservableObject {
         Task {
             let config = await store.load()
             self.percentageVisible = config.menuBarPercentageVisible == true
-            self.windowBatteryIconVisible = config.windowBatteryIconVisible == true
+            self.menuBarBatteryIconVisible = config.menuBarBatteryIconVisible == true
             self.loaded = true
         }
     }
@@ -70,21 +71,21 @@ final class DisplaySettingsController: ObservableObject {
         }
     }
 
-    /// 切换标题栏电池图标显隐（v1.11 T2；主窗口通用页 Toggle 唯一入口）——
-    /// toggle() 同构：内存先行即时生效 → 原子 update 只写 windowBatteryIconVisible
+    /// 切换菜单栏电池电量图标显隐（0.18 T3 D-3b；主窗口通用页 Toggle 唯一入口）——
+    /// toggle() 同构：内存先行即时生效 → 原子 update 只写 menuBarBatteryIconVisible
     /// 本字段；写失败回滚内存态并 os_log（不静默）。
-    func toggleWindowBatteryIcon() {
+    func toggleMenuBarBatteryIcon() {
         guard loaded else { return }
-        let previous = windowBatteryIconVisible
-        windowBatteryIconVisible.toggle()
-        let target = windowBatteryIconVisible   // 跨 actor 值捕获（@Sendable 闭包不触碰 MainActor self）。
+        let previous = menuBarBatteryIconVisible
+        menuBarBatteryIconVisible.toggle()
+        let target = menuBarBatteryIconVisible   // 跨 actor 值捕获（@Sendable 闭包不触碰 MainActor self）。
         Task { [store, weak self] in
             do {
-                _ = try await store.update { $0.windowBatteryIconVisible = target }
+                _ = try await store.update { $0.menuBarBatteryIconVisible = target }
             } catch {
-                guard let self, self.windowBatteryIconVisible == target else { return }
-                self.windowBatteryIconVisible = previous
-                self.log.error("标题栏电池图标开关写盘失败：\(error.localizedDescription, privacy: .public)")
+                guard let self, self.menuBarBatteryIconVisible == target else { return }
+                self.menuBarBatteryIconVisible = previous
+                self.log.error("菜单栏电池图标开关写盘失败：\(error.localizedDescription, privacy: .public)")
             }
         }
     }

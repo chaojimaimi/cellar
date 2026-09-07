@@ -1378,6 +1378,23 @@
         }
       }
     },
+    "dashboard.panel.flow.subtitle.live": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live telemetry · ~30s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时遥测 · ~30s"
+          }
+        }
+      }
+    },
     "dashboard.panel.gauge.subtitle": {
       "extractionState": "manual",
       "localizations": {
@@ -1843,13 +1860,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Boosts the fan automatically when battery temperature exceeds the threshold"
+            "value": "Cool fans automatically when temperature exceeds threshold"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "电池温度超过阈值时自动提速风扇降温"
+            "value": "温度超过阈值时自动提速风扇降温"
           }
         }
       }
@@ -4540,6 +4557,23 @@
         }
       }
     },
+    "settings.menuBarBatteryIcon": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show battery level icon in menu bar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "菜单栏显示电池电量图标"
+          }
+        }
+      }
+    },
     "settings.notifAuthorized": {
       "extractionState": "manual",
       "localizations": {
@@ -4931,19 +4965,19 @@
         }
       }
     },
-    "settings.windowBatteryIcon": {
+    "stats.accumulating": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Show battery icon in the title bar"
+            "value": "Accumulating data (%lld days)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "标题栏显示电池图标"
+            "value": "数据累积中（%lld 天）"
           }
         }
       }
@@ -5148,23 +5182,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "7 天"
-          }
-        }
-      }
-    },
-    "stats.since": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Since %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "记录自 %@"
           }
         }
       }
@@ -5577,6 +5594,23 @@
         }
       }
     },
+    "statusline.cpuSkin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU surface"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU 表面"
+          }
+        }
+      }
+    },
     "statusline.current": {
       "extractionState": "manual",
       "localizations": {
@@ -5607,6 +5641,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "循环"
+          }
+        }
+      }
+    },
+    "statusline.fan": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fan"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "风扇"
+          }
+        }
+      }
+    },
+    "statusline.fanL": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fan L"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "风扇 L"
+          }
+        }
+      }
+    },
+    "statusline.fanR": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fan R"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "风扇 R"
           }
         }
       }

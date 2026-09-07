@@ -29,6 +29,9 @@ struct PanelView: View {
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var loginItems: LoginItemController
     @EnvironmentObject private var onboarding: OnboardingController
+    /// CPU 表面温度/双风扇采样器（0.18 T5 D-5a；组合根 EnvironmentObject 直注
+    /// ——@Published 不经 statusController 传播的 MenuBarIconLabel 教训）。
+    @EnvironmentObject private var cpuFanMonitor: CpuFanMonitor
     @Environment(\.cellarTheme) private var theme
 
     var body: some View {
@@ -90,9 +93,14 @@ struct PanelView: View {
 
             // WP1：温度暂停注词接线——daemonStatus 与 batterySnapshot 在本组装点
             // 交汇（方案 §2.4 数据流：App 侧直读遥测 + daemon 轮询两源并存）。
+            // 0.18 T5 D-5c：第三行观察增强——CPU 表面温度 + 双风扇实时转速
+            // （CpuFanMonitor 30s 采样；nil 格隐藏，单风扇合并格由组件内收敛）。
             StatusLineView(
                 snapshot: statusController.batterySnapshot,
-                tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true
+                tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true,
+                cpuSkinTempC: cpuFanMonitor.cpuSkinTempC,
+                fanLRPM: cpuFanMonitor.fanRPMs?.first,
+                fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil }
             )
 
             // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
@@ -150,6 +158,10 @@ struct PanelView: View {
         // 注册态新鲜度（评审 P2-1）：CLI 卸载（面板迁移指引就是让用户跑
         // sudo cellar uninstall）后重开面板必须重查，否则呈现误导性失联态。
         installer.refresh()
+        // 0.18 T5：采样器弱引用回填（环境注入的真身互认，幂等）——App.init 早期
+        // @StateObject 临时实例陷阱使 init 装配不可行，本处为安全装配点
+        // （StatusController.cpuFanMonitor 注记）。
+        statusController.cpuFanMonitor = cpuFanMonitor
         // Phase 5 v1.2 §2.3：多表面仲裁 API（面板表面；换档语义与旧单表面
         // 采样 API 完全等价——任一表面可见 → 1s，全无 → 60s/遥测停）。
         statusController.setPanelVisible(true)

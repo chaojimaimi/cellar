@@ -146,11 +146,11 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 530 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
+swift run CellarCoreCheck   # 536 个场景、数百项检查：决策矩阵穷举（700+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
                             # 放电安全门控、校准调度、热保护配置、原生限充检测、MagSafe LED、本地化完整性
-bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 90.20%）
-swift run CellarUICheck     # 282 张界面快照对比（三风格矩阵）+ 本地化完整性门
+bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 90.31%）
+swift run CellarUICheck     # 288 张界面快照对比（三风格矩阵）+ 本地化完整性门
 ```
 
 硬件在环验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）随版本发布执行，记录于 CHANGELOG。

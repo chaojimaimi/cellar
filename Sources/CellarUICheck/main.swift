@@ -48,7 +48,9 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 v1.5 自 132 扩 140——充电热保护卡 2 态 8 新增；
 // Phase 5 v1.6 自 140 扩 156——充电日程卡 3 态 12 新增 + 日程编辑器 1 态 4 新增；
 // Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
-// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增）
+// Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增；
+// 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
+// CPU 表面温度 + 双风扇转速三格，既有 StatusLine 构造零改动缺席路径零 diff））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -161,7 +163,9 @@ private func wrap(
 // Phase 5 v1.9 自 258 扩 270——hero 仪表 + 网格底纹容器 2 态 12 新增；
 // Phase 5 v1.10 自 270 扩 276——MagSafe LED 轻提示态 6 新增；
 // Phase 5 v1.11 自 276 扩 282——状态行遥测态 6 新增（StatusLine_telemetry：
-// StatusLineView 携带 PowerTelemetryData 样例，适配器段实时+额定复合形态））
+// StatusLineView 携带 PowerTelemetryData 样例，适配器段实时+额定复合形态）；
+// 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
+// CPU 表面温度 + 双风扇转速三格，SMC 实测活值样例钉死））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -295,6 +299,26 @@ private func buildCases() -> [SnapshotCase] {
                 AnyView(wrap(style, scheme) {
                     StatusLineView(snapshot: telemetryCharging)
                         .frame(width: 304, alignment: .leading)
+                })
+            })
+
+            // 0.18 T5 第三行可见态 1 case ×3 风格 ×2 外观 = 6 张（282 → 288，全部
+            // 全新文件——新增非扰动）：第三行三格可见态（CPU 表面 47.1°C ｜ 风扇 L
+            // 1344 rpm ｜ 风扇 R 1522 rpm——SMC 实测活值形态钉死，demo 形态 A 三格）。
+            // ⚠️ 既有 StatusLine case 构造零改动（新参数默认 nil → 缺席路径输出
+            // 逐字节同现状，regen 零 diff 即背书）；case 名用 thirdRow 后缀避开
+            // 既有 StatusLine_telemetry 前缀防覆写。--regen --only=StatusLine_thirdRow
+            // 只跑本组。
+            cases.append(SnapshotCase(
+                name: "StatusLine_thirdRow_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(
+                        snapshot: charging, tempPauseActive: false,
+                        cpuSkinTempC: 47.1, fanLRPM: 1344, fanRRPM: 1522
+                    )
+                    .frame(width: 304, alignment: .leading)
                 })
             })
 

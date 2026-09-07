@@ -83,13 +83,19 @@ struct StatsPageView: View {
     // 曲线数据 @State 跨文件消费（StatsPageViewCards 同 target 扩展）——DashboardView
     // 控制器 internal 同款先例；写入只在下方 refresh（@MainActor）。
     @State var buckets: [StatsBucket] = []
-    /// 数据起始（保留窗内首桶时刻，页头「记录自」徽章；nil = 库空）。
+    /// 数据起始（保留窗内首桶时刻，数据累积空区提示口径；nil = 库空）。
     @State private var firstSampleDate: Date?
     /// 最大容量趋势序列（≥2 点才显示卡片——数据积累如实，R-5）。
     @State var capacityPoints: [CapacityPoint] = []
     /// 当前范围（断档判定需读 bucketSeconds——StatsPageViewCards 投影消费）。
     @State var rangeWindow: RangeWindow = .hours24
     @State private var isLoading = true
+    // 0.18 T2 D-2a：四卡 hover 游标态（各卡独立——共享会跨卡串显；跨文件
+    // internal 同 buckets 先例，StatsPageViewCards 消费）。
+    @State var batteryHover: StatsHoverPoint?
+    @State var temperatureHover: StatsHoverPoint?
+    @State var powerHover: StatsHoverPoint?
+    @State var capacityHover: StatsHoverPoint?
 
     var body: some View {
         ScrollView {
@@ -160,19 +166,8 @@ struct StatsPageView: View {
             Text(CellarL10n.s("stats.title"))
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(theme.secondaryText)
-            sinceBadge
             Spacer()
         }
-    }
-
-    /// 数据起始徽章（「记录自 M月d日」chip；库空 → 「采样累积中」）。
-    private var sinceBadge: some View {
-        chip(sinceBadgeText)
-    }
-
-    private var sinceBadgeText: String {
-        guard let firstSampleDate else { return CellarL10n.s("stats.empty.title") }
-        return CellarL10n.s("stats.since", firstSampleDate.formatted(.dateTime.month().day()))
     }
 
     /// 范围 chips（照 DashboardView chip 形态：选中态 accent 微底 + accent 字）。
@@ -205,14 +200,28 @@ struct StatsPageView: View {
         }
     }
 
-    /// 普通 chip（secondaryText 字 + 描边胶囊，照 DashboardView lowPowerChip）。
-    private func chip(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 11))
-            .foregroundStyle(theme.secondaryText)
-            .padding(.vertical, 3)
-            .padding(.horizontal, 10)
-            .overlay(Capsule().strokeBorder(theme.secondaryText.opacity(0.45)))
+    // MARK: - 数据累积空区提示（0.18 T2 D-2d：「记录自」徽章退役后的信息下沉）
+
+    /// 数据量 < 所选窗 → 「数据累积中（N 天）」提示文本：N = 数据起始到现在的
+    /// 天数（向上取整，首日也记 1 天）；数据已填满所选窗 → nil 不渲染；库空 →
+    /// nil（空态卡已另呈「采样累积中」，键保留复用）。
+    var accumulatingNoteText: String? {
+        guard let start = firstSampleDate else { return nil }
+        let span = Date().timeIntervalSince(start)
+        guard span < rangeWindow.lookbackSeconds else { return nil }
+        return CellarL10n.s("stats.accumulating", max(1, Int(ceil(span / 86_400))))
+    }
+
+    /// 曲线卡内空区注记（三张随所选窗的曲线卡消费；容量卡不接——其 X 域恒全
+    /// 保留窗，与所选窗口径无关，方案 D-2d「曲线卡」语汇 = 三张 range 卡）。
+    var accumulatingNote: some View {
+        Group {
+            if let accumulatingNoteText {
+                Text(accumulatingNoteText)
+                    .font(.caption2)
+                    .foregroundStyle(theme.tertiaryText)
+            }
+        }
     }
 
     // MARK: - 面板容器（照仪表板 panel 形态；曲线卡消费，StatsPageViewCards）

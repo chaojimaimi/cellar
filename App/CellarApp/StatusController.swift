@@ -43,6 +43,13 @@ final class StatusController: ObservableObject {
     @Published private(set) var powerOverride: PowerOverride?
     /// IOPS 插拔电订阅（create-rule 所有权与释放见 PowerSourceMonitor）。
     private let powerSourceMonitor = PowerSourceMonitor()
+    /// App 侧 CPU 表面温度/双风扇采样器（0.18 T5 D-5a）：真身由组合根 @StateObject
+    /// 持有并直注 PanelView（@Published 不经本类传播——MenuBarIconLabel 双观察源
+    /// 教训）；本类仅持弱引用转发面板可见性门控（panelVisible 是面板表面私有态，
+    /// 转发点唯一 = setPanelVisible）。⚠️ 回填点在 PanelView.panelAppeared——
+    /// App.init 早期访问 @StateObject 拿到的是被 SwiftUI 丢弃的临时实例
+    /// （deinit 尸体链实锤），环境注入的真身互认（幂等）是安全装配点。
+    weak var cpuFanMonitor: CpuFanMonitor?
 
     /// 通知事件出口（CellarApp 注入 NotificationService.deliver；§2.3 单一入口投递）。
     /// WP2'：载荷附带 lastPercent——放电终态文案「当前电量 N%」由 App 按
@@ -127,6 +134,9 @@ final class StatusController: ObservableObject {
     /// 可接受行为（R1 P3 注明，不引入 scenePhase 追踪）。
     func setPanelVisible(_ visible: Bool) {
         panelVisible = visible
+        // 0.18 T5：面板观察增强采样门控转发（CPU 表面温度/风扇转速仅面板消费
+        // ——主窗可见不采样；弱引用 nil = 尚未回填，静默跳过）。
+        cpuFanMonitor?.setPanelVisible(visible)
         refreshCadence()
     }
 

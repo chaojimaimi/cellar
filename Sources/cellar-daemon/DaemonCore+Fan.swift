@@ -60,9 +60,8 @@ extension DaemonCore {
     /// CPU 表面温度源惰性探测（D-3c）：首次访问执行，结论 sticky 于 FanRuntimeState
     /// （supported nil = 未探——smcClient 缺席窗口不置 sticky，照 probeFanFactsLocked
     /// 「置 nil 不 sticky、下轮重探」先例，区分「未探」与「探而不中」；true/false =
-    /// 探测结论，进程内不回落）。试探 Ts 键序列 Ts0C→Ts0D→Ts0E→Ts0P：type **trim
-    /// 后 == "flt"**（实测 dataType 为 "flt " 尾随空格——勿裸 ==，照 probeFanFacts
-    /// trim== 先例）∧ size==4 ∧ 读值 ∈ 10...90°C 合理 → 首个命中记 cpuSkinKey；
+    /// 探测结论，进程内不回落）。探测序列/值域门全权委托共享 CpuSkinSensor.probe
+    /// （0.18 T5 D-5b 共享化——与 App 层单一真相，R-4）；首个命中记 cpuSkinKey，
     /// 全不命中 → supported=false（setFan 选 cpuSkin 前置拒绝 fail-visible）。
     /// 静默设计：本函数被锁内组装路径（buildStatusLocked 全调用面）调用，无 emit
     /// 面——探测结论经 FanStatus.cpuSkinSupported / doctor / setFan 拒绝文案三面
@@ -70,18 +69,12 @@ extension DaemonCore {
     func ensureCpuSkinProbeLocked() {
         guard fanState.cpuSkinSupported == nil else { return }
         guard let client = smcClient else { return }
-        for key in ["Ts0C", "Ts0D", "Ts0E", "Ts0P"] {
-            guard let info = try? client.keyInfo(key),
-                  info.type.trimmingCharacters(in: .whitespaces) == "flt",
-                  info.size == 4,
-                  let bytes = try? client.read(key),
-                  let valueC = FanSMC.decodeTemperatureC(bytes),
-                  valueC.isFinite, valueC >= 10, valueC <= 90 else { continue }
+        if let key = CpuSkinSensor.probe(connection: client) {
             fanState.cpuSkinKey = key
             fanState.cpuSkinSupported = true
-            return
+        } else {
+            fanState.cpuSkinSupported = false
         }
-        fanState.cpuSkinSupported = false
     }
 
     // MARK: - setFan XPC（方案 §8）
@@ -202,11 +195,14 @@ extension DaemonCore {
                 guard let client = smcClient, let key = fanState.cpuSkinKey else {
                     throw SMCError.keyNotFound(fanState.cpuSkinKey ?? "Ts0C")
                 }
-                let bytes = try client.read(key)
-                guard let valueC = FanSMC.decodeTemperatureC(bytes), valueC.isFinite else {
-                    throw SMCError.malformedReply(key: key, expected: 4, actual: bytes.count)
+                // 读值同换共享 CpuSkinSensor.read（0.18 T5 D-5b；°C 口径与 battery
+                // 路径同单位）。共享 read 非抛（nil = 键缺席/传输故障/尺寸≠4）→
+                // malformedReply 抛入统一 catch——本 catch 仅连续失败计数降级不分型，
+                // 采样失败语义与旧 try/decode 路径等价（字节数不可知，actual 记 0）。
+                guard let valueC = CpuSkinSensor.read(connection: client, key: key), valueC.isFinite else {
+                    throw SMCError.malformedReply(key: key, expected: 4, actual: 0)
                 }
-                temperatureC = Double(valueC)
+                temperatureC = valueC
                 fanState.lastCpuSkinTempC = temperatureC
             }
             fanState.lastTemperatureC = temperatureC

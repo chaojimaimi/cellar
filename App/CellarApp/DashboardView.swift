@@ -99,9 +99,7 @@ struct DashboardView: View {
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 9)
-        .background {
-            if let panelBackground = theme.panelBackground { panelBackground }
-        }
+        .background { if let pb = theme.panelBackground { pb } }
         .overlay(Capsule().strokeBorder(theme.secondaryText.opacity(0.45)))
     }
 
@@ -186,7 +184,8 @@ struct DashboardView: View {
     private var hero: some View {
         HStack(spacing: 14) {
             panel(title: CellarL10n.s("dashboard.panel.flow"),
-                  subtitle: CellarL10n.s("dashboard.panel.flow.subtitle")) {
+                  // 副题随遥测：在场 → 实时遥测注记；缺席 → V×I 口径原键（旧机型仍准）。
+                  subtitle: CellarL10n.s(snapshot?.telemetry != nil ? "dashboard.panel.flow.subtitle.live" : "dashboard.panel.flow.subtitle")) {
                 PowerFlowDiagramView(
                     state: diagramState,
                     batteryPercent: snapshot?.percent,

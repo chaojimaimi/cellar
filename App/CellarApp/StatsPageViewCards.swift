@@ -15,6 +15,26 @@ import SwiftUI
 
 extension StatsPageView {
 
+    /// hover 时间格式随窗（code-review P3-1：24h 用 HH:mm，7d/30d 跨天需日期——
+    /// 与 X 轴 label 口径一致；独立计算属性避免三元嵌进 Chart 大表达式致
+    /// type-check 超时）。
+    var hoverTimeFormat: (Date) -> String {
+        if rangeWindow == .hours24 { return StatsChartHoverFormat.hourMinute }
+        return StatsChartHoverFormat.dayTime
+    }
+
+    /// 电量卡 hover 游标（含波动带上下界）——自 batteryChart 大表达式抽出。
+    @ChartContentBuilder
+    private var batteryHoverMark: some ChartContent {
+        if let batteryHover {
+            StatsChartHover.ruleMark(
+                for: batteryHover, theme: theme,
+                value: StatsChartHoverFormat.percent,
+                time: hoverTimeFormat
+            )
+        }
+    }
+
     // MARK: - 电量卡（§3.1 曲线 1）
 
     /// 电量卡：波动带（成对 min/max 的 AreaMark，accent 10% 透明度）垫底 +
@@ -23,6 +43,8 @@ extension StatsPageView {
         panel(title: CellarL10n.s("stats.chart.percent"),
               subtitle: CellarL10n.s("stats.chart.percent.subtitle")) {
             batteryChart
+            // 0.18 D-2d：「记录自」徽章退役——数据未填满所选窗时卡内下沉提示。
+            accumulatingNote
         }
     }
 
@@ -52,14 +74,25 @@ extension StatsPageView {
                 }
                 .foregroundStyle(lineColor(for: segment.state))
             }
+            // 0.18 T2 D-2a：hover 竖游标 + 值标签（含波动带上下界；nil = 无 hover）。
+            // hover mark 抽独立 @ChartContentBuilder 方法——给 batteryChart 大
+            // 表达式瘦身（type-check 超时修复，code-review 后补）。
+            batteryHoverMark
         }
         .chartYScale(domain: 0...100)
-        .chartAxisTheme(theme)
+        .chartAxisTheme(theme, xStride: rangeWindow.xAxisStride.component,
+                        xStrideCount: rangeWindow.xAxisStride.count)
         .chartYAxisLabel {
             Text(CellarL10n.s("stats.unit.percent"))
                 .font(.system(size: 10))
                 .foregroundStyle(theme.tertiaryText)
         }
+        // hover 手势（0.18 T2 D-2a）：断档阈值 = 桶径一半（StatsChartHover 注记）。
+        .statsChartHover(
+            points: batteryHoverPoints,
+            bucketSeconds: Double(rangeWindow.bucketSeconds),
+            hover: $batteryHover
+        )
         .frame(height: 180)
     }
 
@@ -69,15 +102,31 @@ extension StatsPageView {
         panel(title: CellarL10n.s("stats.chart.temp")) {
             Chart {
                 lineSeries(temperatureRuns, yKey: "temp")
+                // 0.18 T2 D-2a：hover 竖游标 + 值标签（nil = 无 hover）。
+                if let temperatureHover {
+                    StatsChartHover.ruleMark(
+                        for: temperatureHover, theme: theme,
+                        value: StatsChartHoverFormat.celsius,
+                        time: hoverTimeFormat
+                    )
+                }
             }
             .foregroundStyle(theme.accent)
-            .chartAxisTheme(theme)
+            .chartAxisTheme(theme, xStride: rangeWindow.xAxisStride.component,
+                            xStrideCount: rangeWindow.xAxisStride.count)
             .chartYAxisLabel {
                 Text(CellarL10n.s("stats.unit.celsius"))
                     .font(.system(size: 10))
                     .foregroundStyle(theme.tertiaryText)
             }
+            .statsChartHover(
+                points: hoverPoints(temperatureRuns),
+                bucketSeconds: Double(rangeWindow.bucketSeconds),
+                hover: $temperatureHover
+            )
             .frame(height: 180)
+            // 0.18 D-2d：「记录自」徽章退役——数据未填满所选窗时卡内下沉提示。
+            accumulatingNote
         }
     }
 
@@ -90,15 +139,31 @@ extension StatsPageView {
               subtitle: CellarL10n.s("stats.chart.power.subtitle")) {
             Chart {
                 lineSeries(powerRuns, yKey: "power")
+                // 0.18 T2 D-2a：hover 竖游标 + 值标签（nil = 无 hover）。
+                if let powerHover {
+                    StatsChartHover.ruleMark(
+                        for: powerHover, theme: theme,
+                        value: StatsChartHoverFormat.watt,
+                        time: StatsChartHoverFormat.dayTime
+                    )
+                }
             }
             .foregroundStyle(theme.accent)
-            .chartAxisTheme(theme)
+            .chartAxisTheme(theme, xStride: rangeWindow.xAxisStride.component,
+                            xStrideCount: rangeWindow.xAxisStride.count)
             .chartYAxisLabel {
                 Text(CellarL10n.s("stats.unit.watt"))
                     .font(.system(size: 10))
                     .foregroundStyle(theme.tertiaryText)
             }
+            .statsChartHover(
+                points: hoverPoints(powerRuns),
+                bucketSeconds: Double(rangeWindow.bucketSeconds),
+                hover: $powerHover
+            )
             .frame(height: 180)
+            // 0.18 D-2d：「记录自」徽章退役——数据未填满所选窗时卡内下沉提示。
+            accumulatingNote
         }
     }
 
@@ -114,19 +179,50 @@ extension StatsPageView {
               subtitle: CellarL10n.s("stats.maxCapacity.caliber")) {
             Chart {
                 lineSeries(capacityRuns, yKey: "capacity")
+                // 0.18 T2 D-2a：hover 竖游标 + 值标签（nil = 无 hover）。
+                if let capacityHover {
+                    StatsChartHover.ruleMark(
+                        for: capacityHover, theme: theme,
+                        value: StatsChartHoverFormat.healthPercent,
+                        time: StatsChartHoverFormat.dayTime
+                    )
+                }
             }
             .foregroundStyle(theme.accent)
-            .chartAxisTheme(theme)
+            // X 轴恒全保留窗单列步长（D-2b：35d 窗 7d 步长 ~5 刻度——不随三窗切换）。
+            .chartAxisTheme(theme, xStride: .day, xStrideCount: 7)
             .chartYAxisLabel {
                 Text(CellarL10n.s("stats.unit.percent"))
                     .font(.system(size: 10))
                     .foregroundStyle(theme.tertiaryText)
             }
+            .statsChartHover(
+                points: hoverPoints(capacityRuns),
+                bucketSeconds: Double(StatsPageView.overviewBucketSeconds),
+                hover: $capacityHover
+            )
             .frame(height: 180)
         }
     }
 
     // MARK: - 数据投影（StatsBucket → Charts 点/段；断档分段 UD-5）
+
+    /// hover 投影（电量卡：均值折线点 + 波动带上下界；段共享边界点重复无害
+    /// ——同 date 同值，最近点查找等价）。
+    private var batteryHoverPoints: [StatsHoverPoint] {
+        segments.flatMap { segment in
+            segment.points.map {
+                StatsHoverPoint(date: $0.date, value: $0.avg, min: $0.min, max: $0.max)
+            }
+        }
+    }
+
+    /// hover 投影（单线卡通用：run 平铺、无波动带）。
+    private func hoverPoints(_ runs: [DataRun]) -> [StatsHoverPoint] {
+        runs.flatMap { run in
+            run.points.map { StatsHoverPoint(date: $0.date, value: $0.value, min: nil, max: nil) }
+        }
+    }
 
     /// 连续 run 序列 → LineMark 组（每 run 独立 series 互不连线——断档断笔）。
     /// 三张单线卡同构 Chart 体收敛为单实现（嵌套 ChartContentBuilder 内联展开
@@ -262,14 +358,29 @@ extension StatsPageView {
 /// 四张曲线卡共用坐标轴主题：网格/刻度字全走 theme token（G2——琥珀风格下
 /// 不泄漏 Charts 系统默认前景色；native 语义色自动深浅合规）。ViewModifier
 /// 形态：chartXAxis/chartYAxis 必须修饰 Chart 本体，不能收进页面实例方法。
+///
+/// X 轴固定步长（0.18 T2 D-2b/D-2c）：从 `.automatic(desiredCount: 5)` 改日历
+/// 步长整点对齐（24h=6h / 7d=2d / 30d=7d；容量卡恒全保留窗 7d 单列步长）——
+/// 刻度收敛于日历单元边界、每窗 ~4-5 刻度，末刻度不再贴绘图区右缘（「S...」
+/// 截断随固定刻度消除）；label 格式随窗统一（小时步长「HH:mm」/ 日步长「M/d」）。
 private struct StatsChartAxisTheme: ViewModifier {
     let theme: CellarTheme
+    /// X 轴步长单元与倍数（卡侧按窗注入）。
+    let xStride: Calendar.Component
+    let xStrideCount: Int
 
     func body(content: Content) -> some View {
         content
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 5)) {
-                    AxisValueLabel().foregroundStyle(theme.tertiaryText)
+                AxisMarks(values: .stride(by: xStride, count: xStrideCount)) { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date, format: xStride == .hour
+                                ? .dateTime.hour().minute()
+                                : .dateTime.month().day())
+                            .foregroundStyle(theme.tertiaryText)
+                        }
+                    }
                 }
             }
             .chartYAxis {
@@ -282,7 +393,21 @@ private struct StatsChartAxisTheme: ViewModifier {
 }
 
 private extension View {
-    func chartAxisTheme(_ theme: CellarTheme) -> some View {
-        modifier(StatsChartAxisTheme(theme: theme))
+    func chartAxisTheme(_ theme: CellarTheme, xStride: Calendar.Component, xStrideCount: Int) -> some View {
+        modifier(StatsChartAxisTheme(theme: theme, xStride: xStride, xStrideCount: xStrideCount))
+    }
+}
+
+// MARK: - X 轴固定步长（0.18 T2 D-2b）
+
+extension StatsPageView.RangeWindow {
+    /// X 轴日历步长（24h=6h / 7d=2d / 30d=7d——~4 刻度整点对齐；容量卡不走
+    /// 本表，恒全保留窗 7d 步长见 capacityCard）。
+    var xAxisStride: (component: Calendar.Component, count: Int) {
+        switch self {
+        case .hours24: return (.hour, 6)
+        case .days7: return (.day, 2)
+        case .days30: return (.day, 7)
+        }
     }
 }

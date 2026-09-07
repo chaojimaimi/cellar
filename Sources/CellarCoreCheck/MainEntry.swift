@@ -371,8 +371,11 @@ struct Main {
         // 零 IOKit 代码，M1 只依赖读侧事实）。
         try runMagSafeLEDDomainScenarios()
         // Phase 5 v1.11 M2：实时功率遥测域（PowerTelemetryData 提取四态 + AppConfig
-        // windowBatteryIconVisible round-trip——T1/T2 显示面场景，BatteryTelemetryDomain）。
+        // menuBarBatteryIconVisible round-trip——T1/T3 显示面场景，BatteryTelemetryDomain）。
         try runBatteryTelemetryDomainScenarios()
+        // 0.18 M2：CPU 表面温度共享探测域（CpuSkinSensor 探测矩阵 + flt 读值
+        // 单位约定——SMC mock 矩阵先例，CpuSkinSensorDomain）。
+        runCpuSkinSensorDomainScenarios()
         // Phase 5 v1.11 M2：风扇双温度源域（FanPolicy 手写 Codable 兼容/effective*
         // 双域/decide·targetRPM cpuSkin 路径/wire 三键值域与缺席保持/FanStatus 兼容/
         // doctor 分支——FanTemperatureSourceDomain）。

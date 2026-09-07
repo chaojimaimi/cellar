@@ -16,11 +16,27 @@ public struct StatusLineView: View {
     /// 温度暂停态（daemonStatus.isTempPauseAction 派生）：温度段追加「暂停中」注词。
     /// 默认 false 向后兼容——既有调用点（快照矩阵/无 daemon 场景）零改动（方案 §2.4）。
     public let tempPauseActive: Bool
+    /// CPU 表面温度 °C（0.18 T5 D-5c 第三行；nil = 探测未命中/未采样——格隐藏）。
+    /// 默认 nil 向后兼容——既有 StatusLine golden 构造不动即缺席路径 golden 证据。
+    public let cpuSkinTempC: Double?
+    /// 左风扇转速 rpm（nil = F0Ac 缺席——风扇格隐藏）。
+    public let fanLRPM: Double?
+    /// 右风扇转速 rpm（nil = F1Ac 缺席/单风扇——左值在场时两格合一「风扇 X rpm」）。
+    public let fanRRPM: Double?
     @Environment(\.cellarTheme) private var theme
 
-    public init(snapshot: BatterySnapshot?, tempPauseActive: Bool = false) {
+    public init(
+        snapshot: BatterySnapshot?,
+        tempPauseActive: Bool = false,
+        cpuSkinTempC: Double? = nil,
+        fanLRPM: Double? = nil,
+        fanRRPM: Double? = nil
+    ) {
         self.snapshot = snapshot
         self.tempPauseActive = tempPauseActive
+        self.cpuSkinTempC = cpuSkinTempC
+        self.fanLRPM = fanLRPM
+        self.fanRRPM = fanRRPM
     }
 
     public var body: some View {
@@ -38,6 +54,13 @@ public struct StatusLineView: View {
                     // 2×3 网格形状稳定（温度/循环列不错位）。
                     if let adapter = snapshot.adapter, !adapterParts(adapter, telemetry: snapshot.telemetry).isEmpty {
                         adapterSegment(adapter, telemetry: snapshot.telemetry)
+                    }
+                }
+                // 0.18 T5 D-5c 观察增强第三行（仅面板消费；全 nil → 不渲染，
+                // 网格保持 2×3 与现状逐字节一致）。
+                if cpuSkinTempC != nil || fanLRPM != nil || fanRRPM != nil {
+                    GridRow {
+                        thirdRowSegments
                     }
                 }
             }
@@ -180,5 +203,31 @@ public struct StatusLineView: View {
             parts.append(name)
         }
         return parts
+    }
+
+    // MARK: - 第三行（0.18 T5 D-5c：CPU 表面温度 ｜ 风扇 L ｜ 风扇 R）
+
+    /// 第三行三格（缺席格隐藏，D-5e：Ts 探测失败 → CPU 格隐藏；F1Ac 缺席
+    /// （单风扇）→ 左右两格合一「风扇 X rpm」；F0Ac 缺席 → 风扇格隐藏）。
+    @ViewBuilder
+    private var thirdRowSegments: some View {
+        if let cpuSkinTempC {
+            segment(caption: CellarL10n.s("statusline.cpuSkin")) {
+                // 一位小数与温度段（temperatureSegment）同口径。
+                Text(String(format: "%.1f °C", cpuSkinTempC))
+            }
+        }
+        if let fanLRPM, let fanRRPM {
+            segment(caption: CellarL10n.s("statusline.fanL")) {
+                Text("\(Int(fanLRPM.rounded())) rpm")
+            }
+            segment(caption: CellarL10n.s("statusline.fanR")) {
+                Text("\(Int(fanRRPM.rounded())) rpm")
+            }
+        } else if let single = fanLRPM ?? fanRRPM {
+            segment(caption: CellarL10n.s("statusline.fan")) {
+                Text("\(Int(single.rounded())) rpm")
+            }
+        }
     }
 }

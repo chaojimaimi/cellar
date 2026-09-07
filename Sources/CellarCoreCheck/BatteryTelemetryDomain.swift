@@ -1,6 +1,7 @@
 // CellarCoreCheck —— Phase 5 v1.11 M2 实时功率遥测域（方案 D-1a/D-1b + T2 偏好位）：
 // PowerTelemetryData 提取（正常闭环/缺席/嵌套类型错/UInt64 回绕按位还原——B-4 纪律）
-// + AppConfig.windowBatteryIconVisible round-trip（标题栏电池图标偏好，T2）。
+// + AppConfig.menuBarBatteryIconVisible round-trip（菜单栏电池电量图标偏好，0.18 T3
+// 字段迁移——v1.11 windowBatteryIconVisible 退役，旧键被新解码自动忽略零迁移）。
 // 按域拆独立文件（FanTemperatureSourceDomain 同批，main 不增长）。
 import CellarCore
 import Foundation
@@ -74,18 +75,24 @@ func runBatteryTelemetryDomainScenarios() throws {
               "遥测-4", "BatteryPower UInt64 回绕 → -741 按位还原（B-4：有符号/无符号存储皆按位保留）")
     }
 
-    // 遥测-5（T2）：AppConfig.windowBatteryIconVisible——缺键旧文件 → nil；round-trip
-    // 等值；显式 true/false 解码保真（照用例 95 menuBarPercentage 先例）。
+    // 遥测-5（0.18 T3 字段迁移）：AppConfig.menuBarBatteryIconVisible——缺键旧文件
+    // → nil；v1.11 windowBatteryIconVisible 旧键被新解码自动忽略（手写 Codable 删
+    // 字段零迁移）；round-trip 等值；显式 true/false 解码保真（照用例 95
+    // menuBarPercentage 先例）。
     do {
         let legacy = try JSONDecoder().decode(AppConfig.self, from: Data("{\"launchAtLogin\":true}".utf8))
-        check(legacy.windowBatteryIconVisible == nil, "遥测-5", "旧文件缺 windowBatteryIconVisible 键 → nil（decodeIfPresent）")
-        var config = AppConfig(launchAtLogin: false, onboardingCompleted: true, windowBatteryIconVisible: true)
+        check(legacy.menuBarBatteryIconVisible == nil, "遥测-5", "旧文件缺 menuBarBatteryIconVisible 键 → nil（decodeIfPresent）")
+        let retired = try JSONDecoder().decode(AppConfig.self, from: Data(
+            "{\"launchAtLogin\":true,\"windowBatteryIconVisible\":true}".utf8))
+        check(retired.menuBarBatteryIconVisible == nil,
+              "遥测-5", "v1.11 windowBatteryIconVisible 旧键被新解码自动忽略（零迁移）")
+        var config = AppConfig(launchAtLogin: false, onboardingCompleted: true, menuBarBatteryIconVisible: true)
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
-        check(decoded == config && decoded.windowBatteryIconVisible == true,
-              "遥测-5", "windowBatteryIconVisible round-trip 等值（true 保真）")
-        config.windowBatteryIconVisible = false
+        check(decoded == config && decoded.menuBarBatteryIconVisible == true,
+              "遥测-5", "menuBarBatteryIconVisible round-trip 等值（true 保真）")
+        config.menuBarBatteryIconVisible = false
         let offDecoded = try JSONDecoder().decode(AppConfig.self, from: try JSONEncoder().encode(config))
-        check(offDecoded.windowBatteryIconVisible == false, "遥测-5", "显式 false round-trip 保真（与 nil 语义可区分）")
+        check(offDecoded.menuBarBatteryIconVisible == false, "遥测-5", "显式 false round-trip 保真（与 nil 语义可区分）")
     }
 }
