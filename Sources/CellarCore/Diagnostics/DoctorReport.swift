@@ -456,6 +456,20 @@ public enum DoctorReportGenerator {
         if let config = probe.config {
             parts.append("配置=\(config.enabled ? "开启" : "关闭")（\(config.strategy.rawValue)，阈值 "
                 + String(format: "%.1f", Double(config.thresholdCentiC) / 100) + "°C）")
+            // v1.11 T3：温度源 + cpuSkin 探测结果 + 当前源温度（新 daemon 恒填；
+            // 旧 daemon 回包键缺席 → 三字段 nil 不渲染，行形态零回归——条件渲染
+            // 兼容约束同检查 8/9/13。数据经 FanDoctorProbe.config（FanStatus）承载，
+            // 不另设 DoctorInputs 字段——单一真相，勿双源）。电池源温度不入线
+            // （FanStatus 无电池温度回显字段——cpuSkinTempC 仅 cpuSkin 源采样）。
+            if let sourceWire = config.temperatureSource {
+                parts.append("温度源=\(sourceWire == 1 ? "CPU 表面" : "电池")")
+            }
+            if let supported = config.cpuSkinSupported {
+                parts.append("CPU 表面探测=\(supported ? "支持" : "不支持")")
+            }
+            if let tempC = config.cpuSkinTempC {
+                parts.append(String(format: "当前源温度 %.1f°C", tempC))
+            }
         }
         return DoctorCheck(name: "风扇控制", status: status, detail: parts.joined(separator: "；"))
     }

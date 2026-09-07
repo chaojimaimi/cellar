@@ -226,14 +226,14 @@ struct LoginItemSectionView: View {
 /// （写盘经共享 store actor 原子 update，第四写者互不覆盖）；loaded 前禁用
 /// （防半程态回写，StyleController.loaded 先例）。
 struct MenuBarPercentageRow: View {
-    @EnvironmentObject private var menuBarSettings: MenuBarSettingsController
+    @EnvironmentObject private var displaySettings: DisplaySettingsController
 
     var body: some View {
         Toggle(CellarL10n.s("panel.menuBar.percentage"), isOn: Binding(
-            get: { menuBarSettings.percentageVisible },
-            set: { _ in menuBarSettings.toggle() }
+            get: { displaySettings.percentageVisible },
+            set: { _ in displaySettings.toggle() }
         ))
-        .disabled(!menuBarSettings.loaded)
+        .disabled(!displaySettings.loaded)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

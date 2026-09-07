@@ -32,6 +32,9 @@ extension DaemonCore {
     /// 风扇状态快照（DaemonCore.buildStatusLocked 调用；锁内）。
     func fanStatusLocked() -> FanStatus {
         let fanPolicy = policy.fan ?? .default
+        // 惰性探测挂点（v1.11 T3 D-3c：status 回包恒组装 → 风扇关态也执行；sticky
+        // 后零成本，client 缺席窗口每轮空探——照 probeFanFactsLocked nil 先例）。
+        ensureCpuSkinProbeLocked()
         return FanStatus(
             enabled: fanPolicy.enabled,
             strategy: fanPolicy.strategy,
@@ -42,8 +45,43 @@ extension DaemonCore {
             conflictFlag: fanState.conflictFlag,
             speedPercent: fanPolicy.speedPercent,
             stage2Percent: fanPolicy.stage2Percent,
-            stage2RiseCentiC: fanPolicy.stage2RiseCentiC
+            stage2RiseCentiC: fanPolicy.stage2RiseCentiC,
+            // 线值 Int 化（0/1 小值域——wireValue UInt64 安全收窄）。
+            temperatureSource: Int(FanWire.wireValue(fanPolicy.temperatureSource)),
+            cpuSkinTempC: fanState.lastCpuSkinTempC,
+            cpuSkinSupported: fanState.cpuSkinSupported,
+            cpuSkinThresholdCentiC: fanPolicy.cpuSkinThresholdCentiC,
+            cpuSkinHysteresisCentiC: fanPolicy.cpuSkinHysteresisCentiC
         )
+    }
+
+    // MARK: - CPU 表面温度源（v1.11 T3 双源；惰性探测 sticky）
+
+    /// CPU 表面温度源惰性探测（D-3c）：首次访问执行，结论 sticky 于 FanRuntimeState
+    /// （supported nil = 未探——smcClient 缺席窗口不置 sticky，照 probeFanFactsLocked
+    /// 「置 nil 不 sticky、下轮重探」先例，区分「未探」与「探而不中」；true/false =
+    /// 探测结论，进程内不回落）。试探 Ts 键序列 Ts0C→Ts0D→Ts0E→Ts0P：type **trim
+    /// 后 == "flt"**（实测 dataType 为 "flt " 尾随空格——勿裸 ==，照 probeFanFacts
+    /// trim== 先例）∧ size==4 ∧ 读值 ∈ 10...90°C 合理 → 首个命中记 cpuSkinKey；
+    /// 全不命中 → supported=false（setFan 选 cpuSkin 前置拒绝 fail-visible）。
+    /// 静默设计：本函数被锁内组装路径（buildStatusLocked 全调用面）调用，无 emit
+    /// 面——探测结论经 FanStatus.cpuSkinSupported / doctor / setFan 拒绝文案三面
+    /// 可见化，非静默吞失败（探测结论本身即输出）。
+    func ensureCpuSkinProbeLocked() {
+        guard fanState.cpuSkinSupported == nil else { return }
+        guard let client = smcClient else { return }
+        for key in ["Ts0C", "Ts0D", "Ts0E", "Ts0P"] {
+            guard let info = try? client.keyInfo(key),
+                  info.type.trimmingCharacters(in: .whitespaces) == "flt",
+                  info.size == 4,
+                  let bytes = try? client.read(key),
+                  let valueC = FanSMC.decodeTemperatureC(bytes),
+                  valueC.isFinite, valueC >= 10, valueC <= 90 else { continue }
+            fanState.cpuSkinKey = key
+            fanState.cpuSkinSupported = true
+            return
+        }
+        fanState.cpuSkinSupported = false
     }
 
     // MARK: - setFan XPC（方案 §8）
@@ -62,6 +100,9 @@ extension DaemonCore {
         }
 
         let base = policy.fan ?? FanPolicy.default
+        // 入口先 ensure 探测（R2 P2-5 边界②：防首次 setFan(cpuSkin) 绕过前置拒绝
+        // ——sticky 缓存下与 status 组装路径同一次性代价）。
+        ensureCpuSkinProbeLocked()
         guard let merged = wire.mergedPolicy(base: base) else {
             events.append(LogEvent(
                 category: .control, level: .error,
@@ -69,12 +110,28 @@ extension DaemonCore {
             ))
             throw FanSetError.invalidParameters
         }
+        // cpuSkin 前置拒绝（v1.11 T3 fail-visible：探测结论 sticky false → 错误原文
+        // 经 XPC errorReply 透传 App 上屏；探测未决（nil——后端缺席窗口）不拒绝，
+        // 由 tick 采样 degraded 路径兜底，不误判「不支持」）。
+        if merged.temperatureSource == .cpuSkin, fanState.cpuSkinSupported == false {
+            events.append(LogEvent(
+                category: .control, level: .error,
+                message: "setFan 拒绝：本机不支持 CPU 表面温度源（Ts 键探测未命中）"
+            ))
+            throw FanSetError.cpuSkinUnsupported
+        }
         let oldFan = policy.fan
         let wasBoost = fanState.boostActive
         // F-1 纪律：applyPolicyLocked 之外的直接字段更新——policy.fan 是本命令的
         // 专属修改面（模式/限值不动），与 setLimits/disable/enable 的重建点互斥。
         policy.fan = merged
         persistPolicyLocked(events: &events)
+        // 源变更清残留（R1 P3-3：防旧域温度残留一代 tick 参与阈值比较；lastCpuSkin
+        // 同清——防旧源显示回显与新源语义错配）。
+        if merged.temperatureSource != base.temperatureSource {
+            fanState.lastTemperatureC = 0
+            fanState.lastCpuSkinTempC = nil
+        }
 
         // 开关翻转重置（方案 §5.2：仅关→开——重新 opt-in = 新意图，R2 P2-A 同判例）：
         // 能力/冲突/采样/进入失败/漂移门齐清，重探重试。
@@ -130,11 +187,28 @@ extension DaemonCore {
         }
         let modeActive = policy.mode == "active"
 
-        // 1) 温度采样（方案 §6 温度源单点 = BatterySnapshot.temperatureC，与充电
-        //    热暂停同源）；连续失败 ≥3 → sampleHealthy=false（F 行 degraded）。
+        // 1) 温度采样（v1.11 T3 双源分支；连续失败 ≥3 → sampleHealthy=false（F 行
+        //    degraded）——两源共用同一 degraded 机制，R-5 不发明新分支）：
+        //    battery → BatterySnapshot.temperatureC（与充电热暂停同源，现状零变化）；
+        //    cpuSkin → SMC 读 cpuSkinKey（Ts flt 值即 °C，LE 解码直入 °C 口径——
+        //    阈值比较统一 °C，与 battery 路径同单位）。探测未命中/客户端缺席按
+        //    keyNotFound 抛入 catch（机型事实语义，与采样失败同通道计数降级）。
         var temperatureC = fanState.lastTemperatureC
         do {
-            temperatureC = try monitor.snapshot().temperatureC
+            switch fanPolicy.temperatureSource {
+            case .battery:
+                temperatureC = try monitor.snapshot().temperatureC
+            case .cpuSkin:
+                guard let client = smcClient, let key = fanState.cpuSkinKey else {
+                    throw SMCError.keyNotFound(fanState.cpuSkinKey ?? "Ts0C")
+                }
+                let bytes = try client.read(key)
+                guard let valueC = FanSMC.decodeTemperatureC(bytes), valueC.isFinite else {
+                    throw SMCError.malformedReply(key: key, expected: 4, actual: bytes.count)
+                }
+                temperatureC = Double(valueC)
+                fanState.lastCpuSkinTempC = temperatureC
+            }
             fanState.lastTemperatureC = temperatureC
             fanState.sampleFailures = 0
             fanState.sampleHealthy = true
@@ -643,6 +717,13 @@ struct FanRuntimeState {
     var sampleHealthy = true
     /// 最近成功采样温度（采样失败期间沿用——F 行在温度比较前短路，值不参与判定）。
     var lastTemperatureC: Double = 0
+    /// CPU 表面温度源探测结论（v1.11 T3；nil = 未探——smcClient 缺席窗口不置
+    /// sticky，下轮重探；true/false = 探测结论 sticky 不回落）。
+    var cpuSkinSupported: Bool?
+    /// CPU 表面温度键（探测命中时记录；nil = 未命中/未探）。
+    var cpuSkinKey: String?
+    /// 最近一次 CPU 表面温度采样 °C（FanStatus.cpuSkinTempC 载荷；源切换清残留）。
+    var lastCpuSkinTempC: Double?
     /// 状态行词（各决策副作用更新；初值 off = 未配置形态）。
     var word: FanStateWord = .off
     /// 最近一次写入目标 rpm（FanStatus.targetRPM 载荷）。
@@ -661,10 +742,13 @@ struct FanRuntimeState {
 enum FanSetError: Error, Equatable, Sendable, CustomStringConvertible {
     /// 参数越界（validated 整包 nil——不落半合法策略）。
     case invalidParameters
+    /// cpuSkin 源请求但本机探测不支持（v1.11 T3 fail-visible，方案 D-3c）。
+    case cpuSkinUnsupported
 
     public var message: String {
         switch self {
         case .invalidParameters: return "风扇参数越界（阈值 30-55°C，转速 40-100%，滞回 1-5°C）"
+        case .cpuSkinUnsupported: return "本机不支持 CPU 表面温度源"
         }
     }
 

@@ -42,6 +42,9 @@ public enum BatterySnapshotParser {
             fccMAh: batteryData.flatMap { intValue($0["FccComp1"]) },
             adapter: adapter(from: props["AdapterDetails"]),
             notChargingReason: chargerData.flatMap { uint64Value($0["NotChargingReason"]) },
+            // PowerTelemetryData 嵌套字典（v1.11 T1）：提取模式照 AdapterDetails
+            // 先例——缺席/类型不符 → 整字段 nil 容错，不影响快照可用性。
+            telemetry: props["PowerTelemetryData"].flatMap { powerTelemetry(from: $0) },
             timestamp: timestamp
         )
     }
@@ -114,6 +117,21 @@ public enum BatterySnapshotParser {
             name: dict["Name"] as? String,
             adapterDescription: dict["Description"] as? String,
             isWireless: boolValue(dict["IsWireless"])
+        )
+    }
+
+    /// PowerTelemetryData 直接字典（v1.11 T1 本机 ioreg 实测形状）→ PowerTelemetry。
+    /// 缺席/类型不符 → nil；字段级类型不符 → 该字段 nil（照 adapter(from:) 先例）。
+    /// 数值统一走 intValue（B-4 按位保留——BatteryPower 放电态回绕负值还原）。
+    private static func powerTelemetry(from value: Any?) -> PowerTelemetry? {
+        guard let dict = value as? [String: Any] else { return nil }
+        return PowerTelemetry(
+            systemPowerInMW: intValue(dict["SystemPowerIn"]),
+            systemLoadMW: intValue(dict["SystemLoad"]),
+            batteryPowerMW: intValue(dict["BatteryPower"]),
+            adapterEfficiencyLossMW: intValue(dict["AdapterEfficiencyLoss"]),
+            voltageInMV: intValue(dict["SystemVoltageIn"]),
+            currentInMA: intValue(dict["SystemCurrentIn"])
         )
     }
 }

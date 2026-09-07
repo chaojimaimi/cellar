@@ -1412,6 +1412,23 @@
         }
       }
     },
+    "dashboard.supply.power": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct · %@ W"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直供 · %@ W"
+          }
+        }
+      }
+    },
     "dashboard.sysLine.load": {
       "extractionState": "manual",
       "localizations": {
@@ -1884,6 +1901,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "风扇保持"
+          }
+        }
+      }
+    },
+    "fan.source.battery": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery Temperature"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池温度"
+          }
+        }
+      }
+    },
+    "fan.source.cpuSkin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU Surface Temperature"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU 表面温度"
+          }
+        }
+      }
+    },
+    "fan.sourcePicker": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temperature Source"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "温度源"
+          }
+        }
+      }
+    },
+    "fan.sourceTempLabel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current Temperature"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前温度"
+          }
+        }
+      }
+    },
+    "fan.sourceUnsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU surface temperature is not supported on this Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机不支持 CPU 表面温度源"
           }
         }
       }
@@ -4829,6 +4931,23 @@
         }
       }
     },
+    "settings.windowBatteryIcon": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show battery icon in the title bar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标题栏显示电池图标"
+          }
+        }
+      }
+    },
     "stats.chart.capacity": {
       "extractionState": "manual",
       "localizations": {
@@ -5437,6 +5556,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "适配器"
+          }
+        }
+      }
+    },
+    "statusline.adapter.live": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ W (rated %lld W)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ W（额定 %lld W）"
           }
         }
       }

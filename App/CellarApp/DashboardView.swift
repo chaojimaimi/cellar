@@ -255,9 +255,14 @@ struct DashboardView: View {
         return String(format: "%.1f V", Double(snapshot.voltageMV) / 1000)
     }
 
-    /// 适配器副行：在位（额定 W）/ 未接入 / nodata「—」。
+    /// 适配器副行：telemetry 在场 → 实时+额定复合（适配器节点卡实时 W，v1.11 T1
+    /// ——App 层入参面，PowerFlowDiagramView 零改动）/ 现状额定 W / 未接入 / nodata。
     private var adapterLineText: String {
         guard !isNodata else { return CellarL10n.s("common.nodata") }
+        if let systemPowerMW = snapshot?.telemetry?.systemPowerInMW,
+           let rated = snapshot?.adapter?.watts {
+            return CellarL10n.s("statusline.adapter.live", String(format: "%.1f", Double(systemPowerMW) / 1000), rated)
+        }
         if let watts = snapshot?.adapter?.watts {
             return CellarL10n.s("dashboard.adapter.line.present", watts)
         }
@@ -265,8 +270,8 @@ struct DashboardView: View {
     }
 
     /// 系统副行：电池态显实测负载（电池是唯一电源，V×A = 系统功耗）；充电/停充
-    /// 态系统负载无公开数据源（适配器输出不可测）——诚实纪律不造数，显「—」
-    /// （mock 的 18.2 W 为演示造数不落地）。
+    /// 态系统负载无公开数据源——诚实纪律不造数，显「—」（v1.11 T1 注记：适配器
+    /// 实时总功率遥测 SystemPowerIn 已在案，系统边口径本批未扩，维持「—」）。
     private var systemLineText: String {
         guard !isNodata else { return CellarL10n.s("common.nodata") }
         if snapshot?.externalConnected == false {
@@ -285,9 +290,13 @@ struct DashboardView: View {
         // 负值经格式串显「−」方向（组件 color 由放电边 warn 承载）。
         return CellarL10n.s("dashboard.flow.powerOut", -abs(batteryPowerW))
     }
-
+    /// 直供边标签：telemetry 在场 → 「直供 · 实时 W」（v1.11 T1 新键）；缺席 → 现状
+    /// 「直供」文案（逐字节一致——既有 golden 零修改的机械保证）。
     private var supplyLineText: String? {
         guard snapshot?.externalConnected == true else { return nil }
+        if let systemPowerMW = snapshot?.telemetry?.systemPowerInMW {
+            return CellarL10n.s("dashboard.supply.power", String(format: "%.1f", Double(systemPowerMW) / 1000))
+        }
         return CellarL10n.s("dashboard.supply")
     }
 
@@ -388,6 +397,4 @@ struct DashboardView: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(theme.secondaryText.opacity(0.25)))
     }
-
-
 }

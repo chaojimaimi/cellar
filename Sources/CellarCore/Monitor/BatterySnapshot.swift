@@ -48,6 +48,10 @@ public struct BatterySnapshot: Equatable, Sendable {
     /// hint-only 不作行为判据；UInt64 全域位集。缺席/类型不符 → nil 容错（照可选
     /// 字段既有模式，v1.7 ChargerData 此前无提取面）。
     public let notChargingReason: UInt64?
+    /// 适配器→系统实时功率遥测（PowerTelemetryData 嵌套字典；v1.11 T1 新增，
+    /// 缺席/类型不符 → nil 容错——旧机型/结构漂移不影响快照可用性）。
+    /// 更新节流实测 ~25-30s（显示面为「准实时」粒度）。
+    public let telemetry: PowerTelemetry?
     /// 快照时刻（调用方注入，见 BatterySnapshotParser.parse）。
     public let timestamp: Date
 }
@@ -78,6 +82,26 @@ public struct AdapterInfo: Equatable, Sendable {
     public let adapterDescription: String?
     /// 无线充电标记（IsWireless）。
     public let isWireless: Bool?
+}
+
+/// 适配器→系统实时功率遥测（PowerTelemetryData 字典的字段级提取；v1.11 T1 新增，
+/// 本机 2026-09 ioreg 实测六键）。字段级缺席/类型不符 → 该字段 nil；整个字典
+/// 缺席/类型不符 → 整个 nil（照 AdapterInfo 嵌套先例，不抛错）。
+/// batteryPowerMW 有符号——放电态实测为 UInt64 回绕负值，沿用 Parser 按位保留
+/// 还原纪律（B-4）；SystemPowerIn ≈ SystemLoad + BatteryPower 闭环（实测）。
+public struct PowerTelemetry: Equatable, Sendable {
+    /// 适配器→系统实时功率 mW（SystemPowerIn）。
+    public let systemPowerInMW: Int?
+    /// 系统负载功率 mW（SystemLoad）。
+    public let systemLoadMW: Int?
+    /// 电池侧功率 mW（BatteryPower；有符号——放电态为回绕负值）。
+    public let batteryPowerMW: Int?
+    /// 适配器效率损耗 mW（AdapterEfficiencyLoss）。
+    public let adapterEfficiencyLossMW: Int?
+    /// 系统输入电压 mV（SystemVoltageIn）。
+    public let voltageInMV: Int?
+    /// 系统输入电流 mA（SystemCurrentIn）。
+    public let currentInMA: Int?
 }
 
 /// 电池监测层的类型化错误。

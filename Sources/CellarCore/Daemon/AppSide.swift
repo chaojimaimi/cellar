@@ -177,17 +177,22 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// 菜单栏电量百分比显隐（v1.10 M2；nil = 未设置 = 关——照 style: String?
     /// 先例，旧 app-config.json 缺 key 经 decodeIfPresent 兼容为 nil）。
     public var menuBarPercentageVisible: Bool?
+    /// 标题栏电池图标显隐（v1.11 T2；nil = 未设置 = 关——照 menuBarPercentageVisible
+    /// 先例，旧 app-config.json 缺 key 经 decodeIfPresent 兼容为 nil）。
+    public var windowBatteryIconVisible: Bool?
 
     public init(
         launchAtLogin: Bool = false,
         style: String? = nil,
         onboardingCompleted: Bool = false,
-        menuBarPercentageVisible: Bool? = nil
+        menuBarPercentageVisible: Bool? = nil,
+        windowBatteryIconVisible: Bool? = nil
     ) {
         self.launchAtLogin = launchAtLogin
         self.style = style
         self.onboardingCompleted = onboardingCompleted
         self.menuBarPercentageVisible = menuBarPercentageVisible
+        self.windowBatteryIconVisible = windowBatteryIconVisible
     }
 
     public static let `default` = AppConfig()
@@ -200,6 +205,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case style
         case onboardingCompleted
         case menuBarPercentageVisible
+        case windowBatteryIconVisible
     }
 
     /// 自定义 decode：新键可缺席（旧文件兼容）——decodeIfPresent ?? false；
@@ -210,16 +216,18 @@ public struct AppConfig: Codable, Equatable, Sendable {
         style = try container.decodeIfPresent(String.self, forKey: .style)
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
         menuBarPercentageVisible = try container.decodeIfPresent(Bool.self, forKey: .menuBarPercentageVisible)
+        windowBatteryIconVisible = try container.decodeIfPresent(Bool.self, forKey: .windowBatteryIconVisible)
     }
 
     /// 自定义 encode：onboardingCompleted 恒写（前向兼容）；style / menuBarPercentageVisible
-    /// 沿用 encodeIfPresent（nil 缺席，与旧合成编码一致）。
+    /// / windowBatteryIconVisible 沿用 encodeIfPresent（nil 缺席，与旧合成编码一致）。
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(launchAtLogin, forKey: .launchAtLogin)
         try container.encodeIfPresent(style, forKey: .style)
         try container.encode(onboardingCompleted, forKey: .onboardingCompleted)
         try container.encodeIfPresent(menuBarPercentageVisible, forKey: .menuBarPercentageVisible)
+        try container.encodeIfPresent(windowBatteryIconVisible, forKey: .windowBatteryIconVisible)
     }
 }
 

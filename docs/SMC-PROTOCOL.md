@@ -80,6 +80,8 @@ Protocol facts (verified on macOS 26.x / Apple M2 Max, firmware 18000.161.10):
 
 The `setFan` XPC command carries fan parameters as UINT64 keys; the `fanStrategy` wire mapping is append-only: `0` = constantSpeed, `2` = twoStage, `3` = emergency. `1` is retired — it is permanently reserved and must never be reassigned to any future strategy; the daemon rejects it at the value-domain gate.
 
+The `fanSource` wire mapping (v1.11, temperature-source selector) is append-only: `0` = battery, `1` = cpuSkin. Unknown values are rejected at the value-domain gate; an absent key keeps the current source.
+
 ## Verification statement
 
 The protocol facts above were verified on:

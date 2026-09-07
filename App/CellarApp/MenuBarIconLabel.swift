@@ -6,16 +6,16 @@ import SwiftUI
 /// 菜单栏动态图标（规格 §2.2 多状态符号 + alert 变色增强）。
 ///
 /// label closure 内的专用视图：观察 StatusController（iconState 推导）与
-/// MenuBarSettingsController（v1.10 M2 电量百分比显隐）两个控制器——状态刷新不
-/// 依赖面板窗口的生命周期（组合根提升后控制器在 App 层常驻）。
+/// DisplaySettingsController（v1.10 M2 电量百分比显隐；v1.11 T2 改名扩位）两个
+/// 控制器——状态刷新不依赖面板窗口的生命周期（组合根提升后控制器在 App 层常驻）。
 ///
 /// ⚠️ 状态源接线定案（v1.10 M2 工单 T1-4）：百分比显隐走**第二个 @ObservedObject
 /// 直注**，不走 StatusController 弱引用——@ObservedObject 只订阅自身持有的对象，
 /// weak 挂靠不产生 objectWillChange 传播；双控制器注入是更新传播正确性的最小形态。
 struct MenuBarIconLabel: View {
     @ObservedObject var controller: StatusController
-    /// 菜单栏设置（电量百分比显隐；CellarApp label 闭包注入——组合根组合两观察源）。
-    @ObservedObject var settings: MenuBarSettingsController
+    /// 显示设置（电量百分比显隐；CellarApp label 闭包注入——组合根组合两观察源）。
+    @ObservedObject var settings: DisplaySettingsController
     @Environment(\.cellarTheme) private var theme
 
     var body: some View {

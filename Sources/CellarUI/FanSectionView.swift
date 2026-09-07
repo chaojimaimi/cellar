@@ -7,8 +7,10 @@ import SwiftUI
 /// - 开关 Toggle（opt-in 默认关）+ 开启两步内嵌确认块（**不用 confirmationDialog
 ///   ——会收起 MenuBarExtra 窗口，项目踩过**，照自动放电确认块模式）；
 /// - 策略 Picker 三项：恒速降温/两级分段/全速应急；
-/// - 阈值 Slider 30.0...55.0°C 步进 0.5；速度 Slider 40...100%；twoStage 参数
-///   仅策略为两级分段时显形；
+/// - 温度源 Picker（v1.11 T3 双源：电池温度【默认】/CPU 表面温度——门控三态见
+///   sourceSection 注记）+ 当前源温度行（currentTempC App 层注入）；
+/// - 阈值 Slider 步进 0.5，值域随源联动（battery 30–55°C / cpuSkin 40–70°C）；
+///   速度 Slider 40...100%；twoStage 参数仅策略为两级分段时显形；
 /// - 脚注固定文案：与充电热暂停配置（通用页可调）相互独立（v1.5 起热暂停
 ///   阈值可配置，脚注不再钉死数值）；
 /// - 状态行八态（fan.status.*）：已关闭/探测中/自动/加速中→N rpm/保持/已暂停介入
@@ -32,9 +34,15 @@ public struct FanSectionView: View {
     /// 防同文重复；默认 true——快照矩阵两处构造不传此参 → 渲染字节不变，92 张
     /// golden 零 regen 全靠该默认路径（对比模式机械证明）。
     public let showsTitle: Bool
+    /// 当前源温度 °C（v1.11 T3 新增温度行；数据源 = App 层注入（D-3f 定版）——
+    /// battery 源取 batterySnapshot.temperatureC / cpuSkin 源取 FanStatus.cpuSkinTempC；
+    /// nil = 无数据显示「—」。默认 nil——不传的既有调用点零扰动）。
+    public let currentTempC: Double?
 
     @State private var showConfirm: Bool
     @State private var strategy: FanStrategy
+    /// 温度源（v1.11 T3；init 播种 + 源切换 onChange 重播种阈值滑杆）。
+    @State private var temperatureSource: FanTemperatureSource
     @State private var thresholdC: Double
     @State private var speedPercent: Double
     @State private var stage2Percent: Double
@@ -48,7 +56,8 @@ public struct FanSectionView: View {
         onApply: @escaping (FanWire) -> Void,
         initialConfirmVisible: Bool = false,
         stateOverride: FanStateWord? = nil,
-        showsTitle: Bool = true
+        showsTitle: Bool = true,
+        currentTempC: Double? = nil
     ) {
         let base = fan ?? FanStatus(
             enabled: false, strategy: .constantSpeed, state: .off,
@@ -61,9 +70,15 @@ public struct FanSectionView: View {
         self.initialConfirmVisible = initialConfirmVisible
         self.stateOverride = stateOverride
         self.showsTitle = showsTitle
+        self.currentTempC = currentTempC
         _showConfirm = State(initialValue: initialConfirmVisible)
         _strategy = State(initialValue: base.strategy)
-        _thresholdC = State(initialValue: Double(base.thresholdCentiC) / 100)
+        // 温度源播种（D-3f：线值 nil/0 → battery——旧 daemon 按 battery 口径）；
+        // 阈值滑杆播种随源（battery 域 threshold / cpuSkin 域 cpuSkinThreshold——
+        // 双阈值回显 = 播种单一真相，R1 P1-4）。
+        let source = Self.wiredSource(base)
+        _temperatureSource = State(initialValue: source)
+        _thresholdC = State(initialValue: Double(Self.seedThresholdCentiC(fan: base, source: source)) / 100)
         _speedPercent = State(initialValue: Double(base.speedPercent))
         _stage2Percent = State(initialValue: Double(base.stage2Percent))
         _stage2RiseC = State(initialValue: Double(base.stage2RiseCentiC) / 100)
@@ -107,7 +122,9 @@ public struct FanSectionView: View {
                 strategyPicker
             }
 
+            // v1.11 T3：温度源 Picker + 当前源温度行 + 阈值滑杆（值域随源联动）。
             if fan != nil && !staleDaemon {
+                sourceSection
                 thresholdRow
                 speedRow
                 if strategy == .twoStage {
@@ -220,6 +237,78 @@ public struct FanSectionView: View {
         }
     }
 
+    /// 温度源区（v1.11 T3 D-3f）：源 Picker + 门控注记 + 当前源温度行。
+    /// 门控三态：cpuSkinSupported == true → 可切；false → disabled +「本机不支持」
+    /// 注记；nil（旧 daemon 温度源键缺席）→ disabled + 升级提示（照 staleDaemon
+    /// disabled+hint 形态——旧 daemon 静默忽略 fanSource 回成功包，不禁用即静默错配）。
+    private var sourceSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Picker(CellarL10n.s("fan.sourcePicker"), selection: $temperatureSource) {
+                Text(CellarL10n.s("fan.source.battery")).tag(FanTemperatureSource.battery)
+                Text(CellarL10n.s("fan.source.cpuSkin")).tag(FanTemperatureSource.cpuSkin)
+            }
+            .pickerStyle(.menu)
+            .disabled(busy || sourceGateNote != nil)
+            .onChange(of: temperatureSource) { newSource in
+                // 源切换重播种（新逻辑）：滑杆值域/阈值随源切换；回写经 FanWire
+                // source 键（阈值键由 applyThreshold 随源分流）。
+                thresholdC = reseededThreshold(for: newSource)
+                onApply(FanWire(source: FanWire.wireValue(newSource)))
+            }
+            if let note = sourceGateNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(sourceGateIsUpgradeHint ? theme.warning : theme.secondaryText)
+            }
+            HStack {
+                Text(CellarL10n.s("fan.sourceTempLabel"))
+                Spacer()
+                Text(currentTempC.map { String(format: "%.1f°C", $0) } ?? CellarL10n.s("common.nodata"))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+        }
+    }
+
+    /// 源 Picker 门控注记（nil = 可用无注记）。
+    private var sourceGateNote: String? {
+        guard let supported = fan?.cpuSkinSupported else { return CellarL10n.s("fan.upgradeHint") }
+        return supported ? nil : CellarL10n.s("fan.sourceUnsupported")
+    }
+
+    private var sourceGateIsUpgradeHint: Bool { fan?.cpuSkinSupported == nil }
+
+    // MARK: - 温度源播种/值域（v1.11 T3）
+
+    /// 线值 → 源（nil/0 = battery——旧 daemon 温度源键缺席按 battery 播种，D-3f）。
+    private static func wiredSource(_ fan: FanStatus) -> FanTemperatureSource {
+        fan.temperatureSource == 1 ? .cpuSkin : .battery
+    }
+
+    /// 播种阈值（厘摄氏度）随源分流（旧 daemon/回显缺席 → 默认兜底）。
+    private static func seedThresholdCentiC(fan: FanStatus, source: FanTemperatureSource) -> Int {
+        switch source {
+        case .battery: return fan.thresholdCentiC
+        case .cpuSkin: return fan.cpuSkinThresholdCentiC ?? FanPolicy.default.cpuSkinThresholdCentiC
+        }
+    }
+
+    /// 滑杆值域随源（定版：battery 30–55°C / cpuSkin 40–70°C——Ts 表面温度贴近
+    /// die、静息基线高于电池温度，域独立）。
+    private static func sliderRange(for source: FanTemperatureSource) -> ClosedRange<Double> {
+        source == .cpuSkin ? 40...70 : 30...55
+    }
+
+    private var thresholdRange: ClosedRange<Double> { Self.sliderRange(for: temperatureSource) }
+
+    /// 源切换重播种（clamp 进目标域——存量阈值跨域越界时钳制显示）。
+    private func reseededThreshold(for source: FanTemperatureSource) -> Double {
+        let centiC = fan.map { Self.seedThresholdCentiC(fan: $0, source: source) }
+            ?? FanPolicy.default.thresholdCentiC
+        let range = Self.sliderRange(for: source)
+        return min(max(Double(centiC) / 100, range.lowerBound), range.upperBound)
+    }
+
     private var thresholdRow: some View {
         Group {
             HStack {
@@ -231,16 +320,21 @@ public struct FanSectionView: View {
             .font(.caption)
             // 松手提交（P1-3）：onChange 逐档直发会按 0.5°C 步进洪水式触发 XPC——
             // 照 PanelView 松手提交先例，仅 onEditingChanged(false) 时应用一次。
-            Slider(value: $thresholdC, in: 30...55, step: 0.5, onEditingChanged: { editing in
+            Slider(value: $thresholdC, in: thresholdRange, step: 0.5, onEditingChanged: { editing in
                 if !editing { applyThreshold() }
             })
                 .disabled(busy)
         }
     }
 
-    /// 阈值应用（松手提交）
+    /// 阈值应用（松手提交）——回写键随源分流（battery → fanThreshold / cpuSkin →
+    /// fanCpuThreshold，v1.11 T3）。
     private func applyThreshold() {
-        onApply(FanWire(threshold: UInt64(Int((thresholdC * 100).rounded()))))
+        let centiC = UInt64(Int((thresholdC * 100).rounded()))
+        switch temperatureSource {
+        case .battery: onApply(FanWire(threshold: centiC))
+        case .cpuSkin: onApply(FanWire(cpuThreshold: centiC))
+        }
     }
 
     private var speedRow: some View {

@@ -14,25 +14,52 @@ public enum FanStrategy: String, Codable, Sendable, CaseIterable {
     case emergency
 }
 
+/// 风扇温度源（v1.11 T3 双源定版：电池【默认现状】+ CPU 表面温度 Ts proximity——
+/// 本机压测实证：Ts 表面传感器平滑无尖峰与负载强相关；Tp 核心瞬时基线即 ±14°C
+/// 跳变不可用；电池温度对短时负载零响应）。String rawValue 直存照 FanStrategy
+/// 先例（未知字符串 → 解码炸 → PolicyStore 整包 nil 落默认——既有已钉死纪律）；
+/// **只追加不重排**（重排即存量 policy.json 错配）。
+public enum FanTemperatureSource: String, Codable, Sendable {
+    /// 电池温度（BatterySnapshot.temperatureC，与充电热暂停同源——默认现状零变化）。
+    case battery
+    /// CPU 表面温度（SMC Ts 系 proximity 传感器，daemon 惰性探测 sticky）。
+    case cpuSkin
+}
+
 /// 风扇策略（daemon 持久化在 policy.json 的 DaemonPolicy.fan 下，不新建文件，
 /// 方案 §4）。阈值与充电热暂停（ThermalGuard 40/37）是两套独立配置项——同值
 /// 不同义、独立演化（照 pauseC 与 Discharge.temperatureLimitC 先例），UI 脚注
 /// 明示互不影响。
+///
+/// ⚠️ 手写 Codable（v1.11 R1 P0）：合成 Codable 全字段非可选——存量 policy.json
+/// 缺 v1.11 新键 → keyNotFound 整包 nil → 升级即静默重置全部策略（含充电限值）。
+/// decode：7 既有字段保持 required（既有字段缺失仍整包炸——绝不半合法语义不变），
+/// 3 新字段 decodeIfPresent + 默认值；encode：全字段恒写（新字段非可选存储——
+/// 旧客户端合成解码忽略未知键，恒写等价）。
 public struct FanPolicy: Codable, Equatable, Sendable {
     /// opt-in 开关（默认关）。
     public var enabled: Bool
     public var strategy: FanStrategy
-    /// 温度阈值（厘摄氏度；3000...5500）。默认 3700 = 37.00°C——与
-    /// `ThermalGuard.resumeC = 37.0` 同值**不同义**（独立演化，方案 §4 注记）。
+    /// 电池温度阈值（厘摄氏度；3000...5500——**语义收窄为 battery 域**，v1.11 T3：
+    /// cpuSkin 域阈值独立字段。默认 3700 = 37.00°C——与 `ThermalGuard.resumeC =
+    /// 37.0` 同值**不同义**（独立演化，方案 §4 注记）。
     public var thresholdCentiC: Int
-    /// 释放滞回（厘摄氏度；100...500）：t < 阈值−滞回才释放（防阈值边界抖动）。
+    /// 电池温度释放滞回（厘摄氏度；100...500——**battery 域**）：t < 阈值−滞回才
+    /// 释放（防阈值边界抖动）。
     public var releaseHysteresisCentiC: Int
     /// 恒速/一级转速（百分数；40...100）。
     public var speedPercent: Int
-    /// 两级分段第二级转速（百分数；60...100；仅 twoStage 使用）。
+    /// 两级分段第二级转速（百分数；60...100；仅 twoStage 使用——**两源共用**）。
     public var stage2Percent: Int
-    /// 两级分段升档温差（厘摄氏度；100...500）：t ≥ 阈值+rise 升到 stage2。
+    /// 两级分段升档温差（厘摄氏度；100...500；**两源共用**）：t ≥ 阈值+rise 升到
+    /// stage2（升档线随 effectiveThreshold 走当前源）。
     public var stage2RiseCentiC: Int
+    /// 温度源（默认 battery = 现状零变化；v1.11 T3）。
+    public var temperatureSource: FanTemperatureSource
+    /// CPU 表面温度阈值（厘摄氏度；4000...7000）。默认 5500 = 55.0°C。
+    public var cpuSkinThresholdCentiC: Int
+    /// CPU 表面温度释放滞回（厘摄氏度；300...800）。默认 400 = 4.0°C。
+    public var cpuSkinHysteresisCentiC: Int
 
     public init(
         enabled: Bool,
@@ -41,7 +68,10 @@ public struct FanPolicy: Codable, Equatable, Sendable {
         releaseHysteresisCentiC: Int,
         speedPercent: Int,
         stage2Percent: Int,
-        stage2RiseCentiC: Int
+        stage2RiseCentiC: Int,
+        temperatureSource: FanTemperatureSource = .battery,
+        cpuSkinThresholdCentiC: Int = 5500,
+        cpuSkinHysteresisCentiC: Int = 400
     ) {
         self.enabled = enabled
         self.strategy = strategy
@@ -50,9 +80,13 @@ public struct FanPolicy: Codable, Equatable, Sendable {
         self.speedPercent = speedPercent
         self.stage2Percent = stage2Percent
         self.stage2RiseCentiC = stage2RiseCentiC
+        self.temperatureSource = temperatureSource
+        self.cpuSkinThresholdCentiC = cpuSkinThresholdCentiC
+        self.cpuSkinHysteresisCentiC = cpuSkinHysteresisCentiC
     }
 
-    /// 默认策略（方案 §4 定版：恒速 60% / 阈值 37.00°C / 滞回 2.00°C）。
+    /// 默认策略（方案 §4 定版：恒速 60% / 电池阈值 37.00°C / 滞回 2.00°C；v1.11
+    /// 新字段落 init 默认——battery / 5500 / 400，升级零回归）。
     public static let `default` = FanPolicy(
         enabled: false, strategy: .constantSpeed,
         thresholdCentiC: 3700, releaseHysteresisCentiC: 200,
@@ -66,9 +100,14 @@ public struct FanPolicy: Codable, Equatable, Sendable {
     public static let speedRangePercent = 40...100
     public static let stage2RangePercent = 60...100
     public static let stage2RiseRangeCentiC = 100...500
+    /// cpuSkin 域（v1.11 T3 定版：阈值 40-70°C / 滞回 3-8°C——Ts 表面温度贴近
+    /// die、静息基线高于电池温度，域与电池域独立）。
+    public static let cpuSkinThresholdRangeCentiC = 4000...7000
+    public static let cpuSkinHysteresisRangeCentiC = 300...800
 
     /// 校验：任何字段越界 → nil（绝不半合法——与 DaemonPolicy.validated 同纪律，
-    /// 评审 A-2 同型：持久化回流/线格式全程必须经本强校验）。
+    /// 评审 A-2 同型：持久化回流/线格式全程必须经本强校验）。新参数带默认值——
+    /// 既有调用点（PolicyStore.load/mergedPolicy/FanDomain helper）零改动不破编译。
     public static func validated(
         enabled: Bool,
         strategy: FanStrategy,
@@ -76,18 +115,65 @@ public struct FanPolicy: Codable, Equatable, Sendable {
         releaseHysteresisCentiC: Int,
         speedPercent: Int,
         stage2Percent: Int,
-        stage2RiseCentiC: Int
+        stage2RiseCentiC: Int,
+        temperatureSource: FanTemperatureSource = .battery,
+        cpuSkinThresholdCentiC: Int = 5500,
+        cpuSkinHysteresisCentiC: Int = 400
     ) -> FanPolicy? {
         guard thresholdRangeCentiC.contains(thresholdCentiC) else { return nil }
         guard hysteresisRangeCentiC.contains(releaseHysteresisCentiC) else { return nil }
         guard speedRangePercent.contains(speedPercent) else { return nil }
         guard stage2RangePercent.contains(stage2Percent) else { return nil }
         guard stage2RiseRangeCentiC.contains(stage2RiseCentiC) else { return nil }
+        guard cpuSkinThresholdRangeCentiC.contains(cpuSkinThresholdCentiC) else { return nil }
+        guard cpuSkinHysteresisRangeCentiC.contains(cpuSkinHysteresisCentiC) else { return nil }
         return FanPolicy(
             enabled: enabled, strategy: strategy,
             thresholdCentiC: thresholdCentiC, releaseHysteresisCentiC: releaseHysteresisCentiC,
-            speedPercent: speedPercent, stage2Percent: stage2Percent, stage2RiseCentiC: stage2RiseCentiC
+            speedPercent: speedPercent, stage2Percent: stage2Percent, stage2RiseCentiC: stage2RiseCentiC,
+            temperatureSource: temperatureSource,
+            cpuSkinThresholdCentiC: cpuSkinThresholdCentiC, cpuSkinHysteresisCentiC: cpuSkinHysteresisCentiC
         )
+    }
+
+    // MARK: - Codable（手写，v1.11 R1 P0——升级兼容，见类型头注记）
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, strategy, thresholdCentiC, releaseHysteresisCentiC
+        case speedPercent, stage2Percent, stage2RiseCentiC
+        case temperatureSource, cpuSkinThresholdCentiC, cpuSkinHysteresisCentiC
+    }
+
+    /// 手写 decode：7 既有字段 required（缺失仍炸——半合法不落盘语义不变），3 新
+    /// 字段 decodeIfPresent 落默认（存量 policy.json 缺键不炸整包）。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        strategy = try container.decode(FanStrategy.self, forKey: .strategy)
+        thresholdCentiC = try container.decode(Int.self, forKey: .thresholdCentiC)
+        releaseHysteresisCentiC = try container.decode(Int.self, forKey: .releaseHysteresisCentiC)
+        speedPercent = try container.decode(Int.self, forKey: .speedPercent)
+        stage2Percent = try container.decode(Int.self, forKey: .stage2Percent)
+        stage2RiseCentiC = try container.decode(Int.self, forKey: .stage2RiseCentiC)
+        temperatureSource = try container.decodeIfPresent(FanTemperatureSource.self, forKey: .temperatureSource) ?? .battery
+        cpuSkinThresholdCentiC = try container.decodeIfPresent(Int.self, forKey: .cpuSkinThresholdCentiC) ?? 5500
+        cpuSkinHysteresisCentiC = try container.decodeIfPresent(Int.self, forKey: .cpuSkinHysteresisCentiC) ?? 400
+    }
+
+    /// 手写 encode：全字段恒写（R2 P2-1 定版——新字段非可选存储；缺键省写会与
+    /// 「decodeIfPresent 落默认」形成真实配置与回读值漂移的歧义形态）。
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(strategy, forKey: .strategy)
+        try container.encode(thresholdCentiC, forKey: .thresholdCentiC)
+        try container.encode(releaseHysteresisCentiC, forKey: .releaseHysteresisCentiC)
+        try container.encode(speedPercent, forKey: .speedPercent)
+        try container.encode(stage2Percent, forKey: .stage2Percent)
+        try container.encode(stage2RiseCentiC, forKey: .stage2RiseCentiC)
+        try container.encode(temperatureSource, forKey: .temperatureSource)
+        try container.encode(cpuSkinThresholdCentiC, forKey: .cpuSkinThresholdCentiC)
+        try container.encode(cpuSkinHysteresisCentiC, forKey: .cpuSkinHysteresisCentiC)
     }
 }
 
@@ -160,7 +246,10 @@ public enum FanDecision: Equatable, Sendable {
 /// daemon 风扇状态载荷（DaemonStatus.fan 可选字段；旧 daemon 回包缺席 → nil，
 /// App 提示升级，照 capabilities/autoDischargeEnabled 先例，方案 §8）。
 /// 字段集 = 方案 §8 定版七字段 + 配置回显三字段（speedPercent/stage2Percent/
-/// stage2RiseCentiC——设置区滑杆播种的单一真相；旧客户端解码忽略未知键，向后兼容）。
+/// stage2RiseCentiC）+ v1.11 T3 温度源五字段（源线值 / cpuSkin 温度与探测结论 /
+/// cpuSkin 双阈值回显——滑杆播种单一真相，R1 P1-4）。旧客户端解码忽略未知键，
+/// 向后兼容；新字段全部可选 + 合成 Codable decodeIfPresent——旧 daemon 回包缺席
+/// → nil，App 门控升级提示。
 public struct FanStatus: Codable, Equatable, Sendable {
     public let enabled: Bool
     public let strategy: FanStrategy
@@ -181,6 +270,18 @@ public struct FanStatus: Codable, Equatable, Sendable {
     public let stage2Percent: Int
     /// 配置回显：升档温差（厘摄氏度；twoStage 滑杆播种）。
     public let stage2RiseCentiC: Int
+    /// 温度源线值（v1.11 T3；0=battery / 1=cpuSkin——UINT64 数值映射见 FanWire；
+    /// nil = 旧 daemon 未上报 → App 源 Picker 门控升级提示）。
+    public let temperatureSource: Int?
+    /// CPU 表面温度 °C（cpuSkin 源最近一次成功采样；battery 源/未采样 → nil）。
+    public let cpuSkinTempC: Double?
+    /// CPU 表面温度探测结论（true/false = sticky 探测结论；nil = 旧 daemon →
+    /// App 升级提示，R1 P3-4 三态语义）。
+    public let cpuSkinSupported: Bool?
+    /// 配置回显：CPU 表面温度阈值（厘摄氏度；滑杆播种——R1 P1-4 双阈值回显）。
+    public let cpuSkinThresholdCentiC: Int?
+    /// 配置回显：CPU 表面温度释放滞回（厘摄氏度；滑杆播种）。
+    public let cpuSkinHysteresisCentiC: Int?
 
     public init(
         enabled: Bool,
@@ -192,7 +293,12 @@ public struct FanStatus: Codable, Equatable, Sendable {
         conflictFlag: Bool,
         speedPercent: Int = FanPolicy.default.speedPercent,
         stage2Percent: Int = FanPolicy.default.stage2Percent,
-        stage2RiseCentiC: Int = FanPolicy.default.stage2RiseCentiC
+        stage2RiseCentiC: Int = FanPolicy.default.stage2RiseCentiC,
+        temperatureSource: Int? = nil,
+        cpuSkinTempC: Double? = nil,
+        cpuSkinSupported: Bool? = nil,
+        cpuSkinThresholdCentiC: Int? = nil,
+        cpuSkinHysteresisCentiC: Int? = nil
     ) {
         self.enabled = enabled
         self.strategy = strategy
@@ -204,104 +310,18 @@ public struct FanStatus: Codable, Equatable, Sendable {
         self.speedPercent = speedPercent
         self.stage2Percent = stage2Percent
         self.stage2RiseCentiC = stage2RiseCentiC
+        self.temperatureSource = temperatureSource
+        self.cpuSkinTempC = cpuSkinTempC
+        self.cpuSkinSupported = cpuSkinSupported
+        self.cpuSkinThresholdCentiC = cpuSkinThresholdCentiC
+        self.cpuSkinHysteresisCentiC = cpuSkinHysteresisCentiC
     }
 }
 
-// MARK: - XPC 线格式（方案 §8：键全 UINT64，缺席 = 保持现值；类型混淆整包拒绝）
+// MARK: - XPC 线格式
 
-/// setFan 请求载荷（缺席字段 = 保持现值，照 auto 键缺席保持语义）。
-public struct FanWire: Equatable, Sendable {
-    public var enabled: UInt64?
-    public var strategy: UInt64?
-    public var threshold: UInt64?
-    public var hysteresis: UInt64?
-    public var speed: UInt64?
-    public var stage2: UInt64?
-    public var stage2Rise: UInt64?
-
-    public init(
-        enabled: UInt64? = nil, strategy: UInt64? = nil, threshold: UInt64? = nil,
-        hysteresis: UInt64? = nil, speed: UInt64? = nil, stage2: UInt64? = nil,
-        stage2Rise: UInt64? = nil
-    ) {
-        self.enabled = enabled
-        self.strategy = strategy
-        self.threshold = threshold
-        self.hysteresis = hysteresis
-        self.speed = speed
-        self.stage2 = stage2
-        self.stage2Rise = stage2Rise
-    }
-}
-
-extension FanWire {
-    /// 合并进现有策略（缺席保持）：任何字段非 nil 时应用；结果经
-    /// `FanPolicy.validated` 强校验（非法 → nil，不半合法）。
-    public func mergedPolicy(base: FanPolicy) -> FanPolicy? {
-        FanPolicy.validated(
-            enabled: enabled.map { $0 == 1 } ?? base.enabled,
-            strategy: strategy.flatMap(FanWire.strategy(fromWire:)) ?? base.strategy,
-            thresholdCentiC: threshold.flatMap { Int(exactly: $0) } ?? base.thresholdCentiC,
-            releaseHysteresisCentiC: hysteresis.flatMap { Int(exactly: $0) } ?? base.releaseHysteresisCentiC,
-            speedPercent: speed.flatMap { Int(exactly: $0) } ?? base.speedPercent,
-            stage2Percent: stage2.flatMap { Int(exactly: $0) } ?? base.stage2Percent,
-            stage2RiseCentiC: stage2Rise.flatMap { Int(exactly: $0) } ?? base.stage2RiseCentiC
-        )
-    }
-
-    /// fanStrategy 线格式映射（定版：0=constantSpeed, 2=twoStage, 3=emergency；
-    /// **1 = 退役洞，永久 reserved 不重排不填补**——写入 SMC-PROTOCOL 公共协议段；
-    /// 退役值与未知值同语义返回 nil，调用方按值域白名单拒绝）。
-    public static func strategy(fromWire raw: UInt64) -> FanStrategy? {
-        switch raw {
-        case 0: return .constantSpeed
-        case 2: return .twoStage
-        case 3: return .emergency
-        default: return nil
-        }
-    }
-
-    public static func wireValue(_ strategy: FanStrategy) -> UInt64 {
-        switch strategy {
-        case .constantSpeed: return 0
-        case .twoStage: return 2
-        case .emergency: return 3
-        }
-    }
-}
-
-/// XPC setFan 键名与值域校验（与 FanPolicy.validated 同源：同一区间常量）。
-/// 键全部 UINT64——validFan* 供 XPCServer 臂在 validateRequest 类型白名单之后
-/// 做值域校验；缺席（nil）不发键。
-public enum FanWireKeys {
-    public static let enabled = "fanEnabled"
-    public static let strategy = "fanStrategy"
-    public static let threshold = "fanThreshold"
-    public static let hysteresis = "fanHysteresis"
-    public static let speed = "fanSpeed"
-    public static let stage2 = "fanStage2"
-    public static let stage2Rise = "fanStage2Rise"
-    /// XPC 命令字面量（XPCServer 臂 / DaemonXPCClient 共用）。
-    public static let command = "setFan"
-
-    public static func validEnabled(_ raw: UInt64) -> Bool { raw <= 1 }
-    public static func validStrategy(_ raw: UInt64) -> Bool { FanWire.strategy(fromWire: raw) != nil }
-    public static func validThreshold(_ raw: UInt64) -> Bool {
-        raw >= UInt64(FanPolicy.thresholdRangeCentiC.lowerBound) && raw <= UInt64(FanPolicy.thresholdRangeCentiC.upperBound)
-    }
-    public static func validHysteresis(_ raw: UInt64) -> Bool {
-        raw >= UInt64(FanPolicy.hysteresisRangeCentiC.lowerBound) && raw <= UInt64(FanPolicy.hysteresisRangeCentiC.upperBound)
-    }
-    public static func validSpeed(_ raw: UInt64) -> Bool {
-        raw >= UInt64(FanPolicy.speedRangePercent.lowerBound) && raw <= UInt64(FanPolicy.speedRangePercent.upperBound)
-    }
-    public static func validStage2(_ raw: UInt64) -> Bool {
-        raw >= UInt64(FanPolicy.stage2RangePercent.lowerBound) && raw <= UInt64(FanPolicy.stage2RangePercent.upperBound)
-    }
-    public static func validStage2Rise(_ raw: UInt64) -> Bool {
-        raw >= UInt64(FanPolicy.stage2RiseRangeCentiC.lowerBound) && raw <= UInt64(FanPolicy.stage2RiseRangeCentiC.upperBound)
-    }
-}
+// FanWire / FanWireKeys 自 v1.11 M2 迁往 Control/FanWire.swift（同模块拆分——
+// 本文件承载 v1.11 温度源扩面后触 400 行上限，纯移动零语义变化）。
 
 // MARK: - SMC flt 键编解码（U7 定版，方案 §2.4 条 1）
 
@@ -315,6 +335,13 @@ public enum FanSMC {
         let bits = UInt32(bytes[0]) | (UInt32(bytes[1]) << 8)
             | (UInt32(bytes[2]) << 16) | (UInt32(bytes[3]) << 24)
         return Float(bitPattern: bits)
+    }
+
+    /// 解码 flt LE 温度（°C；v1.11 T3 cpuSkin 源专用别名——Ts 系键与转速键同一
+    /// LE 打包定版，复用同一路径但独立命名，防调用点「decodeRPM 读温度」的语义
+    /// 误读）。
+    public static func decodeTemperatureC(_ bytes: [UInt8]) -> Float? {
+        decodeRPM(bytes)
     }
 
     /// 编码 flt LE。

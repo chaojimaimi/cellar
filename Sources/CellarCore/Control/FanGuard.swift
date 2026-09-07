@@ -18,11 +18,26 @@ public enum FanGuard {
     /// 冲突漂移阈值（方案 §5.3）：写后回读 ≠ 写入值 ≥2 次 → 冲突 + 会话内暂停。
     public static let conflictDriftTicks = 2
 
+    /// 生效阈值（v1.11 T3 双域分流唯一实现）：battery → thresholdCentiC（battery
+    /// 域，值零回归）/ cpuSkin → cpuSkinThresholdCentiC。decide 3 处 + targetRPM
+    /// 1 处共 4 处 threshold 引用全部经本函数（漏 targetRPM stage2Cross 会档位
+    /// 错配：decide 判升档而 targetRPM 恒返 stage1——R1 P1-1）。
+    public static func effectiveThreshold(policy: FanPolicy) -> Int {
+        policy.temperatureSource == .cpuSkin ? policy.cpuSkinThresholdCentiC : policy.thresholdCentiC
+    }
+
+    /// 生效滞回（v1.11 T3 双域各自滞回——R1 P1-2：cpuSkinHysteresis 无接线死字段
+    /// 修复；battery → releaseHysteresisCentiC / cpuSkin → cpuSkinHysteresisCentiC）。
+    public static func effectiveHysteresis(policy: FanPolicy) -> Int {
+        policy.temperatureSource == .cpuSkin ? policy.cpuSkinHysteresisCentiC : policy.releaseHysteresisCentiC
+    }
+
     /// 决策矩阵入口（**按序求值、先命中先输出**；求值序 A→B→F→C'→C→G→D→E→S
     /// 钉死——门槛/健康检查先于目标计算，方案 §5.1 表；测试含求值序反例断言）。
-    /// - temperatureC：电池温度（BatterySnapshot.temperatureC，与充电热暂停同源，
-    ///   方案 §6 温度源单点；daemon 采样失败时传上次值 + sampleHealthy=false——
-    ///   F 行在温度比较前短路，值不参与判定）。
+    /// - temperatureC：当前源温度（battery = BatterySnapshot.temperatureC，与充电
+    ///   热暂停同源 / cpuSkin = SMC Ts 读数——daemon 按策略源采样，方案 §6 温度源
+    ///   单点；daemon 采样失败时传上次值 + sampleHealthy=false——F 行在温度比较前
+    ///   短路，值不参与判定）。
     /// - currentTargetRPM：当前写入目标（boost 期最近一次成功写入；daemon 传
     ///   fanState.targetRPM）。D 例外① 去重判据（P1-1）：目标未变 → hold 不写。
     /// - 输出词：`.enterBoost`/`.rewrite` 的目标 = targetRPM 纯函数
@@ -66,8 +81,9 @@ public enum FanGuard {
                 ? .release(stateWord: .probing)
                 : .idle(stateWord: .probing)
         }
-        // C：进入 boost（!boostActive ∧ t ≥ 阈值 → 两步写进入，目标 = targetRPM）。
-        if !boostActive && temperatureC >= Double(policy.thresholdCentiC) / 100 {
+        // C：进入 boost（!boostActive ∧ t ≥ 生效阈值 → 两步写进入，目标 =
+        // targetRPM；阈值随源分流——v1.11 T3 effectiveThreshold）。
+        if !boostActive && temperatureC >= Double(effectiveThreshold(policy: policy)) / 100 {
             return .enterBoost(targetRPM: targetRPM(policy: policy, facts: facts!, temperatureC: temperatureC))
         }
         // G：boost 期能力观察窗到期（capability == .unverified ∧ boostTicks ≥ 10）
@@ -76,16 +92,17 @@ public enum FanGuard {
         if boostActive && capability == .unverified && boostTicks >= capabilityObservationTicks {
             return .hold
         }
-        // D：带内驻留（boostActive ∧ t ≥ 阈值−滞回 → **带内不写**；含 t ≥ 阈值的
-        // 热态驻留）。例外族（允许重写）：①twoStage 升档跨越（t ≥ 阈值+rise，
-        // 且**目标已变化** → rewrite——P1-1 去重：目标不变仍按 hold，消除「boost
-        // 期每 tick 常态写」的 §0.5c 违规形态；升档只发生在跨线那一 tick）；②boost
-        // 期 setFan 配置变更——后者在 daemon 侧 setFanConfig 直接触发（本函数无
-        // 配置变更输入，不落行）。twoStage 降档**不写**（hold 现值直到 release——
-        // 降档写徒增抖写面，R1 P3-4）。
-        if boostActive && temperatureC >= Double(policy.thresholdCentiC - policy.releaseHysteresisCentiC) / 100 {
+        // D：带内驻留（boostActive ∧ t ≥ 生效阈值−生效滞回 → **带内不写**；含
+        // t ≥ 阈值的热态驻留——双域各自滞回，v1.11 T3 effective*）。例外族（允许
+        // 重写）：①twoStage 升档跨越（t ≥ 生效阈值+rise，且**目标已变化** →
+        // rewrite——P1-1 去重：目标不变仍按 hold，消除「boost 期每 tick 常态写」
+        // 的 §0.5c 违规形态；升档只发生在跨线那一 tick）；②boost 期 setFan 配置
+        // 变更——后者在 daemon 侧 setFanConfig 直接触发（本函数无配置变更输入，
+        // 不落行）。twoStage 降档**不写**（hold 现值直到 release——降档写徒增
+        // 抖写面，R1 P3-4）。
+        if boostActive && temperatureC >= Double(effectiveThreshold(policy: policy) - effectiveHysteresis(policy: policy)) / 100 {
             if policy.strategy == .twoStage
-                && temperatureC >= Double(policy.thresholdCentiC + policy.stage2RiseCentiC) / 100 {
+                && temperatureC >= Double(effectiveThreshold(policy: policy) + policy.stage2RiseCentiC) / 100 {
                 let stage2Target = targetRPM(policy: policy, facts: facts!, temperatureC: temperatureC)
                 if stage2Target != currentTargetRPM {
                     return .rewrite(targetRPM: stage2Target)
@@ -115,7 +132,9 @@ public enum FanGuard {
         case .constantSpeed:
             return clamped(Float(policy.speedPercent) / 100 * maxRPM)
         case .twoStage:
-            let stage2Cross = Double(policy.thresholdCentiC + policy.stage2RiseCentiC) / 100
+            // stage2Cross 随生效阈值分流（v1.11 T3：漏改此处会档位错配——decide
+            // 判升档而本函数恒按 battery 域返 stage1，R1 P1-1）。
+            let stage2Cross = Double(effectiveThreshold(policy: policy) + policy.stage2RiseCentiC) / 100
             if temperatureC >= stage2Cross {
                 return clamped(Float(policy.stage2Percent) / 100 * maxRPM)
             }

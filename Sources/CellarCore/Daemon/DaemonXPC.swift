@@ -199,7 +199,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.16.0-alpha"
+    public static let daemonVersion = "0.17.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -263,6 +263,10 @@ public enum DaemonXPC {
             if let speed = fan.speed { xpc_dictionary_set_uint64(message, FanWireKeys.speed, speed) }
             if let stage2 = fan.stage2 { xpc_dictionary_set_uint64(message, FanWireKeys.stage2, stage2) }
             if let stage2Rise = fan.stage2Rise { xpc_dictionary_set_uint64(message, FanWireKeys.stage2Rise, stage2Rise) }
+            // v1.11 T3 温度源三键（全 UINT64——fanSource 数值映射 0=battery/1=cpuSkin）。
+            if let source = fan.source { xpc_dictionary_set_uint64(message, FanWireKeys.source, source) }
+            if let cpuThreshold = fan.cpuThreshold { xpc_dictionary_set_uint64(message, FanWireKeys.cpuThreshold, cpuThreshold) }
+            if let cpuHysteresis = fan.cpuHysteresis { xpc_dictionary_set_uint64(message, FanWireKeys.cpuHysteresis, cpuHysteresis) }
         }
         if let calSched {
             if let enabled = calSched.enabled { xpc_dictionary_set_uint64(message, CalibrationScheduleWireKeys.enabled, enabled) }
@@ -284,7 +288,8 @@ public enum DaemonXPC {
     /// （调用方回错误包，不崩溃）。upper/hysteresis 缺席按 0 处理；auto 缺席 → nil
     /// （值域校验（0/1）由 XPCServer 臂负责——与 upper/hysteresis 同纪律）。
     /// Phase 5 v1.1：setFan 七键（fanEnabled/fanStrategy/fanThreshold/fanHysteresis/
-    /// fanSpeed/fanStage2/fanStage2Rise）全 UINT64 白名单——任一出现但类型混淆
+    /// fanSpeed/fanStage2/fanStage2Rise）+ v1.11 T3 三键（fanSource/fanCpuThreshold/
+    /// fanCpuHysteresis）全 UINT64 白名单——任一出现但类型混淆
     /// → 整包拒绝；全部缺席 → fan == nil（非 setFan 命令天然兼容）。值域校验
     /// （validFan*）由 XPCServer 臂负责（与 auto 同纪律）。
     /// Phase 5 v1.4：setCalibrationSchedule 三键（calSchedEnabled/calSchedIntervalDays/
@@ -327,7 +332,8 @@ public enum DaemonXPC {
             guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
             auto = xpc_dictionary_get_uint64(msg, autoKey)
         }
-        // 风扇七键：出现即必须 UINT64（STRING/BOOL 混入 → 整包拒绝）；缺席保持 nil。
+        // 风扇十键（v1.11 T3 +3：fanSource/fanCpuThreshold/fanCpuHysteresis）：出现
+        // 即必须 UINT64（STRING/BOOL 混入 → 整包拒绝）；缺席保持 nil。
         var fan = FanWire()
         for (key, kind) in [
             (FanWireKeys.enabled, \FanWire.enabled),
@@ -337,6 +343,9 @@ public enum DaemonXPC {
             (FanWireKeys.speed, \FanWire.speed),
             (FanWireKeys.stage2, \FanWire.stage2),
             (FanWireKeys.stage2Rise, \FanWire.stage2Rise),
+            (FanWireKeys.source, \FanWire.source),
+            (FanWireKeys.cpuThreshold, \FanWire.cpuThreshold),
+            (FanWireKeys.cpuHysteresis, \FanWire.cpuHysteresis),
         ] {
             if let value = xpc_dictionary_get_value(msg, key) {
                 guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
@@ -345,6 +354,7 @@ public enum DaemonXPC {
         }
         let anyFanKeyPresent = fan.enabled != nil || fan.strategy != nil || fan.threshold != nil
             || fan.hysteresis != nil || fan.speed != nil || fan.stage2 != nil || fan.stage2Rise != nil
+            || fan.source != nil || fan.cpuThreshold != nil || fan.cpuHysteresis != nil
         // 校准调度三键：出现即必须 UINT64（类型混淆 → 整包拒绝）；缺席保持 nil。
         var calSched = CalibrationScheduleWire()
         for (key, kind) in [

@@ -36,8 +36,8 @@ public struct StatusLineView: View {
                     cycleSegment(snapshot)
                     // 缺席隐藏：电池供电时 adapter == nil 常态缺席，留空位保持
                     // 2×3 网格形状稳定（温度/循环列不错位）。
-                    if let adapter = snapshot.adapter, !adapterParts(adapter).isEmpty {
-                        adapterSegment(adapter)
+                    if let adapter = snapshot.adapter, !adapterParts(adapter, telemetry: snapshot.telemetry).isEmpty {
+                        adapterSegment(adapter, telemetry: snapshot.telemetry)
                     }
                 }
             }
@@ -151,19 +151,29 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 适配器段：W（adapter.watts 实时数据，规格 §7.2）+ 名称；均缺席 → 整段
-    /// 隐藏（调用处判定）。名称过长限宽自然换行——零截断，不复用原流式布局的
-    /// 压缩截断手段。
-    private func adapterSegment(_ adapter: AdapterInfo) -> some View {
+    /// 适配器段：telemetry 在场 → 实时 W（SystemPowerIn/1000 一位小数）+ 额定副注
+    /// （v1.11 T1）；缺席 → 额定 W（现状形态——输出逐字节一致，既有 golden 零修改
+    /// 的机械保证：fixture 均无 PowerTelemetryData 键）+ 名称；均缺席 → 整段隐藏
+    /// （调用处判定）。名称过长限宽自然换行——零截断。
+    private func adapterSegment(_ adapter: AdapterInfo, telemetry: PowerTelemetry?) -> some View {
         segment(caption: CellarL10n.s("statusline.adapter")) {
-            Text(adapterParts(adapter).joined(separator: " · "))
+            Text(adapterParts(adapter, telemetry: telemetry).joined(separator: " · "))
                 .frame(maxWidth: 140, alignment: .leading)
         }
     }
 
-    private func adapterParts(_ adapter: AdapterInfo) -> [String] {
+    private func adapterParts(_ adapter: AdapterInfo, telemetry: PowerTelemetry?) -> [String] {
         var parts: [String] = []
-        if let watts = adapter.watts {
+        if let systemPowerMW = telemetry?.systemPowerInMW {
+            // 实时 W（一位小数）+ 额定副注（复合键）；额定缺席 → 仅实时值（裸 W 形态
+            // 与既有 "\(watts) W" 同语汇）。
+            let liveText = String(format: "%.1f", Double(systemPowerMW) / 1000)
+            if let rated = adapter.watts {
+                parts.append(CellarL10n.s("statusline.adapter.live", liveText, rated))
+            } else {
+                parts.append("\(liveText) W")
+            }
+        } else if let watts = adapter.watts {
             parts.append("\(watts) W")
         }
         if let name = adapter.name {

@@ -370,6 +370,13 @@ struct Main {
         // gating/锁存自动解除防卡死）/wire 三态/policy 仅丢字段分层——纯函数面，
         // 零 IOKit 代码，M1 只依赖读侧事实）。
         try runMagSafeLEDDomainScenarios()
+        // Phase 5 v1.11 M2：实时功率遥测域（PowerTelemetryData 提取四态 + AppConfig
+        // windowBatteryIconVisible round-trip——T1/T2 显示面场景，BatteryTelemetryDomain）。
+        try runBatteryTelemetryDomainScenarios()
+        // Phase 5 v1.11 M2：风扇双温度源域（FanPolicy 手写 Codable 兼容/effective*
+        // 双域/decide·targetRPM cpuSkin 路径/wire 三键值域与缺席保持/FanStatus 兼容/
+        // doctor 分支——FanTemperatureSourceDomain）。
+        try runFanTemperatureSourceDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

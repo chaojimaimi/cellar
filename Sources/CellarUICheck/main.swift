@@ -85,13 +85,15 @@ private let fixedTimestamp = Date(timeIntervalSince1970: 1_700_000_000)
 /// 真实型快照构造：走 BatterySnapshotParser 纯函数（与生产同一解析路径），字段
 /// 形状仿 AppleSmartBattery 注册表实测（BatterySnapshot.swift 注记）。
 /// temperatureCentiC 可注入（默认 3100 = 31.0 °C——WP1 温度暂停态需 40+ 高温）。
+/// telemetry 可注入（v1.11 T1——PowerTelemetryData 遥测态快照，默认缺席零回归）。
 private func makeSnapshot(
     percent: Int,
     isCharging: Bool,
     externalConnected: Bool,
     amperageMA: Int,
     temperatureCentiC: Int = 3_100,
-    adapter: [String: Any]?
+    adapter: [String: Any]?,
+    telemetry: [String: Any]? = nil
 ) -> BatterySnapshot? {
     var props: [String: Any] = [
         "CurrentCapacity": percent,
@@ -113,6 +115,9 @@ private func makeSnapshot(
     ]
     if let adapter {
         props["AdapterDetails"] = adapter
+    }
+    if let telemetry {
+        props["PowerTelemetryData"] = telemetry
     }
     // 造数失败 = 造数错误（非容错路径），fail-fast——评审 M1：return nil 会让
     // --regen 把「遥测不可用」退化态静默烤成 golden（stderr 一行 + 退出码 0），
@@ -142,7 +147,7 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 276 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 282 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
@@ -154,7 +159,9 @@ private func wrap(
 // Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增；
 // Phase 5 v1.8 自 246 扩 258——MagSafe 指示灯区 2 态 12 新增；
 // Phase 5 v1.9 自 258 扩 270——hero 仪表 + 网格底纹容器 2 态 12 新增；
-// Phase 5 v1.10 自 270 扩 276——MagSafe LED 轻提示态 6 新增）
+// Phase 5 v1.10 自 270 扩 276——MagSafe LED 轻提示态 6 新增；
+// Phase 5 v1.11 自 276 扩 282——状态行遥测态 6 新增（StatusLine_telemetry：
+// StatusLineView 携带 PowerTelemetryData 样例，适配器段实时+额定复合形态））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -267,6 +274,30 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
+            // v1.11 T1 遥测态 1 case ×3 风格 ×2 外观 = 6 张（276 → 282，全部全新
+            // 文件——新增非扰动）：StatusLineView 携带 PowerTelemetryData 样例
+            // （SystemPowerIn 62767 ≈ 19446×3227/1e6 闭环实测形态）——适配器段
+            // 「62.8 W（额定 96 W）」实时+额定复合形态钉死。--regen
+            // --only=StatusLine_telemetry 只跑本组。
+            let telemetryCharging = makeSnapshot(
+                percent: 85, isCharging: true, externalConnected: true,
+                amperageMA: -1_800,
+                adapter: ["Watts": 96, "AdapterVoltage": 20_150, "Current": 4_770,
+                          "Name": "96W USB-C Power Adapter", "Description": "adapter",
+                          "IsWireless": false],
+                telemetry: ["SystemPowerIn": 62_767, "SystemLoad": 30_540,
+                            "BatteryPower": 32_227, "AdapterEfficiencyLoss": 8_000,
+                            "SystemVoltageIn": 19_446, "SystemCurrentIn": 3_227])
+            cases.append(SnapshotCase(
+                name: "StatusLine_telemetry_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(snapshot: telemetryCharging)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
             // 功率流向 3 态（充电/停充漂浮/电池供电）×4（WP2' §4.2 新增 12 张）：
             // 输入 = 快照两字段投影（externalConnected/isCharging）；onBattery 以
             // (false, false) 入阵（(false, true) 为异常过渡态按 .charging 呈现，映射
@@ -346,23 +377,29 @@ private func buildCases() -> [SnapshotCase] {
 
             // Phase 5 v1.1 风扇区 2 态（关闭/两级分段开启）×4（76 → 84，新增 8 张）：
             // 参数驱动组件直接构造（onApply 空闭包——渲染无副作用；on 态钉死
-            // twoStage——滑杆参数显形的代表形态 + 状态行「自动」）。
+            // twoStage——滑杆参数显形的代表形态 + 状态行「自动」）。v1.11 T3：
+            // FanStatus 新五参 + currentTempC 显式补参（feedback 类比——v1.10 默认参
+            // 先例保证输出可控：battery 源形态，温度 31.0 = fixture 电池温度口径）。
             let fanSections: [(String, FanSectionView)] = [
                 ("off", FanSectionView(
                     fan: FanStatus(
                         enabled: false, strategy: .constantSpeed, state: .off,
                         targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
-                        conflictFlag: false
+                        conflictFlag: false, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
                     ),
-                    busy: false, onApply: { _ in })),
+                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
                 ("on", FanSectionView(
                     fan: FanStatus(
                         enabled: true, strategy: .twoStage, state: .automatic,
                         targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
                         conflictFlag: false, speedPercent: 50, stage2Percent: 80,
-                        stage2RiseCentiC: 300
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
                     ),
-                    busy: false, onApply: { _ in })),
+                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
             ]
             for (stateName, section) in fanSections {
                 cases.append(SnapshotCase(

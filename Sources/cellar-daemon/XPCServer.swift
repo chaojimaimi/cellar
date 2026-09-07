@@ -151,13 +151,18 @@ final class XPCServer: @unchecked Sendable {
                 send(errorReply("setFan 缺少风扇参数"), to: peer.connection)
                 return
             }
-            // 七键值域校验（类型混淆已由 validateRequest 整包拒绝——此处只查值域）。
+            // 十键值域校验（类型混淆已由 validateRequest 整包拒绝——此处只查值域）。
             if let value = fan.enabled, !FanWireKeys.validEnabled(value) {
                 send(errorReply("风扇开关参数越界（0/1）"), to: peer.connection)
                 return
             }
             if let value = fan.strategy, !FanWireKeys.validStrategy(value) {
                 send(errorReply("风扇策略参数非法（0/2/3，1 已退役）"), to: peer.connection)
+                return
+            }
+            if let value = fan.source, !FanWireKeys.validSource(value) {
+                // v1.11 T3：fanSource 白名单 0/1（0=battery 1=cpuSkin），越界拒绝。
+                send(errorReply("风扇温度源参数非法（0=电池温度 1=CPU 表面温度）"), to: peer.connection)
                 return
             }
             if let value = fan.threshold, !FanWireKeys.validThreshold(value) {
@@ -178,6 +183,14 @@ final class XPCServer: @unchecked Sendable {
             }
             if let value = fan.stage2Rise, !FanWireKeys.validStage2Rise(value) {
                 send(errorReply("风扇升档温差参数越界（100-500 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            if let value = fan.cpuThreshold, !FanWireKeys.validCpuThreshold(value) {
+                send(errorReply("风扇 CPU 表面阈值参数越界（4000-7000 厘摄氏度）"), to: peer.connection)
+                return
+            }
+            if let value = fan.cpuHysteresis, !FanWireKeys.validCpuHysteresis(value) {
+                send(errorReply("风扇 CPU 表面滞回参数越界（300-800 厘摄氏度）"), to: peer.connection)
                 return
             }
             do {

@@ -1,3 +1,4 @@
+import AppKit
 import CellarCore
 import CellarUI
 import SwiftUI
@@ -18,6 +19,7 @@ import SwiftUI
 struct MainWindowView: View {
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var installer: DaemonInstaller
+    @EnvironmentObject private var displaySettings: DisplaySettingsController
     @Environment(\.cellarTheme) private var theme
 
     @State private var selection: MainWindowPage = .dashboard
@@ -74,6 +76,7 @@ struct MainWindowView: View {
     /// 「芯仓」显示字体主文字色 + 「CELLAR」字距小字。SF Symbol lightbulb.fill
     /// 替代 mock 自绘灯形（全 macOS 版本存在，无需运行时检查）；accent 无
     /// ink token——主文字走默认 foregroundStyle（primary，G2 零字面量）。
+    /// v1.11 T2：尾部追加标题栏电池图标（通用页开关默认关——关即现状）。
     private var brandHeader: some View {
         HStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 10)
@@ -94,7 +97,52 @@ struct MainWindowView: View {
                     .foregroundStyle(theme.tertiaryText)
                     .tracking(2)
             }
+            windowBatteryIcon
         }
+    }
+
+    /// 标题栏电池图标（v1.11 T2 D-2c）：开关开 ∧ 快照电量非 nil 才渲染（快照不可
+    /// 达 = 无电量可表达，不渲染——v1.10 快照不可达教训）。随电量 variableValue
+    /// 连续填充；充电态单体 bolt 变体（不用 variableValue——bolt 即语义）。
+    @ViewBuilder
+    private var windowBatteryIcon: some View {
+        if displaySettings.windowBatteryIconVisible,
+           let snapshot = statusController.batterySnapshot {
+            let resolved = resolvedBatterySymbol(
+                percent: snapshot.percent, isCharging: snapshot.isCharging
+            )
+            Image(systemName: resolved.name, variableValue: resolved.variableValue)
+                .font(.system(size: 16))
+                .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    /// 电池符号解析（三级回退，照 MenuBarIconLabel resolvedSymbol 先例——候选表
+    /// 静态维护不可靠，主选不存在时 NSImage(systemSymbolName:) 探测降级，保证恒有
+    /// 可见字形）：主选（充电 bolt / 非充电连续 variableValue）→ 离散档位
+    /// battery.0/25/50/75/100 → 终极兜底 circle.dashed。
+    private func resolvedBatterySymbol(percent: Int, isCharging: Bool) -> (name: String, variableValue: Double?) {
+        func exists(_ symbol: String) -> Bool {
+            NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
+        }
+        if isCharging {
+            let bolt = "battery.100percent.bolt"
+            if exists(bolt) { return (bolt, nil) }
+        } else {
+            let variable = "battery.100percent"
+            if exists(variable) { return (variable, Double(percent) / 100) }
+        }
+        // 回退离散档位（variableValue 不被档位符号消费，传 nil）。
+        let discrete: String
+        switch percent {
+        case ..<13: discrete = "battery.0percent"
+        case ..<38: discrete = "battery.25percent"
+        case ..<63: discrete = "battery.50percent"
+        case ..<88: discrete = "battery.75percent"
+        default: discrete = "battery.100percent"
+        }
+        if exists(discrete) { return (discrete, nil) }
+        return ("circle.dashed", nil)
     }
 
     /// 单导航行：Button = 点击设 selection（无 List selection 系统行为）。

@@ -21,6 +21,7 @@ import UserNotifications
 struct GeneralSections: View {
     @EnvironmentObject private var loginItems: LoginItemController
     @EnvironmentObject private var statusController: StatusController
+    @EnvironmentObject private var displaySettings: DisplaySettingsController
     @Environment(\.cellarTheme) private var theme
     /// 通知授权态（nil = 查询中；getNotificationSettings 异步回主线程刷新）。
     @State private var notificationAuthorized: Bool?
@@ -84,6 +85,14 @@ struct GeneralSections: View {
                 set: { loginItems.toggle($0) }
             ))
             .disabled(loginItems.busy)
+
+            // v1.11 T2：标题栏电池图标显隐（默认关——开即品牌区追加随电量图标，
+            // 关即回现状；绑定形态照 launchAtLogin 行先例，loaded 前禁用防半程回写）。
+            Toggle(CellarL10n.s("settings.windowBatteryIcon"), isOn: Binding(
+                get: { displaySettings.windowBatteryIconVisible },
+                set: { _ in displaySettings.toggleWindowBatteryIcon() }
+            ))
+            .disabled(!displaySettings.loaded)
 
             labelRow(CellarL10n.s("settings.registrationStatus")) {
                 HStack {
@@ -159,14 +168,28 @@ struct GeneralSections: View {
 
             // Phase 5 v1.1：风扇智能降温区（参数驱动组件，照校准区先例——开关两步
             // 内嵌确认/策略 Picker/阈值与转速滑杆/twoStage 条件参数/八态状态行；
-            // 旧 daemon（fan==nil）控件禁用 + 升级提示）。
+            // 旧 daemon（fan==nil）控件禁用 + 升级提示）。v1.11 T3：currentTempC
+            // 注入当前源温度（battery 源 = 1s 遥测电池温度 / cpuSkin 源 = daemon
+            // 回显——FanStatus 无电池温度回显字段，battery 侧只有 App 层快照可给）。
             FanSectionView(
                 fan: statusController.fanStatus,
                 busy: statusController.busy,
                 onApply: { statusController.setFan($0) },
-                showsTitle: false
+                showsTitle: false,
+                currentTempC: currentFanTempC
             )
         }
+    }
+
+    /// 当前源温度注入（v1.11 T3 D-3f 定版数据源）：cpuSkin 源（线值 1）取
+    /// FanStatus.cpuSkinTempC；battery 源/旧 daemon（键缺席按 battery 口径）取
+    /// batterySnapshot.temperatureC。
+    private var currentFanTempC: Double? {
+        let fan = statusController.fanStatus
+        if fan?.temperatureSource == 1 {
+            return fan?.cpuSkinTempC
+        }
+        return statusController.batterySnapshot?.temperatureC
     }
 
     /// 热保护节：ThermalSectionView 原样嵌入（showsTitle false——标题由节头
