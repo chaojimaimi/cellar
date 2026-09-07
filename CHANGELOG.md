@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.7-alpha] - 2026-09-07
+
+### Fixed
+
+- **菜单栏电池图标徽标缺失修复（第六轮，自绘位图路线定版）**：0.18.6 五档符号方案的充电/维持徽标（第二个 Image）仍被菜单栏 label 渲染管道丢弃（真机截图实证：电量填充渲染而徽标消失）。本轮以**最小 App + 真菜单栏截图对照 spike** 一次性实证七种候选形态：`Image(nsImage:)` 自绘位图整体渲染、位图内合成元素全部可见、非模板彩色位图显色；双 Image 平铺的第二个必被丢弃（复现）。据此电池图标改为**单一自绘 NSImage 位图**：电池轮廓 + **连续比例填充**（六轮以来首次回归 demo 设计的连续形态，0.18.6 五档量化退役）+ 充电闪电/维持插头徽标合成进位图（destinationOut 挖对比环，任何填充量下可读）+ 低电量（< 15%）红色实绘（非模板位图，spike 实证显色）。
+- **部署修复**：install 版本核对报错方向修正前先解决 CLI 半旧构建问题（`swift build -c release` 完整重建后三方版本一致）。
+
+### 备注
+
+- 菜单栏 label 渲染边界定版补全（六轮实证链）：除裸 Image/Text + HStack 平铺外，`Image(nsImage:)` 单位图为**唯一可行的复合形态**——填充、徽标、着色全部在一张位图内合成。
+- 生产渲染器代码原样抽入 spike 编译并逐状态像素验证后上车（流程中抓出 NSBezierPath 合成参数与 rep.size 回设两问题）。
+- 仅菜单栏 label 改动，充电执法路径与 App 层组装零改动。
+
 ## [0.18.6-alpha] - 2026-09-07
 
 ### Fixed
