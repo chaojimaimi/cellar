@@ -220,6 +220,24 @@ struct LoginItemSectionView: View {
     }
 }
 
+/// 菜单栏电量百分比显隐开关行（v1.10 M2 T1 单入口落点，D-1d 定版：面板页脚
+/// FooterLinks 邻位——就地切换最顺手；主窗口不加，防双处同步复杂度）。
+/// 绑定形态照 LoginItemSectionView 先例：get 读内存态 / set 走控制器 toggle()
+/// （写盘经共享 store actor 原子 update，第四写者互不覆盖）；loaded 前禁用
+/// （防半程态回写，StyleController.loaded 先例）。
+struct MenuBarPercentageRow: View {
+    @EnvironmentObject private var menuBarSettings: MenuBarSettingsController
+
+    var body: some View {
+        Toggle(CellarL10n.s("panel.menuBar.percentage"), isOn: Binding(
+            get: { menuBarSettings.percentageVisible },
+            set: { _ in menuBarSettings.toggle() }
+        ))
+        .disabled(!menuBarSettings.loaded)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// 面板页脚薄包装（Phase 5 v1.2 §2.1/§2.2；M3.5：设置窗退役——设置链接及
 /// openSettings 接线一并移除，回两链接形态）：参数驱动组件 FooterLinksView
 /// 的 App 侧桥接（照 CalibrationSection 先例）——组件零 App 符号依赖

@@ -174,11 +174,20 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// WP5 首启引导完成标志（§2.4；默认 false——旧 app-config.json 缺 key 时
     /// 经 decodeIfPresent 兼容为 false）。
     public var onboardingCompleted: Bool
+    /// 菜单栏电量百分比显隐（v1.10 M2；nil = 未设置 = 关——照 style: String?
+    /// 先例，旧 app-config.json 缺 key 经 decodeIfPresent 兼容为 nil）。
+    public var menuBarPercentageVisible: Bool?
 
-    public init(launchAtLogin: Bool = false, style: String? = nil, onboardingCompleted: Bool = false) {
+    public init(
+        launchAtLogin: Bool = false,
+        style: String? = nil,
+        onboardingCompleted: Bool = false,
+        menuBarPercentageVisible: Bool? = nil
+    ) {
         self.launchAtLogin = launchAtLogin
         self.style = style
         self.onboardingCompleted = onboardingCompleted
+        self.menuBarPercentageVisible = menuBarPercentageVisible
     }
 
     public static let `default` = AppConfig()
@@ -190,6 +199,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case launchAtLogin
         case style
         case onboardingCompleted
+        case menuBarPercentageVisible
     }
 
     /// 自定义 decode：新键可缺席（旧文件兼容）——decodeIfPresent ?? false；
@@ -199,15 +209,17 @@ public struct AppConfig: Codable, Equatable, Sendable {
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         style = try container.decodeIfPresent(String.self, forKey: .style)
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
+        menuBarPercentageVisible = try container.decodeIfPresent(Bool.self, forKey: .menuBarPercentageVisible)
     }
 
-    /// 自定义 encode：onboardingCompleted 恒写（前向兼容）；style 沿用 encodeIfPresent
-    /// （nil 缺席，与旧合成编码一致）。
+    /// 自定义 encode：onboardingCompleted 恒写（前向兼容）；style / menuBarPercentageVisible
+    /// 沿用 encodeIfPresent（nil 缺席，与旧合成编码一致）。
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(launchAtLogin, forKey: .launchAtLogin)
         try container.encodeIfPresent(style, forKey: .style)
         try container.encode(onboardingCompleted, forKey: .onboardingCompleted)
+        try container.encodeIfPresent(menuBarPercentageVisible, forKey: .menuBarPercentageVisible)
     }
 }
 

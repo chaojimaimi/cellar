@@ -99,8 +99,22 @@ final class OnboardingController: ObservableObject {
     // MARK: - 步骤前进（纯转移函数消费，UI 不自行计算）
 
     /// 前进（welcome「开始」/conflictCheck「继续」/install 边缘「继续」）。
-    func advance(gate: ConflictGateOutcome, registration: RegistrationStatus) {
-        advanceStep(gate: gate, registration: registration)
+    /// v1.10 M2：manualHealthyRunning 旁路透传（默认 false 语义零变化）——引导页
+    /// 健康手工 daemon 弱化分支的「继续」走此入口（onboardingNext install→limit
+    /// 旁路；其他调用点不传参即原语义）。
+    func advance(
+        gate: ConflictGateOutcome,
+        registration: RegistrationStatus,
+        manualHealthyRunning: Bool = false
+    ) {
+        let leavingInstall = step == .install
+        advanceStep(gate: gate, registration: registration, manualHealthyRunning: manualHealthyRunning)
+        // v1.10 code-review P2：旁路用户不走安装，永不满足 registrationChanged 的
+        // enabled 接续臂——通知授权请求在此补触发（requestAuthorization 幂等，
+        // 与 installSucceeded 同点；漏触发 = 通知功能对该人群永久静默失效）。
+        if manualHealthyRunning && leavingInstall {
+            installSucceeded()
+        }
     }
 
     /// 软警示确认：「仍要继续」→ genericConfirmed 落位后前进（放行 install）。
@@ -121,8 +135,15 @@ final class OnboardingController: ObservableObject {
         markCompleted()
     }
 
-    private func advanceStep(gate: ConflictGateOutcome, registration: RegistrationStatus) {
-        guard let next = onboardingNext(step: step, gate: gate, registration: registration) else { return }
+    private func advanceStep(
+        gate: ConflictGateOutcome,
+        registration: RegistrationStatus,
+        manualHealthyRunning: Bool = false
+    ) {
+        guard let next = onboardingNext(
+            step: step, gate: gate, registration: registration,
+            manualHealthyRunning: manualHealthyRunning
+        ) else { return }
         step = next
     }
 

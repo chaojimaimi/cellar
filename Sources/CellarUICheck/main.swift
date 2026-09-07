@@ -142,7 +142,7 @@ private func wrap(
         .transaction { $0.animation = nil }
 }
 
-// MARK: 270 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
+// MARK: 276 案例清单（WP2'：仪表 20 + 状态行 20 + 功率流向 12 + 横幅 12；
 // WP1 自 60 扩 64——状态行温度暂停态 4 新增；WP3 自 64 扩 76——校准区 3 态 12 新增；
 // Phase 5 v1.1 自 76 扩 84——风扇区 2 态 8 新增；Phase 5 v1.2 页脚 自 84 扩 92——
 // 页脚链接 2 态 8 新增；Phase 5 v1.2 仪表板 自 92 扩 108——功率流三角图 3 态 12
@@ -153,7 +153,8 @@ private func wrap(
 // Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
 // Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增；
 // Phase 5 v1.8 自 246 扩 258——MagSafe 指示灯区 2 态 12 新增；
-// Phase 5 v1.9 自 258 扩 270——hero 仪表 + 网格底纹容器 2 态 12 新增）
+// Phase 5 v1.9 自 258 扩 270——hero 仪表 + 网格底纹容器 2 态 12 新增；
+// Phase 5 v1.10 自 270 扩 276——MagSafe LED 轻提示态 6 新增）
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -396,6 +397,25 @@ private func buildCases() -> [SnapshotCase] {
                     })
                 })
             }
+
+            // v1.10 M2 LED 轻提示态 1 case ×3 风格 ×2 外观 = 6 张（270 → 276，
+            // 全部全新文件——新增非扰动）：组件内反馈行（feedback 非 nil）呈现。
+            // 真实型构造：样例文案 = LED 失败路径实产串（panel.banner.unreachable
+            // catalog 解析；错误态为常驻稳态——成功 5s 自动清不留快照面，R2 P2）。
+            // --regen --only=MagSafeLed_feedback 只跑本组。
+            cases.append(SnapshotCase(
+                name: "MagSafeLed_feedback_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    MagSafeLedSectionView(
+                        mode: nil, conflict: false, busy: false, showsTitle: true,
+                        feedback: CellarL10n.s("panel.banner.unreachable"),
+                        onApply: { _ in }
+                    )
+                    .frame(width: 304, alignment: .leading)
+                })
+            })
             // Phase 5 v1.2 页脚链接 2 态（idle/hover）×4（84 → 92，新增 8 张）：
             // 参数驱动组件直接构造（onMainWindow/onQuit 空闭包——渲染无副作用）；
             // M3.5 两链接形态（左「主窗口」+ 右「退出」，设置链接随设置窗

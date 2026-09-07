@@ -196,11 +196,15 @@ struct GeneralSections: View {
             let led = statusController.magSafeLedStatus
             if let led {
                 if led.supported {
+                    // v1.10 M2：LED 禁用源 = OR 接法（busy || magSafeLedPending）——
+                    // LED 自身在途与全局控制在途两情形都禁用；LED 切换不再置全局
+                    // busy，风扇/热保护不再被 LED 往返闪灰（本批修复目标）。
                     MagSafeLedSectionView(
                         mode: led.mode,
                         conflict: led.conflict,
-                        busy: statusController.busy,
+                        busy: statusController.busy || statusController.magSafeLedPending,
                         showsTitle: false,
+                        feedback: statusController.magSafeLedFeedback,
                         onApply: { statusController.setMagSafeLed($0) }
                     )
                 } else {

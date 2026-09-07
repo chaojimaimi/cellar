@@ -18,6 +18,10 @@ struct CellarApp: App {
     // WP3 §3.3：面板风格控制器——启动异步 load 持久化偏好，@Published style 驱动
     // ThemeProvider 全树重算（加载完成前呈现 .native，闪变已登记为已知态）。
     @StateObject private var styleController = StyleController(store: CellarApp.sharedConfigStore)
+    // v1.10 M2 T1：菜单栏设置控制器（AppConfig 第四写者）——load 在自身 init
+    // 自标定（App.init 早期访问 @StateObject 临时实例陷阱，StyleController 同款）；
+    // MenuBarExtra label 闭包 + 面板页脚 Toggle 双消费源。
+    @StateObject private var menuBarSettings = MenuBarSettingsController(store: CellarApp.sharedConfigStore)
     /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
     private let notifications = NotificationService()
     /// Phase 5 v1.3 统计采样器：非可观察（视图不直接读），60s 常驻采样循环——
@@ -60,9 +64,12 @@ struct CellarApp: App {
                     .environmentObject(statusController)
                     .environmentObject(loginItems)
                     .environmentObject(onboarding)
+                    .environmentObject(menuBarSettings)
             }
         } label: {
-            MenuBarIconLabel(controller: statusController)
+            // v1.10 M2：双观察源直注（StatusController 图标态 + MenuBarSettingsController
+            // 百分比显隐——更新传播见 MenuBarIconLabel 注记）。
+            MenuBarIconLabel(controller: statusController, settings: menuBarSettings)
         }
         .menuBarExtraStyle(.window)
         // Phase 5 v1.2 §2.1 主窗口（macOS 13+ Window scene）：ThemeProvider 全树

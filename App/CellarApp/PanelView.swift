@@ -116,6 +116,11 @@ struct PanelView: View {
 
             Divider()
 
+            // v1.10 M2：菜单栏电量百分比显隐（FooterLinks 邻位单入口，D-1d）。
+            MenuBarPercentageRow()
+
+            Divider()
+
             PanelFooterView()
         }
         .padding(18)

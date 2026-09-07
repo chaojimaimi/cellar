@@ -8,7 +8,7 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.5.0-alpha** — smart fan cooling (v1.1): automatically boosts the built-in fan when the battery temperature exceeds the threshold (default 37 °C, independent of the charge-side thermal pause configuration), with adjustable threshold/speed and strategies (constant-speed cooling [default] / two-stage / full-speed emergency), an opt-in toggle off by default, runtime capability verification (honestly disabled on unsupported machines), and automatic restoration of system fan control on exit/sleep/anomaly. Phase 4 battery protection (charge-side thermal pause, optional auto-discharge, one-click battery calibration, instant enforcement on plug/unplug) shipped with 0.4.0-alpha; all Phase 3 capabilities (theme system, Charge to Full once, Discharge to Limit, power-flow graph, battery health, zh/en bilingual, eleven-check `doctor`) shipped with 0.3.1-alpha; core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.16.0-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling, optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, and zh/en bilingual UI. This batch is an experience-maintenance release: a menu-bar battery percentage toggle, a fix for the general-page controls flickering gray during MagSafe LED switches, and aligning the onboarding guard copy with the general page's softened wording. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
@@ -66,12 +66,12 @@ A menu-bar icon resident GUI (App/CellarApp.xcodeproj), sharing the same core an
 
 **Cellar.app must be placed in `/Applications`**. The embedded root daemon is launched by launchd; empirically, launchd refuses to spawn the process from deep paths such as the home directory (repeated spawn failures, while the same binary runs fine as a user-space process); installed in `/Applications`, the daemon persists normally. Do not run the App directly from the Downloads folder or similar locations.
 
-### Gatekeeper
+### First launch of the unsigned app
 
 The App is ad-hoc signed and not notarized; on first launch, if it reports “App is damaged” or cannot be opened:
 
-1. **Primary path**: run `xattr -cr /Applications/Cellar.app` in Terminal, then reopen
-2. **Alternative**: System Settings → Privacy & Security → “Open Anyway”
+1. **Primary path (GUI)**: try opening it once (it may be blocked) → open **System Settings → Privacy & Security**, find the “**Open Anyway**” prompt for Cellar in the Security section → click it, confirm, then launch the App again
+2. **Note (command line)**: if no such prompt appears, run `xattr -cr /Applications/Cellar.app` in Terminal to clear the quarantine flag, then reopen
 
 (The right-click → “Open” bypass has been removed since macOS 15; do not attempt it.)
 
@@ -145,14 +145,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 507 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 511 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 89.97%)
-swift run CellarUICheck     # 270 UI snapshot comparisons (three-style matrix) + localization completeness gate
+                            # pure logic, ≥80% · currently 89.99%)
+swift run CellarUICheck     # 276 UI snapshot comparisons (three-style matrix) + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

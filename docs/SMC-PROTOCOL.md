@@ -22,10 +22,10 @@ The parameter buffer is the fixed 80-byte layout shared with the classic convent
 
 Charging control on the tested Tahoe-generation firmware is a **single-key protocol**:
 
-| Key | Type / size | Value protocol |
-|---|---|---|
+| Key    | Type / size | Value protocol                                                      |
+| ------ | ----------- | ------------------------------------------------------------------- |
 | `CHTE` | `ui32` / 4B | `00 00 00 00` = charging enabled · `01 00 00 00` = charging stopped |
-| `CHIE` | `hex_` / 1B | `0x00` = adapter enabled · `0x08` = adapter disabled |
+| `CHIE` | `hex_` / 1B | `0x00` = adapter enabled · `0x08` = adapter disabled                |
 
 - `CHTE` is the core control key; writes take effect immediately and read-back matches the written value.
 - `CHIE` is used **only during explicit discharge actions** (Discharge to Limit / the calibration discharge phase). It is never written by steady-state limit enforcement.
@@ -63,12 +63,12 @@ Key availability varies with firmware generation, so Cellar **runtime-probes** t
 
 Smart fan cooling (opt-in, off by default) targets the **first fan (F0)** only. Verified on the same firmware generation as the charging keys:
 
-| Key | Type / size | Role |
-|---|---|---|
-| `F0Tg` | `flt` / 4B | Target fan speed (rpm) |
-| `F0Md` | 1B | Fan mode: `0x00` = system automatic · `0x01` = manual direct-write |
-| `F0Ac` | `flt` / 4B | Actual fan speed (rpm) — live value that follows the target |
-| `F0Mn` / `F0Mx` | `flt` / 4B | Minimum / maximum rpm — **read-only** (writes are refused by firmware) |
+| Key             | Type / size | Role                                                                   |
+| --------------- | ----------- | ---------------------------------------------------------------------- |
+| `F0Tg`          | `flt` / 4B  | Target fan speed (rpm)                                                 |
+| `F0Md`          | 1B          | Fan mode: `0x00` = system automatic · `0x01` = manual direct-write     |
+| `F0Ac`          | `flt` / 4B  | Actual fan speed (rpm) — live value that follows the target            |
+| `F0Mn` / `F0Mx` | `flt` / 4B  | Minimum / maximum rpm — **read-only** (writes are refused by firmware) |
 
 Protocol facts (verified on macOS 26.x / Apple M2 Max, firmware 18000.161.10):
 

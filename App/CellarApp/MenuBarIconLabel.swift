@@ -5,10 +5,17 @@ import SwiftUI
 
 /// 菜单栏动态图标（规格 §2.2 多状态符号 + alert 变色增强）。
 ///
-/// label closure 内的专用视图：仅观察 StatusController（iconState 推导），
-/// 状态刷新不依赖面板窗口的生命周期（组合根提升后控制器在 App 层常驻）。
+/// label closure 内的专用视图：观察 StatusController（iconState 推导）与
+/// MenuBarSettingsController（v1.10 M2 电量百分比显隐）两个控制器——状态刷新不
+/// 依赖面板窗口的生命周期（组合根提升后控制器在 App 层常驻）。
+///
+/// ⚠️ 状态源接线定案（v1.10 M2 工单 T1-4）：百分比显隐走**第二个 @ObservedObject
+/// 直注**，不走 StatusController 弱引用——@ObservedObject 只订阅自身持有的对象，
+/// weak 挂靠不产生 objectWillChange 传播；双控制器注入是更新传播正确性的最小形态。
 struct MenuBarIconLabel: View {
     @ObservedObject var controller: StatusController
+    /// 菜单栏设置（电量百分比显隐；CellarApp label 闭包注入——组合根组合两观察源）。
+    @ObservedObject var settings: MenuBarSettingsController
     @Environment(\.cellarTheme) private var theme
 
     var body: some View {
@@ -32,17 +39,33 @@ struct MenuBarIconLabel: View {
 
     /// alert 态非 template 着色增强（形状为主、颜色为辅——模板模式下 tint
     /// 失效也不丢语义）；其余状态不加 foregroundStyle，保持 template 渲染
-    /// 跟随系统菜单栏着色。
+    /// 跟随系统菜单栏着色。百分比文字两分支同附加（间距 3pt）。
     @ViewBuilder
     private var labelContent: some View {
         if controller.iconState == .alert {
-            Image(systemName: resolvedSymbol(for: controller.iconState))
-                .renderingMode(.original)
-                .foregroundStyle(theme.alert)
-                .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+            HStack(spacing: 3) {
+                Image(systemName: resolvedSymbol(for: controller.iconState))
+                    .renderingMode(.original)
+                    .foregroundStyle(theme.alert)
+                    .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                percentageText
+            }
         } else {
-            Image(systemName: resolvedSymbol(for: controller.iconState))
-                .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+            HStack(spacing: 3) {
+                Image(systemName: resolvedSymbol(for: controller.iconState))
+                    .accessibilityLabel(CellarL10n.s("common.axMenuBarIcon"))
+                percentageText
+            }
+        }
+    }
+
+    /// 电量百分比（v1.10 M2）：开关开 ∧ daemonStatus.lastPercent 非 nil 才渲染
+    /// （断连/旧 daemon 无数字）；等宽数字防宽度抖动。**不加 foregroundStyle**
+    /// ——跟随系统菜单栏模板着色，与图标 template 渲染语义一致。
+    @ViewBuilder
+    private var percentageText: some View {
+        if settings.percentageVisible, let percent = controller.daemonStatus?.lastPercent {
+            Text("\(percent)").monospacedDigit()
         }
     }
 }

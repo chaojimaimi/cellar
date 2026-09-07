@@ -17,6 +17,13 @@ final class StatusController: ObservableObject {
     @Published private(set) var connection: ConnectionState = .unknown
     @Published private(set) var busy = false
     @Published private(set) var controlFeedback: ControlFeedback?
+    /// MagSafe LED 独立轻路径状态槽（v1.10 M2）：pending = LED 在途（不进全局 busy，防通用页全节闪灰）；
+    /// feedback = 组件内轻提示（成功 5s 清 / 失败常驻，不写全局 controlFeedback——横幅归属隔离）。
+    /// ⚠️ internal setter（偏离本类 private(set) 纪律）——WHY：写入面在外迁 extension 文件
+    /// StatusController+LEDControl.swift，private(set) 跨文件只读不可写（R2 P1-A）；clearTask 同因 internal。
+    @Published var magSafeLedPending = false
+    @Published var magSafeLedFeedback: String?
+    var magSafeLedFeedbackClearTask: Task<Void, Never>?   // LED 轻提示 5s 消退任务（extension 写入面）。
     /// 动作完成上升沿检测（ingest 用；lastAction 锁存语义下的 prev 值）。
     private var lastActionLiteral: String?
     /// success 反馈自动消退任务（新 success 重置计时；失败/告警类常驻不清）。
@@ -446,23 +453,7 @@ final class StatusController: ObservableObject {
         )
     }
 
-    // MARK: - Phase 5 v1.8 MagSafe LED
-
-    /// MagSafe LED 状态（nil = 旧 daemon → 通用页 LED 节整体隐藏/升级提示，
-    /// 照 fanStatus 版本门控先例；supported=false = 本机不支持或检测未决）。
-    var magSafeLedStatus: MagSafeLEDStatus? {
-        daemonStatus?.magSafeLed
-    }
-
-    /// LED 模式设置（照 setThermal runControl 先例；单键幂等——重试无害；
-    /// 值域白名单在 daemon 臂，App 侧只发合法枚举）。
-    func setMagSafeLed(_ mode: MagSafeLEDMode) {
-        runControl(
-            attempt: .setMagSafeLed(mode),
-            operation: { try DaemonXPCClient().setMagSafeLed(mode.rawValue) },
-            successFeedback: CellarL10n.s("status.summary.setMagSafeLed")
-        )
-    }
+    // Phase 5 v1.8 MagSafe LED 域 v1.10 M2 整域外迁（magSafeLedStatus + setMagSafeLed → StatusController+LEDControl.swift）。
 
     // MARK: - Phase 5 v1.6 充电日程
 
@@ -552,8 +543,6 @@ final class StatusController: ObservableObject {
             setThermal(wire)
         case .setChargeSchedule(let json):
             applyChargeSchedule(json)
-        case .setMagSafeLed(let mode):
-            setMagSafeLed(mode)
         }
     }
 
@@ -591,10 +580,8 @@ final class StatusController: ObservableObject {
         }
     }
 
-    /// 控制结果处理（主 actor）：成功 → ingest 状态更新（滑杆自同步通路的数据
-    /// 源，§4.1 R1 P1-2）+ 反馈 + lastAttempt 清除；失败三态：daemonError →
-    /// stale 版本比对；timeout/connectionFailed → connection=.unreachable +
-    /// 「守护进程未运行或无响应」。
+    /// 控制结果处理（主 actor）：成功 → ingest + 反馈 + lastAttempt 清除（§4.1 R1 P1-2）；失败三态走
+    /// 公共分型 helper classifyControlFailure（v1.10 M2 抽取，落位 sink = 全局横幅——对既有控制零变化）。
     private func finishControl(
         result: Result<DaemonStatus, DaemonClientError>,
         successFeedback: String,
@@ -607,27 +594,39 @@ final class StatusController: ObservableObject {
             setSuccessFeedback(successFeedback)
             lastAttempt = nil
             onSuccess?(status)
-        case .failure(.daemonError(let message)):
-            detectStaleBeforeReject(message)
-        case .failure(.timeout), .failure(.connectionFailed):
+        case .failure(let error):
+            classifyControlFailure(error) { self.controlFeedback = $0 }
+        }
+    }
+
+    /// 控制失败分型（v1.10 M2 抽取；internal——finishControl 与 LED 独立轻路径
+    /// 共用，分型判定不复制，R1 P1-3-3）：daemonError → stale 比对后交
+    /// .staleDaemon / .daemonRejected(原文)；timeout/connectionFailed → 置
+    /// connection=.unreachable + 交 .transferFailed。落位由调用方注入（全局横幅 /
+    /// LED 组件内轻提示各自 sink——分型语义单一真相）。
+    func classifyControlFailure(_ error: DaemonClientError, deliver: @escaping @MainActor (ControlFeedback) -> Void) {
+        switch error {
+        case .daemonError(let message):
+            detectStaleBeforeReject(message, deliver: deliver)
+        case .timeout, .connectionFailed:
             connection = .unreachable
-            controlFeedback = .transferFailed
+            deliver(.transferFailed)
         }
     }
 
     /// stale daemon 版本比对（规格 §3.4）：daemonError 原文不可信时经 getStatus
-    /// 比对 status.version 与 DaemonXPC.daemonVersion。不匹配 → 上屏版本过旧 +
-    /// 重装入口（面板 daemon 区按钮即入口）；匹配 → 按新版拒绝文案展示。
-    /// getStatus 亦失败（无法比对）→ 保守展示原文。
-    private func detectStaleBeforeReject(_ message: String) {
+    /// 比对版本：不匹配 → .staleDaemon 落位（重装入口）；匹配 → 拒绝原文落位；
+    /// getStatus 亦失败 → 保守按未 stale。v1.10 M2：sink 参数化 + private→internal
+    /// （跨文件 extension 调用面，R2 P1-A——两路共用）。
+    func detectStaleBeforeReject(_ message: String, deliver: @escaping @MainActor (ControlFeedback) -> Void) {
         Task.detached { [weak self] in
             let version = (try? DaemonXPCClient().getStatus())?.version
             await MainActor.run {
-                guard let self else { return }
+                guard self != nil else { return }   // 实例已释放 → 不投递（原 guard let self 语义）
                 if let version, version != DaemonXPC.daemonVersion {
-                    self.controlFeedback = .staleDaemon
+                    deliver(.staleDaemon)
                 } else {
-                    self.controlFeedback = .daemonRejected(message)
+                    deliver(.daemonRejected(message))
                 }
             }
         }

@@ -2462,6 +2462,100 @@ struct Main {
                 check(true, "用例107", "写失败原样上抛（父路径为普通文件，建目录失败）")
             }
         }
+
+        // MARK: - 场景（v1.10 M2 维护批：菜单栏百分比配置 + 引导转移旁路，用例 109–112）
+
+        // 用例 109：AppConfig menuBarPercentageVisible 缺 key 旧文件兼容（v1.10 M2；
+        // 照用例 95 onboardingCompleted 同形态）。
+        do {
+            let legacyJSON = "{\"launchAtLogin\":true,\"onboardingCompleted\":true}"
+            let legacy = try JSONDecoder().decode(AppConfig.self, from: Data(legacyJSON.utf8))
+            check(legacy.menuBarPercentageVisible == nil, "用例109", "旧文件缺 menuBarPercentageVisible 键 → nil（未设置 = 关）")
+            check(legacy.launchAtLogin == true && legacy.onboardingCompleted == true,
+                  "用例109", "旧文件其余字段照常解码（decodeIfPresent 兼容）")
+        }
+
+        // 用例 110：AppConfig menuBarPercentageVisible round-trip（显式 true 往返 +
+        // 显式 false 往返 + nil 经 encodeIfPresent 缺席）。
+        do {
+            let on = AppConfig(launchAtLogin: true, style: "amber", onboardingCompleted: true,
+                               menuBarPercentageVisible: true)
+            let encoded = try JSONEncoder().encode(on)
+            let decoded = try JSONDecoder().decode(AppConfig.self, from: encoded)
+            check(decoded == on, "用例110", "显式 true round-trip 等值")
+            check(String(data: encoded, encoding: .utf8)!.contains("menuBarPercentageVisible"),
+                  "用例110", "encode 显式 true 恒写（前向兼容）")
+
+            let off = AppConfig(menuBarPercentageVisible: false)
+            check(try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(off)) == off,
+                  "用例110", "显式 false round-trip 等值")
+
+            let nilEncoded = try JSONEncoder().encode(AppConfig())
+            check(!String(data: nilEncoded, encoding: .utf8)!.contains("menuBarPercentageVisible"),
+                  "用例110", "nil 经 encodeIfPresent 缺席（与旧合成编码一致）")
+            check(try JSONDecoder().decode(AppConfig.self, from: nilEncoded).menuBarPercentageVisible == nil,
+                  "用例110", "nil 往返 → nil")
+        }
+
+        // 用例 111：onboardingNext manualHealthyRunning 旁路（v1.10 M2 R1 P1-1 定版）
+        // ——健康手工 daemon 场景 install→limit 放行；非 install 步旁路零扩散。
+        do {
+            check(onboardingNext(step: .install, gate: .clear, registration: .notRegistered,
+                                 manualHealthyRunning: true) == .limit,
+                  "用例111", "install + notRegistered + 旁路 → limit（健康手工 daemon 继续路径）")
+            check(onboardingNext(step: .install, gate: .exactBlocked, registration: .pending,
+                                 manualHealthyRunning: true) == .limit,
+                  "用例111", "install + pending + 旁路 → limit（手工路线 registration 恒非 enabled，仅旁路可前进）")
+            check(onboardingNext(step: .install, gate: .clear, registration: .enabled,
+                                 manualHealthyRunning: true) == .limit,
+                  "用例111", "install + enabled + 旁路 → limit（与 enabled 原语义合流）")
+            check(onboardingNext(step: .welcome, gate: .clear, registration: .notRegistered,
+                                 manualHealthyRunning: true) == .conflictCheck,
+                  "用例111", "welcome 步旁路无效（零扩散）")
+            check(onboardingNext(step: .conflictCheck, gate: .exactBlocked, registration: .notRegistered,
+                                 manualHealthyRunning: true) == .conflictCheck,
+                  "用例111", "conflictCheck 步旁路无效——exactBlocked 仍硬阻断停留")
+            check(onboardingNext(step: .limit, gate: .clear, registration: .notRegistered,
+                                 manualHealthyRunning: true) == .done,
+                  "用例111", "limit 步旁路无效（原语义 limit → done）")
+            check(onboardingNext(step: .done, gate: .clear, registration: .notRegistered,
+                                 manualHealthyRunning: true) == nil,
+                  "用例111", "done 步旁路无效（终结态仍 nil）")
+        }
+
+        // 用例 112：onboardingNext 默认参 false 全转移矩阵不回归——既有 60 点穷举
+        // 重跑（显式 false 形态对拍独立期望；既有调用点零改动即零回归，R-5）。
+        do {
+            var sweeps = 0
+            var mismatches = 0
+            let registrations: [RegistrationStatus] = [.notRegistered, .pending, .enabled]
+            let gates: [ConflictGateOutcome] = [.clear, .exactBlocked, .genericNeedsConfirm, .genericConfirmed]
+            func expected(_ step: OnboardingStep, _ gate: ConflictGateOutcome, _ registration: RegistrationStatus) -> OnboardingStep? {
+                switch step {
+                case .welcome: return .conflictCheck
+                case .conflictCheck:
+                    // 停留分支：exact 硬阻断 / generic 待确认；放行分支：clear / 已确认。
+                    return (gate == .clear || gate == .genericConfirmed) ? .install : .conflictCheck
+                case .install: return registration == .enabled ? .limit : .install
+                case .limit: return .done
+                case .done: return nil
+                }
+            }
+            for step in OnboardingStep.allCases {
+                for gate in gates {
+                    for registration in registrations {
+                        sweeps += 1
+                        let actual = onboardingNext(step: step, gate: gate, registration: registration,
+                                                    manualHealthyRunning: false)
+                        if actual != expected(step, gate, registration) {
+                            mismatches += 1
+                            print("  ✗ 用例112 穷举:\(step)/\(gate)/\(registration)：实际 \(String(describing: actual)) 期望 \(String(describing: expected(step, gate, registration)))")
+                        }
+                    }
+                }
+            }
+            check(mismatches == 0 && sweeps == 60, "用例112", "默认 false 全转移 60 点穷举与独立期望一致（既有语义零回归）")
+        }
     }
 
     // MARK: - 真机冒烟（--smoke）

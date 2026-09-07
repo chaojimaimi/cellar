@@ -3146,6 +3146,23 @@
         }
       }
     },
+    "onboarding.manualHealthyNotice": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A manually installed daemon is already running normally. No installation needed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到手工安装的守护进程正在正常运行，无需安装。"
+          }
+        }
+      }
+    },
     "onboarding.proceedButton": {
       "extractionState": "manual",
       "localizations": {
@@ -3873,6 +3890,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "滞回幅度"
+          }
+        }
+      }
+    },
+    "panel.menuBar.percentage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show battery percentage in menu bar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "菜单栏显示电量百分比"
           }
         }
       }

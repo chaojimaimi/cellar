@@ -33,14 +33,23 @@ public enum ConflictGateOutcome: Equatable, Sendable {
 /// - welcome → conflictCheck（gate/registration 无关）
 /// - conflictCheck：exactBlocked / genericNeedsConfirm 停留（硬阻断待清除 /
 ///   软警示待确认）；clear / genericConfirmed → install
-/// - install：registration == .enabled → limit；否则停留（UI 呈现 pending/迁移指引）
+/// - install：registration == .enabled **或 manualHealthyRunning** → limit；
+///   否则停留（UI 呈现 pending/迁移指引）
 /// - limit → done
 /// - done → nil（已终结；进一步转移为非法）
 /// UI 只消费本函数，不自行计算转移。
+///
+/// v1.10 M2 显式扩展面（方案 R1 P1-1 定版）：`manualHealthyRunning` 旁路参数
+/// （默认 false）——手工安装 daemon 健康运行时（App 层判定：route==manual ∧
+/// XPC connected）引导页显弱化文案 +「继续」，此时 registration 恒
+/// .notRegistered/.pending（手工路线不经 SMAppService），仅靠 enabled 前进会
+/// 静默停留，故 install 步按旁路放行到 limit。**默认 false 时既有全部转移
+/// 逐 case 零变化**（既有调用点零改动即零回归，R-5）。
 public func onboardingNext(
     step: OnboardingStep,
     gate: ConflictGateOutcome,
-    registration: RegistrationStatus
+    registration: RegistrationStatus,
+    manualHealthyRunning: Bool = false
 ) -> OnboardingStep? {
     switch step {
     case .welcome:
@@ -53,7 +62,7 @@ public func onboardingNext(
             return .install
         }
     case .install:
-        return registration == .enabled ? .limit : .install
+        return (registration == .enabled || manualHealthyRunning) ? .limit : .install
     case .limit:
         return .done
     case .done:

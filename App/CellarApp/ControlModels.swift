@@ -42,8 +42,8 @@ enum ControlAttempt: Equatable {
     /// Phase 5 v1.6 充电日程（重试 = 重发上次整包配置 JSON——全键覆盖语义下幂等
     /// 无害，照 setThermal 形态；payload = 宿主页 encode 的紧凑 JSON）。
     case setChargeSchedule(String)
-    /// Phase 5 v1.8 MagSafe LED 模式（重试 = 重发上次模式——单键幂等无害）。
-    case setMagSafeLed(MagSafeLEDMode)
+    // .setMagSafeLed case 已退役（v1.10 M2：LED 切换外迁独立轻路径，不写
+    // lastAttempt——失败重试 = 用户重选 Picker，构造点随 runControl 迁出消失）。
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -72,8 +72,6 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.setCalibrationSchedule")
         case .setThermal:
             return CellarL10n.s("status.summary.setThermal")
-        case .setMagSafeLed:
-            return CellarL10n.s("status.summary.setMagSafeLed")
         case .setChargeSchedule:
             return CellarL10n.s("status.summary.setChargeSchedule")
         }

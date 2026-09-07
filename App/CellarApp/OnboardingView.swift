@@ -201,9 +201,22 @@ struct OnboardingView: View {
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            if installer.guidance == .migrateFromLegacy {
+            if manualHealthy {
+                // v1.10 M2 T3 弱化分支（0.4.1 弱化语义对齐）：手工 daemon 健康运行
+                // 时迁移/混合守卫降为说明性文案 + 「继续」直进上限步——经
+                // onboardingNext manualHealthyRunning 旁路前进（R1 P1-1：纯视图
+                // 前进会被转移函数静默停留，故走显式旁路）。文案渲染形态照通用页
+                // DaemonSectionView 弱化象限（caption + secondaryText 说明性）。
+                Text(CellarL10n.s("onboarding.manualHealthyNotice"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(CellarL10n.s("onboarding.continueButton"), action: continueManualHealthy)
+                    .buttonStyle(.borderedProminent)
+            } else if installer.guidance == .migrateFromLegacy {
                 // 迁移守卫（P1-2）：legacy 手工安装存在时不提供安装——防绕过迁移
-                // 直装制造手工+托管混合态。
+                // 直装制造手工+托管混合态。daemon 失联/未运行时守卫原文不变（保守
+                // 方向：此时残留确有风险，manualHealthy 未命中即回落此分支）。
                 Text(CellarL10n.s("onboarding.migrateNotice"))
                     .font(.caption)
                     .foregroundStyle(theme.warning)
@@ -224,6 +237,26 @@ struct OnboardingView: View {
                     .foregroundStyle(theme.alert)
             }
         }
+    }
+
+    /// 手工 daemon 健康运行判定（照通用页 DaemonSectionView.swift:127-142 同源：
+    /// route==manual ∧ XPC connected；并限守卫两象限 migrate/cleanMixed——normal
+    /// 象限不涉迁移守卫语义）。connection 初值 .unknown 恒不命中（R-3：XPC 未就绪
+    /// 不误判，回落既有守卫文案——保守方向安全）。
+    private var manualHealthy: Bool {
+        let healthy = installer.route == .manual && statusController.connection == .connected
+        return healthy
+            && (installer.guidance == .migrateFromLegacy || installer.guidance == .cleanMixedState)
+    }
+
+    /// 弱化分支「继续」：经 advance 链路显式传 manualHealthyRunning: true
+    /// （onboardingNext install→limit 旁路，OnboardingController 透传）。
+    private func continueManualHealthy() {
+        onboarding.advance(
+            gate: onboarding.gate ?? .clear,
+            registration: installer.registration,
+            manualHealthyRunning: true
+        )
     }
 
     private var installButtonTitle: String {
