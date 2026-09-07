@@ -91,7 +91,10 @@ struct CellarApp: App {
         // ⚠️ **启动接线必须挂在本 scene 链尾**（P0-1 教训：接线挂在不打开的
         // scene 上是死代码——Settings scene 退役后迁入此处；MenuBarExtra 链尾
         // 不重复接线，面板侧接线已随面板自身 onChange 保留）。
-        Window(CellarL10n.s("main.window.title"), id: "main") {
+        // 0.18.1 T5：窗口标题去除（`Window("")`）——toolbar 不再重复「芯仓」，
+        // 侧栏 brandHeader 为唯一品牌区；App 名菜单/Dock 显示走 Info.plist
+        // CFBundleName 不受影响；id 不变保路由。
+        Window("", id: "main") {
             ThemeProvider(style: styleController.style) {
                 MainWindowView()
                     .environmentObject(installer)

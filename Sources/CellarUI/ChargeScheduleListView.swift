@@ -71,8 +71,9 @@ public enum ChargeScheduleSummary {
 /// - 门控二态（UD-7）：`config == nil`（daemon 回包 scheduleJson 缺席 = 旧 daemon）
 ///   → 整卡升级提示行（照 ScheduleSectionView legacy 态）；非 nil → 配置态——
 ///   **勿把未配置当旧 daemon**（新 daemon 未配置恒填空配置 JSON）；
-/// - 配置态：总开关 Toggle（变更即全量下发）+ 条目摘要行列表（当前命中条目
-///   「生效中」徽章——activeEntryId 与条目 id 匹配，方案 §3.1）+ 添加按钮 +
+/// - 配置态：总开关 Toggle（变更即全量下发）+ 条目摘要行列表（0.18.1 T3 双态
+///   徽章：enabled 开时命中条目「生效中」accent 徽章——activeEntryId 与条目 id
+///   匹配，其余条目「待生效」灰标；enabled 关全部无标注）+ 添加按钮 +
 ///   空态引导 + 脚注（边沿恢复语义一句话）；
 /// - 行操作：点击行进编辑（onEdit）+ 行内删除按钮（onDelete，简素风格不加滑动
 ///   手势）；编辑器由宿主页内嵌组装（页内嵌展开态，本组件不持编辑状态——
@@ -170,20 +171,35 @@ public struct ChargeScheduleListView: View {
         .disabled(busy)
     }
 
-    /// 条目摘要行（星期 · 时段 · 动作 + 命中徽章 + 行内删除；整行点击进编辑）。
+    /// 条目摘要行（星期 · 时段 · 动作 + 双态徽章 + 行内删除；整行点击进编辑）。
+    /// 徽章以 **config.enabled 为门**（0.18.1 T3/R1 P1-2 口径）：enabled == false
+    /// → 全部无标注（照旧）；enabled == true → 命中条目「生效中」accent 徽章，
+    /// 其余全部条目「待生效」灰标（含 activeEntryId == nil 无命中窗时段的退化
+    /// 形态——全部条目「待生效」，登记）。
     private func row(_ entry: ChargeScheduleEntry) -> some View {
         HStack(spacing: 8) {
             Text(ChargeScheduleSummary.line(entry))
                 .font(.caption)
                 .multilineTextAlignment(.leading)
-            if entry.id == activeEntryId {
-                // 生效中徽章（accent 12% 底——照 MainWindowView 选中行同族语汇）。
-                Text(CellarL10n.s("chargeSchedule.activeBadge"))
-                    .font(.caption2)
-                    .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(theme.accent.opacity(0.12)))
+            if config?.enabled == true {
+                if entry.id == activeEntryId {
+                    // 生效中徽章（accent 12% 底——照 MainWindowView 选中行同族语汇）。
+                    Text(CellarL10n.s("chargeSchedule.activeBadge"))
+                        .font(.caption2)
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.accent.opacity(0.12)))
+                } else {
+                    // 待生效灰标（track 底 + 二级字——与 weekdayChip 未选态同族，
+                    // 视觉层级低于「生效中」）。
+                    Text(CellarL10n.s("schedule.pending"))
+                        .font(.caption2)
+                        .foregroundStyle(theme.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.track))
+                }
             }
             Spacer(minLength: 8)
             Button {

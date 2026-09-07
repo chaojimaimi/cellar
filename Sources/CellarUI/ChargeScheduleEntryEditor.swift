@@ -13,11 +13,13 @@ import SwiftUI
 ///   "展开中的编辑草稿"，覆盖即丢用户输入）；
 /// - **编辑保存保 id**（R1 P3）：编辑现有条目沿用 seed.id——「本窗不重应用」语义
 ///   的承载；新建生成新 UUID 字符串；
-/// - 字段：星期七选 chip 组（ISO 1...7，周一=1）+ 开始/结束时间 Picker（48 半点
-///   档——30 分钟步进钉死）+ 动作二选一 Picker（「限充上限」+ Slider 60...100
-///   步进 1 /「放开充电」+ **进窗立即充电至 100% 警示**，R1 P3 UD-5 产品后果
-///   明示）；end < start → 「跨午夜」提示词；
-/// - 前置防线：草稿非法（未选星期 / 起止相等——daemon validated 必拒）→ 保存
+/// - 字段：星期七选 chip 组（ISO 1...7，周一=1）+ 开始/结束时间选择（自定义内滚
+///   弹出 `ScheduleTimeField`——0.18.1 T2 治原生 menu 48 档撑窗；30 分钟步进钉死，
+///   结束 49 档含「24:00」次日零点特例档，0.18.1 T1 全天语义 UI 面）+ 动作二选一
+///   Picker（「限充上限」+ Slider 60...100 步进 1 /「放开充电」+ **进窗立即充电至
+///   100% 警示**，R1 P3 UD-5 产品后果明示）；start == end → 「全天」提示词 /
+///   end < start → 「跨午夜」提示词（两态互斥）；
+/// - 前置防线：草稿非法（未选星期——0.18.1 D-1d 起止相等合法化为全天）→ 保存
 ///   禁用，不发起注定失败的 XPC。
 public struct ChargeScheduleEntryEditor: View {
     /// 编辑种子：nil = 新建（默认草稿：周一至周五 09:00–18:00 限充 80——照
@@ -32,16 +34,19 @@ public struct ChargeScheduleEntryEditor: View {
 
     // 草稿态（仅本组件持有——R1 P2-2 规则②的承载）。
     @State private var selectedWeekdays: Set<Int>
-    /// 起止分钟（@State 只存半点档值——Picker 48 档 tag 与之一一对应，保存直取）。
+    /// 起止分钟（@State 只存半点档值——档位表 tag 与之一一对应，保存直取；
+    /// 结束档值域含 1440 = 次日零点档）。
     @State private var startMinute: Int
     @State private var endMinute: Int
     /// 动作二选一（true = 完全放开充电——chargingDisabled 语义；false = 限充上限）。
     @State private var unlimited: Bool
     @State private var limit: Int
 
-    /// 时间 Picker 档位（48 半点档：0、30、…、1410——minute 粒度存储、30 分钟
-    /// 步进选择的钉死形态）。
-    private static let halfHourSlots: [Int] = stride(from: 0, through: 1439, by: 30).map { $0 }
+    /// 开始档位（48 半点档：0、30、…、1439——minute 粒度存储、30 分钟步进钉死）。
+    private static let startSlots = stride(from: 0, through: 1439, by: 30).map { $0 }
+    /// 结束档位（49 档：开始档 + 1440「24:00」次日零点特例——0.18.1 T1 D-1b
+    /// end 值域扩展 0...1440 的 UI 面；start == end 全天语义见 isDraftValid）。
+    private static let endSlots = startSlots + [1440]
 
     @Environment(\.cellarTheme) private var theme
 
@@ -70,10 +75,12 @@ public struct ChargeScheduleEntryEditor: View {
     /// 派生：当前动作是否「限充上限」。
     private var isLimitMode: Bool { !unlimited }
 
-    /// 草稿合法性（daemon validated 前置防线）：至少选一天 ∧ 起止不等
-    ///（end < start = 跨午夜合法；end == start 非法——半开窗口退化）。
+    /// 草稿合法性（daemon validated 前置防线）：至少选一天。0.18.1 D-1d 放宽——
+    /// start == end 合法（全天语义；daemon validated 归一 (0,0) canonical，save()
+    /// 本地同款归一），end < start 跨午夜合法；分钟值域由档位表天然限定
+    /// （起止档 ∈ 0...1440），无需数值防线。
     private var isDraftValid: Bool {
-        !selectedWeekdays.isEmpty && endMinute != startMinute
+        !selectedWeekdays.isEmpty
     }
 
     public var body: some View {
@@ -84,6 +91,13 @@ public struct ChargeScheduleEntryEditor: View {
             if endMinute < startMinute {
                 // 跨午夜提示（end < start 自动出现——窗口取模语义的 UI 面）。
                 Text(CellarL10n.s("chargeSchedule.crossMidnight"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+            }
+            if startMinute == endMinute {
+                // 全天提示（0.18.1 T1 D-1d：start == end 草稿即全天——说明文案
+                // 随态出现，与跨午夜提示互斥）。
+                Text(CellarL10n.s("schedule.allDay.hint"))
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
             }
@@ -140,36 +154,21 @@ public struct ChargeScheduleEntryEditor: View {
         .buttonStyle(.plain)
     }
 
-    /// 开始/结束行（标签 + 48 半点档 Picker；label 作 a11y 与菜单标题）。
+    /// 开始/结束行（标签 + 内滚弹出档位选择；label 作 a11y 与弹层语境）。
     private var startRow: some View {
-        timeRow(
+        ScheduleTimeField(
             label: CellarL10n.s("chargeSchedule.start"),
-            selection: $startMinute
+            selection: $startMinute,
+            slots: Self.startSlots
         )
     }
 
     private var endRow: some View {
-        timeRow(
+        ScheduleTimeField(
             label: CellarL10n.s("chargeSchedule.end"),
-            selection: $endMinute
+            selection: $endMinute,
+            slots: Self.endSlots
         )
-    }
-
-    private func timeRow(label: String, selection: Binding<Int>) -> some View {
-        HStack {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(theme.secondaryText)
-            Spacer()
-            Picker(label, selection: selection) {
-                ForEach(Self.halfHourSlots, id: \.self) { minute in
-                    Text(String(format: "%02lld:%02lld", minute / 60, minute % 60))
-                        .tag(minute)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-        }
     }
 
     /// 动作二选一（「限充上限」/「放开充电」；切换即换下方从属控件）。
@@ -230,16 +229,101 @@ public struct ChargeScheduleEntryEditor: View {
     /// 草稿 → 条目成品：编辑沿用 seed.id（R1 P3「编辑保 id」——本窗不重应用），
     /// 新建生成新 UUID；weekdays sorted() 恢复去重升序 canonical（validated 要求
     /// 严格升序）；动作字段二选一——限充 → upperLimit + chargingDisabled nil，
-    /// 放开 → chargingDisabled true（upperLimit 忽略语义，UD-1）。
+    /// 放开 → chargingDisabled true（upperLimit 忽略语义，UD-1）；**全天本地归一**
+    /// （0.18.1 D-1d/R2 P3）：start == end → 存 (0,0) canonical——与 daemon
+    /// validated 归一同款，消「保存 (12:00,12:00) → daemon 归一 (0,0) → 回读列表
+    /// 摘要瞬间跳变」的显示闪变。
     private func save() {
+        let isAllDay = startMinute == endMinute
         let entry = ChargeScheduleEntry(
             id: seed?.id ?? UUID().uuidString,
             weekdays: selectedWeekdays.sorted(),
-            startMinute: startMinute,
-            endMinute: endMinute,
+            startMinute: isAllDay ? 0 : startMinute,
+            endMinute: isAllDay ? 0 : endMinute,
             upperLimit: unlimited ? nil : limit,
             chargingDisabled: unlimited ? true : nil
         )
         onSave(entry)
+    }
+}
+
+// MARK: - 时间选择字段（0.18.1 T2 内滚改造）
+
+/// 时间选择字段（标签 + 当前值 Button + `.popover` 档位列表）：原生 menu Picker
+/// 在主窗场景整体撑出屏幕（menu 形态档位全展开、无内滚——0.18.1 走查②本体）。
+/// 自定义弹出 = popover 内 ScrollView 固定高 300pt 内滚 + 档位 Button 列表
+///（行高 28、当前档 accent 12% 底 + accent 字——照 weekdayChip 同族语汇，
+/// 工业 token 着装，无 `if style == .industrial` 分支）。**档位表参数化**
+///（R1 P2-1）：开始传 48 档 / 结束传 49 档（含 24:00 特例字面）。
+private struct ScheduleTimeField: View {
+    let label: String
+    @Binding var selection: Int
+    /// 档位分钟表（升序；形态由调用方决定——start 48 档 / end 49 档）。
+    let slots: [Int]
+
+    @Environment(\.cellarTheme) private var theme
+    @State private var showsPopover = false
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+            Spacer()
+            Button {
+                showsPopover = true
+            } label: {
+                Text(slotText(selection))
+                    .font(.system(.caption, design: theme.numericFontDesign ?? .default))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.track))
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showsPopover, arrowEdge: .bottom) {
+                slotList
+            }
+        }
+    }
+
+    /// 档位弹层（固定 96×300——档位全量可达，内滚不再撑窗）。
+    private var slotList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(slots, id: \.self) { slot in
+                    slotRow(slot)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(width: 96, height: 300)
+    }
+
+    /// 单档行（行高 28；当前档 accent 高亮——点选即回填并收起弹层）。
+    private func slotRow(_ slot: Int) -> some View {
+        let selected = slot == selection
+        return Button {
+            selection = slot
+            showsPopover = false
+        } label: {
+            Text(slotText(slot))
+                .font(.system(.caption, design: theme.numericFontDesign ?? .default))
+                .monospacedDigit()
+                .foregroundStyle(selected ? theme.accent : theme.secondaryText)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background {
+                    if selected {
+                        Capsule().fill(theme.accent.opacity(0.12))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 档位字面（printf 通路跨机确定；1440 特例「24:00」——次日零点档字面）。
+    private func slotText(_ minute: Int) -> String {
+        minute == 1440 ? "24:00" : String(format: "%02lld:%02lld", minute / 60, minute % 60)
     }
 }

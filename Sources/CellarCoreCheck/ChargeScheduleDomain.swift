@@ -7,11 +7,11 @@
 //
 // 本文件覆盖清单（方案 §2.4；转移矩阵四族钉死：A→B 直切 / 快照恢复 / 编辑保 id
 // 本窗不重应用 / 重启补判）：
-// ① validated（enabled/条数 9 拒/weekdays 空与越界与重复与乱序/start=end 拒/
-//    limit 越界/双动作字段全 nil 拒/chargingDisabled 与 limit 并存合法/id 空与
-//    重复拒/合法往返）
+// ① validated（enabled/条数 9 拒/weekdays 空与越界与重复与乱序/start==end 归一
+//    (0,0) 全天〔0.18.1 D-1b〕/分钟越界拒/end=1440 次日零点档合法/limit 越界/
+//    双动作字段全 nil 拒/chargingDisabled 与 limit 并存合法/id 空与重复拒/合法往返）
 // ② matchingEntry（单条命中/星期不匹配/跨午夜 22:00-07:00 钟面星期语义/多条命中
-//    最晚开始者胜/禁用整体 → nil/半开边界）
+//    最晚开始者胜/禁用整体 → nil/半开边界/全天三态 span 零差=1440——0.18.1 D-1a）
 // ③ desiredState + transitionRequired（进入/退出恢复快照 base/A→B 无缝衔接直切
 //    不经 base/重启保手动 lastApplied==W.id/重启补进入/重启补退出/编辑保 id 本窗
 //    不重应用/耗尽语义/关总开关立即恢复/越域条目防御）
@@ -20,7 +20,7 @@
 import CellarCore
 import Foundation
 
-/// 本地钟面构造助手（固定 2026-09 基准周：9/2=周三、9/7=周一、9/8=周二、9/9=周四
+/// 本地钟面构造助手（固定 2026-09 基准周：9/2=周三、9/7=周一、9/8=周二、9/9=周三
 /// ——`date -j -f` 实证；与实现不同源的独立锚点。窗口判定按用户本地时钟——
 /// daemon 与本工具同机同 tz）。
 func scheduleLocalTime(day: Int, hour: Int, minute: Int = 0) -> Date {
@@ -96,17 +96,21 @@ func runChargeScheduleDomainScenarios() throws {
               "日程-3", "升序 1/3/7 合法（端点 1 与 7）")
     }
 
-    // 日程-4：时段校验（start==end 拒 / 分钟越界拒 / 0 与 1439 端点合法 / 跨午夜 end<start 合法）。
+    // 日程-4：时段校验（0.18.1 D-1b 值域扩展：start 0...1439 / end 0...1440；
+    // start==end 合法 = 全天 → 归一 (0,0)；end<start 跨午夜合法）。
     do {
-        check(scheduleEntry(id: "e", weekdays: [1], start: 540, end: 540, limit: 80) == nil,
-              "日程-4", "start == end → nil（空窗口非法）")
+        let allDay = scheduleEntry(id: "e", weekdays: [1], start: 540, end: 540, limit: 80)
+        check(allDay != nil && allDay?.startMinute == 0 && allDay?.endMinute == 0,
+              "日程-4", "start == end 合法 → 归一 (0,0) 全天 canonical（0.18.1 D-1b 同义编码收敛）")
         check(scheduleEntry(id: "e", weekdays: [1], start: -1, end: 60, limit: 80) == nil
-                && scheduleEntry(id: "e", weekdays: [1], start: 0, end: 1440, limit: 80) == nil,
-              "日程-4", "分钟越界 -1/1440 → nil（0...1439）")
+                && scheduleEntry(id: "e", weekdays: [1], start: 0, end: 1441, limit: 80) == nil,
+              "日程-4", "分钟越界 -1/1441 → nil（start 0...1439 / end 0...1440）")
         check(scheduleEntry(id: "e", weekdays: [1], start: 0, end: 1439, limit: 80) != nil,
               "日程-4", "端点 0/1439 合法")
         check(scheduleEntry(id: "e", weekdays: [2], start: 22 * 60, end: 7 * 60, limit: 80) != nil,
               "日程-4", "end < start = 跨午夜窗口合法（22:00-07:00）")
+        check(scheduleEntry(id: "e", weekdays: [1], start: 0, end: 1440, limit: 80) != nil,
+              "日程-4", "end = 1440 合法（次日零点档——start=0 时全天命中，0.18.1 D-1b）")
     }
 
     // 日程-5：动作字段（limit 越界拒 / 双动作全 nil 拒 / chargingDisabled 与 limit 并存合法 /
@@ -301,5 +305,51 @@ func runChargeScheduleDomainScenarios() throws {
               "日程-19", "短 id 原样（prefix(8) 不足不补）")
         check(ChargeScheduleLiteral.restored == "schedule:restored",
               "日程-19", "restored 字面量钉死")
+    }
+
+    // ---- ⑤ 全天窗口（0.18.1 D-1a/D-1b/D-1c 新增域）----
+
+    // 日程-31：(0,0) 全天任意时刻命中（早/午/晚三点位——span 三态零差=1440 的
+    // 钟面背书；星期照常门控，命中星期按 now 时刻钉死）。
+    do {
+        let allDay = scheduleEntry(id: "allday1-1111-2222-3333-444444444444",
+                                   weekdays: [2], start: 0, end: 0, limit: 80)!
+        let allDayConfig = ChargeScheduleConfig(enabled: true, entries: [allDay])
+        check(matchingEntry(now: scheduleLocalTime(day: 8, hour: 7), calendar: calendar, config: allDayConfig)?.id == allDay.id,
+              "日程-31", "周二 07:00 命中全天（早——旧半开语义排除的 end 边沿现全天覆盖）")
+        check(matchingEntry(now: scheduleLocalTime(day: 8, hour: 12, minute: 30), calendar: calendar, config: allDayConfig)?.id == allDay.id,
+              "日程-31", "周二 12:30 命中全天（午——任意分钟无档位豁口）")
+        check(matchingEntry(now: scheduleLocalTime(day: 8, hour: 23), calendar: calendar, config: allDayConfig)?.id == allDay.id,
+              "日程-31", "周二 23:00 命中全天（晚）")
+        check(matchingEntry(now: scheduleLocalTime(day: 9, hour: 12), calendar: calendar, config: allDayConfig) == nil,
+              "日程-31", "周三不命中（全天不豁免星期门控——钟面星期 ∉ [2]）")
+    }
+
+    // 日程-32：(0,1440) 次日零点档与 (0,0) 等价命中（正差直取 1440——D-1a 语义
+    // 矩阵第三态背书）+ 全天条目与真实窗口共存的确定性（「最晚开始者胜」沿用：
+    // 归一 canonical startMinute=0 恒兜底，真实窗口最晚开始者胜出）。
+    do {
+        let midnightEnd = scheduleEntry(id: "midnight1-1111-2222-3333-444444444444",
+                                        weekdays: [3], start: 0, end: 1440, limit: 80)!
+        let midnightConfig = ChargeScheduleConfig(enabled: true, entries: [midnightEnd])
+        check(matchingEntry(now: scheduleLocalTime(day: 2, hour: 0, minute: 0), calendar: calendar, config: midnightConfig)?.id == midnightEnd.id,
+              "日程-32", "周三 00:00 命中（0,1440）——[0,1440) 半开含入端点")
+        check(matchingEntry(now: scheduleLocalTime(day: 2, hour: 23, minute: 59), calendar: calendar, config: midnightConfig)?.id == midnightEnd.id,
+              "日程-32", "周三 23:59 命中（0,1440）——与 (0,0) 全天等价（D-1b 两种表达等价映射 span=1440）")
+        let workdayWednesday = scheduleEntry(id: "wd3-1111-2222-3333-444444444444",
+                                             weekdays: [3], start: 9 * 60, end: 18 * 60, limit: 70)!
+        let bothConfig = ChargeScheduleConfig(enabled: true, entries: [midnightEnd, workdayWednesday])
+        check(matchingEntry(now: scheduleLocalTime(day: 2, hour: 12), calendar: calendar, config: bothConfig)?.id == workdayWednesday.id,
+              "日程-32", "12:00 全天+工作日双命中 → 真实窗口胜（最晚开始者 540 > 归一 0，R-1 边界钉死）")
+    }
+
+    // 日程-33：归一化钉死——validated(720,720) 输出 (0,0) canonical（同义编码收敛；
+    // 消 (12:00,12:00) 以 startMinute=720 整日压过真实窗口的误胜边界，R-1）。
+    do {
+        let normalized = scheduleEntry(id: "e", weekdays: [1], start: 720, end: 720, limit: 80)
+        check(normalized != nil && normalized?.startMinute == 0 && normalized?.endMinute == 0,
+              "日程-33", "validated(720,720) → (0,0)（全天 canonical 归一，非原值透传）")
+        check(normalized != nil && normalized?.startMinute != 720,
+              "日程-33", "归一后 startMinute 恒 0（「最晚开始者」恒兜底，不再压过真实窗口）")
     }
 }

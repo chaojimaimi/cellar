@@ -189,8 +189,11 @@ extension StatsPageView {
                 }
             }
             .foregroundStyle(theme.accent)
-            // X 轴恒全保留窗单列步长（D-2b：35d 窗 7d 步长 ~5 刻度——不随三窗切换）。
-            .chartAxisTheme(theme, xStride: .day, xStrideCount: 7)
+            // X 轴恒全保留窗 1 天固定步长（0.18.1 T6：0.18 配的 7 天步长在 35d
+            // 保留窗过度收缩致 label 消失——改 1 天 stride 写死机制不用 .automatic，
+            // 全保留窗自适应适量（Charts 空间不足自动取舍 label，R-5），
+            // label「M/d」短格式由下方 AxisValueLabel 统一格式承担）。
+            .chartAxisTheme(theme, xStride: .day, xStrideCount: 1)
             .chartYAxisLabel {
                 Text(CellarL10n.s("stats.unit.percent"))
                     .font(.system(size: 10))
@@ -360,7 +363,8 @@ extension StatsPageView {
 /// 形态：chartXAxis/chartYAxis 必须修饰 Chart 本体，不能收进页面实例方法。
 ///
 /// X 轴固定步长（0.18 T2 D-2b/D-2c）：从 `.automatic(desiredCount: 5)` 改日历
-/// 步长整点对齐（24h=6h / 7d=2d / 30d=7d；容量卡恒全保留窗 7d 单列步长）——
+/// 步长整点对齐（24h=6h / 7d=2d / 30d=7d；容量卡恒全保留窗 1 天步长——0.18.1 T6
+/// 自 7 天步长改写，见 capacityCard）——
 /// 刻度收敛于日历单元边界、每窗 ~4-5 刻度，末刻度不再贴绘图区右缘（「S...」
 /// 截断随固定刻度消除）；label 格式随窗统一（小时步长「HH:mm」/ 日步长「M/d」）。
 private struct StatsChartAxisTheme: ViewModifier {
@@ -402,7 +406,7 @@ private extension View {
 
 extension StatsPageView.RangeWindow {
     /// X 轴日历步长（24h=6h / 7d=2d / 30d=7d——~4 刻度整点对齐；容量卡不走
-    /// 本表，恒全保留窗 7d 步长见 capacityCard）。
+    /// 本表，恒全保留窗 1 天步长见 capacityCard——0.18.1 T6）。
     var xAxisStride: (component: Calendar.Component, count: Int) {
         switch self {
         case .hours24: return (.hour, 6)

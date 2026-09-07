@@ -95,12 +95,15 @@ struct PanelView: View {
             // 交汇（方案 §2.4 数据流：App 侧直读遥测 + daemon 轮询两源并存）。
             // 0.18 T5 D-5c：第三行观察增强——CPU 表面温度 + 双风扇实时转速
             // （CpuFanMonitor 30s 采样；nil 格隐藏，单风扇合并格由组件内收敛）。
+            // 0.18.1 T7：风扇来源标注（状态词映射 fanSourceWord，fan 缺席 → nil
+            // 不显——旧 daemon 缺席兼容照既有）。
             StatusLineView(
                 snapshot: statusController.batterySnapshot,
                 tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true,
                 cpuSkinTempC: cpuFanMonitor.cpuSkinTempC,
                 fanLRPM: cpuFanMonitor.fanRPMs?.first,
-                fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil }
+                fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil },
+                fanSource: fanSourceWord
             )
 
             // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
@@ -182,6 +185,22 @@ struct PanelView: View {
     }
 
     // MARK: - 仪表上下文（规格 §2.3 面板层拼装）
+
+    /// 风扇来源标注词（0.18.1 T7）：`daemonStatus.fan.state`（FanStateWord 8 态）
+    /// **全函数**映射——{automatic, off, degraded, probing, unsupported, conflict}
+    /// →「系统」（策略未介入或已交还：degraded/conflict 时 daemon fail-safe 释放
+    /// 风扇 = 确由系统自控；probing/unsupported 信息不足不宣称 Cellar）；
+    /// {boost, hold} →「Cellar」（策略真在管）。认知澄清落点：面板底速是系统
+    /// 自控，非 Cellar 行为。fan 字段缺席（旧 daemon）→ nil 不显后缀（缺席兼容）。
+    private var fanSourceWord: String? {
+        guard let state = statusController.daemonStatus?.fan?.state else { return nil }
+        switch state {
+        case .automatic, .off, .degraded, .probing, .unsupported, .conflict:
+            return CellarL10n.s("statusline.fanSource.system")
+        case .boost, .hold:
+            return CellarL10n.s("statusline.fanSource.cellar")
+        }
+    }
 
     /// band 语义：限充区间（恢复阈值...上限）；daemon 未注册（策略真相拿不到）
     /// 或 mode == disabled（画 band 误导「仍在限充」）→ nil 隐藏区间弧。

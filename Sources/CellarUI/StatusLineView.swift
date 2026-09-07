@@ -23,6 +23,9 @@ public struct StatusLineView: View {
     public let fanLRPM: Double?
     /// 右风扇转速 rpm（nil = F1Ac 缺席/单风扇——左值在场时两格合一「风扇 X rpm」）。
     public let fanRRPM: Double?
+    /// 风扇来源标注词（0.18.1 T7：转速后小字——「系统/Cellar」策略来源澄清；
+    /// nil = 不显后缀，缺席路径输出与既有构造逐字节一致——既有 golden 零 diff）。
+    public let fanSource: String?
     @Environment(\.cellarTheme) private var theme
 
     public init(
@@ -30,13 +33,15 @@ public struct StatusLineView: View {
         tempPauseActive: Bool = false,
         cpuSkinTempC: Double? = nil,
         fanLRPM: Double? = nil,
-        fanRRPM: Double? = nil
+        fanRRPM: Double? = nil,
+        fanSource: String? = nil
     ) {
         self.snapshot = snapshot
         self.tempPauseActive = tempPauseActive
         self.cpuSkinTempC = cpuSkinTempC
         self.fanLRPM = fanLRPM
         self.fanRRPM = fanRRPM
+        self.fanSource = fanSource
     }
 
     public var body: some View {
@@ -209,6 +214,8 @@ public struct StatusLineView: View {
 
     /// 第三行三格（缺席格隐藏，D-5e：Ts 探测失败 → CPU 格隐藏；F1Ac 缺席
     /// （单风扇）→ 左右两格合一「风扇 X rpm」；F0Ac 缺席 → 风扇格隐藏）。
+    /// 0.18.1 T7：风扇格转速后附来源标注小字（fanSource nil = 不显——缺席路径
+    /// 渲染走与既有构造相同的裸 Text 分支，golden 逐字节零 diff 机械保证）。
     @ViewBuilder
     private var thirdRowSegments: some View {
         if let cpuSkinTempC {
@@ -219,15 +226,32 @@ public struct StatusLineView: View {
         }
         if let fanLRPM, let fanRRPM {
             segment(caption: CellarL10n.s("statusline.fanL")) {
-                Text("\(Int(fanLRPM.rounded())) rpm")
+                fanValueText(rpm: fanLRPM)
             }
             segment(caption: CellarL10n.s("statusline.fanR")) {
-                Text("\(Int(fanRRPM.rounded())) rpm")
+                fanValueText(rpm: fanRRPM)
             }
         } else if let single = fanLRPM ?? fanRRPM {
             segment(caption: CellarL10n.s("statusline.fan")) {
-                Text("\(Int(single.rounded())) rpm")
+                fanValueText(rpm: single)
             }
+        }
+    }
+
+    /// 风扇格值：nil 来源 → 裸转速 Text（与既有形态逐字节一致）；非 nil →
+    /// 转速 + 来源小字（caption2 + tertiaryText——层级低于数值，「1344 rpm ·系统」
+    /// 语汇不加中点，来源词独立着色区分）。
+    @ViewBuilder
+    private func fanValueText(rpm: Double) -> some View {
+        if let fanSource {
+            HStack(spacing: 4) {
+                Text("\(Int(rpm.rounded())) rpm")
+                Text(fanSource)
+                    .font(.caption2)
+                    .foregroundStyle(theme.tertiaryText)
+            }
+        } else {
+            Text("\(Int(rpm.rounded())) rpm")
         }
     }
 }

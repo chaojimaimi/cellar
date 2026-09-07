@@ -79,7 +79,8 @@ public struct ChargeScheduleConfig: Codable, Equatable, Sendable {
 }
 
 /// 充电日程条目（UD-1 模型）：星期集合 + 半开分钟窗口 [startMinute, endMinute)
-///（end < start = 跨午夜）+ 动作字段（限充上限 / 完全放开充电，至少一项）。
+///（end < start = 跨午夜；start == end = 全天——0.18.1 D-1a，canonical 归一
+/// (0, 0)，(0, 1440) 次日零点档等价）+ 动作字段（限充上限 / 完全放开充电，至少一项）。
 public struct ChargeScheduleEntry: Codable, Equatable, Sendable {
     /// 条目唯一标识（UUID 约定；转移簿记去重键——「编辑保 id」语义的承载）。
     public var id: String
@@ -87,7 +88,8 @@ public struct ChargeScheduleEntry: Codable, Equatable, Sendable {
     public var weekdays: [Int]
     /// 窗口起点（当日分钟 0...1439）。
     public var startMinute: Int
-    /// 窗口终点（当日分钟 0...1439，≠startMinute；< startMinute = 跨午夜窗口）。
+    /// 窗口终点（当日分钟 0...1440；0.18.1 D-1b 值域扩展——1440 = 次日零点档；
+    /// == startMinute = 全天（validated 归一 (0,0) canonical）；< startMinute = 跨午夜窗口）。
     public var endMinute: Int
     /// 限充上限（60...100；与 `chargingDisabled` 并存合法——见 validated 注记）。
     public var upperLimit: Int?
@@ -114,16 +116,28 @@ public struct ChargeScheduleEntry: Codable, Equatable, Sendable {
     }
 
     /// 值域（与 validated / CellarCoreCheck 场景同源——同一区间常量，照 FanPolicy 先例）。
+    /// 0.18.1 D-1b 拆分：start 起点 0...1439 / end 终点 0...1440（1440 = 次日零点档，
+    /// start==end 全天语义的合法化链条见 validated 注记）。
     public static let weekdayRange = 1...7
-    public static let minuteRange = 0...1439
+    public static let startMinuteRange = 0...1439
+    public static let endMinuteRange = 0...1440
     public static let upperLimitRange = 60...100
 
     /// 值域校验（UD-1：任一非法 → nil，条级不修补）：
     /// id 非空 / weekdays 非空 ∧ 全部 ∈ 1...7 ∧ 严格升序（去重升序 canonical——
-    /// 重复与乱序皆拒，不做静默归一）/ start ≠ end ∧ 双双 ∈ 0...1439 /
+    /// 重复与乱序皆拒，不做静默归一）/ start ∈ 0...1439 ∧ end ∈ 0...1440（0.18.1
+    /// D-1b 值域扩展；**start == end 合法 = 全天**，归一 (0,0) 存 canonical）/
     /// upperLimit ∈ 60...100 / 动作字段至少一项非 nil（`chargingDisabled` 与
     /// limit 并存合法——并存时 true 优先，limit 忽略；false+limit = 显式不停充
     /// 的限充语义；false+nil = 形式合法但无动作的惰性条目，臂按「仅簿记」处理）。
+    ///
+    /// ⚠️ 归一化与 weekdays「不做静默归一」纪律的分层理由（0.18.1 D-1b，R1 P2-2）：
+    /// start == end 是**同义编码收敛**而非行为改写——(H, H) 全天与 (0, 0) 全天
+    /// 语义完全等价（span 零差=1440），归一只把等价写法收敛到唯一 canonical，
+    /// 判定语义零变化；weekdays 乱序/重复若归一则会**改写判定语义**（用户表达
+    /// 的非法意图被静默修正），故仍拒绝。归一同时消除 (12:00,12:00) 以
+    /// startMinute=720 压过 09:00-18:00 真实窗口的「最晚开始者」误胜边界
+    /// （全天 canonical 后 startMinute=0 恒兜底）。
     public static func validated(
         id: String, weekdays: [Int], startMinute: Int, endMinute: Int,
         upperLimit: Int?, chargingDisabled: Bool?
@@ -132,12 +146,16 @@ public struct ChargeScheduleEntry: Codable, Equatable, Sendable {
         guard !weekdays.isEmpty else { return nil }
         guard weekdays.allSatisfy({ weekdayRange.contains($0) }) else { return nil }
         guard zip(weekdays, weekdays.dropFirst()).allSatisfy({ $0 < $1 }) else { return nil }
-        guard minuteRange.contains(startMinute), minuteRange.contains(endMinute),
-              startMinute != endMinute else { return nil }
+        guard startMinuteRange.contains(startMinute), endMinuteRange.contains(endMinute)
+        else { return nil }
         if let upperLimit, !upperLimitRange.contains(upperLimit) { return nil }
         guard upperLimit != nil || chargingDisabled != nil else { return nil }
+        // 全天归一（同义编码收敛，理由见上方注记）：start == end → (0, 0)。
+        let isAllDay = startMinute == endMinute
         return ChargeScheduleEntry(
-            id: id, weekdays: weekdays, startMinute: startMinute, endMinute: endMinute,
+            id: id, weekdays: weekdays,
+            startMinute: isAllDay ? 0 : startMinute,
+            endMinute: isAllDay ? 0 : endMinute,
             upperLimit: upperLimit, chargingDisabled: chargingDisabled
         )
     }
@@ -176,7 +194,13 @@ public func matchingEntry(
     var best: ChargeScheduleEntry?
     for entry in config.entries {
         guard entry.weekdays.contains(isoWeekday) else { continue }
-        let span = (entry.endMinute - entry.startMinute + 1440) % 1440
+        // span 三态语义矩阵（0.18.1 D-1a）：end − start == 0 → **全天**（1440，
+        // 任意时刻命中——归一 canonical (0,0) 与 (H,H) 原始输入等价覆盖）；
+        // > 0 → 同日窗口直取；< 0 → 跨午夜 +1440 取模。旧公式
+        // (end - start + 1440) % 1440 对零差给 span=0 恒不命中——「一整天」
+        // 缺口根因。start=0 ∧ end=1440 走正差直取 = 1440（次日零点语义 ✓）。
+        let delta = entry.endMinute - entry.startMinute
+        let span = delta == 0 ? 1440 : (delta > 0 ? delta : delta + 1440)
         let offset = (minute - entry.startMinute + 1440) % 1440
         guard offset < span else { continue }   // 半开 [start, end)——跨午夜取模安全
         if best == nil || entry.startMinute > best!.startMinute {

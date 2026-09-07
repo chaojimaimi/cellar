@@ -204,7 +204,7 @@ public struct PolicyStore: Sendable {
                 schedule = validatedSchedule
             } else {
                 Self.log.error(
-                    "policy.json 充电日程字段结构非法（条目应 ≤8、weekdays 1-7 去重升序、时段 0-1439 分钟且起止不等、上限 60-100、动作字段至少一项、条目 id 唯一），仅丢弃该字段（mode/限值不受连累）"
+                    "policy.json 充电日程字段结构非法（条目应 ≤8、weekdays 1-7 去重升序、时段 0-1440 分钟（结束可为次日零点 1440，起止相等=全天）、上限 60-100、动作字段至少一项、条目 id 唯一），仅丢弃该字段（mode/限值不受连累）"
                 )
                 schedule = nil
             }

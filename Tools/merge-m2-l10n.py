@@ -16,6 +16,9 @@ CATALOG = Path(__file__).resolve().parents[1] / "Sources/CellarUI/Resources/Loca
 # (key, zh, en) —— 全部 key 见 M2 工单 7 清点清单（与 mock v2 逐条对照）
 NEW_KEYS = [
     # ---- 侧栏（主窗口路由 + footer 状态行）----
+    # ⚠️ 0.18.1 T5 退役注记：main.window.title 消费点已清零（主窗口标题去除，
+    # CellarApp.swift 改 Window("")），catalog 条目已删——本脚本系 v1.2 历史迁移
+    # 工具（一次性、不重跑），表项按历史记录保留，勿据此回灌 catalog。
     ("main.window.title", "主窗口", "Main Window"),
     ("main.page.dashboard", "仪表板", "Dashboard"),
     ("main.page.control", "充电控制", "Charging Control"),

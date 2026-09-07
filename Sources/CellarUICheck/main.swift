@@ -50,7 +50,9 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // Phase 5 风格 C 自 156 扩 234——工业风格第三列 39 态 × 2 方案 78 新增；
 // Phase 5 v1.7 M3 自 234 扩 246——原生限充注记行 + 冲突横幅 2 态 12 新增；
 // 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
-// CPU 表面温度 + 双风扇转速三格，既有 StatusLine 构造零改动缺席路径零 diff））
+// CPU 表面温度 + 双风扇转速三格，既有 StatusLine 构造零改动缺席路径零 diff）；
+// 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
+// fanSource 非 nil「Cellar」小字样例，既有 StatusLine_*（含 thirdRow）构造零改动））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -165,7 +167,9 @@ private func wrap(
 // Phase 5 v1.11 自 276 扩 282——状态行遥测态 6 新增（StatusLine_telemetry：
 // StatusLineView 携带 PowerTelemetryData 样例，适配器段实时+额定复合形态）；
 // 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
-// CPU 表面温度 + 双风扇转速三格，SMC 实测活值样例钉死））
+// CPU 表面温度 + 双风扇转速三格，SMC 实测活值样例钉死）；
+// 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
+// fanSource 非 nil 样例——转速后「Cellar」来源小字钉死））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -317,6 +321,27 @@ private func buildCases() -> [SnapshotCase] {
                     StatusLineView(
                         snapshot: charging, tempPauseActive: false,
                         cpuSkinTempC: 47.1, fanLRPM: 1344, fanRRPM: 1522
+                    )
+                    .frame(width: 304, alignment: .leading)
+                })
+            })
+
+            // 0.18.1 T7 来源标注可见态 1 case ×3 风格 ×2 外观 = 6 张（288 → 294，
+            // 全部全新文件——新增非扰动）：第三行三格可见态 + 风扇来源标注（转速
+            // 后「Cellar」小字——statusline.fanSource.cellar 词条解析形态钉死）。
+            // ⚠️ 既有 StatusLine_*（含 thirdRow）构造零改动（fanSource 默认 nil →
+            // 缺席路径输出逐字节同现状，regen 零 diff 即缺席路径证据）；case 名
+            // thirdRowFanSource 后缀避开既有 thirdRow 防覆写。
+            // --regen --only=StatusLine_thirdRowFanSource 只跑本组。
+            cases.append(SnapshotCase(
+                name: "StatusLine_thirdRowFanSource_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(
+                        snapshot: charging, tempPauseActive: false,
+                        cpuSkinTempC: 47.1, fanLRPM: 1344, fanRRPM: 1522,
+                        fanSource: CellarL10n.s("statusline.fanSource.cellar")
                     )
                     .frame(width: 304, alignment: .leading)
                 })

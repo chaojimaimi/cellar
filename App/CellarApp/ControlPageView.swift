@@ -3,8 +3,10 @@ import CellarUI
 import SwiftUI
 
 /// 充电控制页（Phase 5 v1.2 §2.2/§4.1，M3 换实页）：ControlSectionView +
-/// ActionSectionView + CalibrationSection 照面板分区顺序组装（控制区 → 动作区
-/// → 校准区，Divider 分隔）。页面即 StatusController 单源的第二宿主——与面板
+/// ActionSectionView 照面板分区顺序组装（控制区 → 动作区，Divider 分隔）。
+/// **0.18.1 T4 校准去重**：校准节自本页移除——与校准页（CalibrationPageView，
+/// 含状态卡/自动调度/上次校准三卡完整上下文）重复「开始校准」入口，保留校准页
+/// 单一入口。页面即 StatusController 单源的第二宿主——与面板
 /// 并存时各自独立 @State（滑杆本地态/防抖任务组件内持有），控制器与 daemon
 /// 单真相，双宿主经 daemonStatus 自同步通路互不干扰（§4.1 R1 P1-2）。
 ///
@@ -22,8 +24,6 @@ struct ControlPageView: View {
                     ControlSectionView()
                     Divider()
                     ActionSectionView()
-                    Divider()
-                    CalibrationSection()
                 }
             }
             .padding(24)
