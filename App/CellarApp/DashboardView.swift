@@ -247,57 +247,6 @@ struct DashboardView: View {
         }
     }
 
-    // ---- 三角图数据行（诚实纪律 §3.1：功率数字只给电池侧实测口径）----
-
-    private var batteryVoltageText: String {
-        guard let snapshot else { return CellarL10n.s("common.nodata") }
-        return String(format: "%.1f V", Double(snapshot.voltageMV) / 1000)
-    }
-
-    /// 适配器副行：telemetry 在场 → 实时+额定复合（适配器节点卡实时 W，v1.11 T1
-    /// ——App 层入参面，PowerFlowDiagramView 零改动）/ 现状额定 W / 未接入 / nodata。
-    private var adapterLineText: String {
-        guard !isNodata else { return CellarL10n.s("common.nodata") }
-        if let systemPowerMW = snapshot?.telemetry?.systemPowerInMW,
-           let rated = snapshot?.adapter?.watts {
-            return CellarL10n.s("statusline.adapter.live", String(format: "%.1f", Double(systemPowerMW) / 1000), rated)
-        }
-        if let watts = snapshot?.adapter?.watts {
-            return CellarL10n.s("dashboard.adapter.line.present", watts)
-        }
-        return CellarL10n.s("dashboard.adapter.line.absent")
-    }
-
-    /// 系统副行：电池态显实测负载（电池是唯一电源，V×A = 系统功耗）；充电/停充
-    /// 态系统负载无公开数据源——诚实纪律不造数，显「—」（v1.11 T1 注记：适配器
-    /// 实时总功率遥测 SystemPowerIn 已在案，系统边口径本批未扩，维持「—」）。
-    private var systemLineText: String {
-        guard !isNodata else { return CellarL10n.s("common.nodata") }
-        if snapshot?.externalConnected == false {
-            return CellarL10n.s("dashboard.sysLine.load", abs(batteryPowerW))
-        }
-        return CellarL10n.s("common.nodata")
-    }
-
-    private var powerABText: String? {
-        guard flowState == .charging, abs(batteryPowerW) >= 0.05 else { return nil }
-        return CellarL10n.s("dashboard.flow.powerIn", abs(batteryPowerW))
-    }
-
-    private var powerBSText: String? {
-        guard flowState == .onBattery, abs(batteryPowerW) >= 0.05 else { return nil }
-        // 负值经格式串显「−」方向（组件 color 由放电边 warn 承载）。
-        return CellarL10n.s("dashboard.flow.powerOut", -abs(batteryPowerW))
-    }
-    /// 直供边标签：telemetry 在场 → 「直供 · 实时 W」（v1.11 T1 新键）；缺席 → 现状
-    /// 「直供」文案（逐字节一致——既有 golden 零修改的机械保证）。
-    private var supplyLineText: String? {
-        guard snapshot?.externalConnected == true else { return nil }
-        if let systemPowerMW = snapshot?.telemetry?.systemPowerInMW {
-            return CellarL10n.s("dashboard.supply.power", String(format: "%.1f", Double(systemPowerMW) / 1000))
-        }
-        return CellarL10n.s("dashboard.supply")
-    }
 
     private var gaugeState: GaugeState {
         GaugeState(

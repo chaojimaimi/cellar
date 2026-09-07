@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.2-alpha] - 2026-09-07
+
+### Fixed
+
+- **功率流向充电态边标签语义修正**：充电中适配器→系统边误显「直供 · 总输入 W」（与电池充电边并排诱发错误加法）；现充电态显示该边真实流量「系统负载 · X W」（遥测 SystemLoad 字段），停充态「直供」语义保持不变。
+- **系统节点充电/停充态补实测负载**：外接供电时系统节点原显「—」；现遥测在场显示实测系统负载（W），遥测缺席仍显「—」不造数。
+
+### 备注
+
+- 功率闭环自检：适配器输出 ≈ 系统负载 + 电池充电功率（遥测三字段恒满足）。「额定 140 W」为适配器能力上限，非当前总输出。
+
 ## [0.18.1-alpha] - 2026-09-07
 
 ### Added
