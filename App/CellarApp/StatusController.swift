@@ -37,6 +37,11 @@ final class StatusController: ObservableObject {
     @Published private(set) var action: OneShotAction?
     /// 遥测快照（App 进程内 IOKit 只读，规格 §2.1 语义分源）。采样失败 → nil
     /// （不进横幅、不触发图标 .alert——失联才有 alert 的不变量不破）。
+    /// 生命周期契约（v1.12.1 冻结修复）：非 nil ⇒ 有表面可见（全表面关闭时
+    /// refreshCadence 即时清空 + 在途采样守卫共同钉死）；**反向不成立**——可见时
+    /// 也可能短暂 nil（重开首帧补采样在途 / 采样失败降级），消费面必须自带 nil
+    /// 处理。菜单栏电池形态徽标取值链（menuBarBatteryForm 快照第一优先）依赖
+    /// 此契约，否则停采样后的最后值冻结成永久旧值，插拔电徽标点击面板才刷新。
     @Published private(set) var batterySnapshot: BatterySnapshot?
     /// App 侧 IOPS 实时电源态（WP5 §2.4 图标即时化数据源；nil = 尚未收到电源
     /// 事件/读取失败——图标回退 daemonStatus 快照，零行为变化）。
@@ -171,6 +176,13 @@ final class StatusController: ObservableObject {
         telemetryTask?.cancel()
         telemetryTask = nil
         guard let telemetryInterval = telemetrySampleInterval(panelVisible: anyVisible) else {
+            // v1.12.1 冻结修复：全表面关闭即清快照。batterySnapshot 是菜单栏电池
+            // 形态徽标取值链第一优先源（menuBarBatteryForm），停采样不清空会把
+            // 最后一次面板可见时刻的电源态冻结成永久旧值——拔电闪电不消失/插电
+            // 无徽标、点击面板（重开遥测）才刷新的根因。清空后电池形态回退
+            // powerOverride（IOPS 活数据 + 复查阶梯）+ daemonStatus.lastPercent；
+            // 面板重开时本函数已接线立即补采样（无数据窗口有界于一次采样时长）。
+            batterySnapshot = nil
             return
         }
         if anyVisible {
@@ -296,6 +308,10 @@ final class StatusController: ObservableObject {
             try? batteryMonitor.snapshot()
         }.value
         guard !Task.isCancelled else { return }
+        // v1.12.1 冻结修复配套：在途采样竞态守卫——关面板（refreshCadence 清空
+        // 快照）瞬间可能存在一个已起飞的 detached 采样，放行会把「面板可见时刻」
+        // 的值重新冻进快照，旧根因复发。采样结果只在有表面可见时发布。
+        guard panelVisible || mainWindowVisible else { return }
         batterySnapshot = snapshot
         if let snapshot {
             ingestSampleRing(snapshot)

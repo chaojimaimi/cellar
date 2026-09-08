@@ -115,12 +115,44 @@ public func menuBarSymbolFallbackName(for state: MenuBarIconState) -> String {
     }
 }
 
+/// 菜单栏电池形态取值链（0.18 batteryForm 纯函数化；v1.12.1 冻结修复配套）。
+/// 三条独立的「快照值 ?? 回退值」链，与原实现逐字段等价：
+/// - percent：快照 ?? daemonPercent（快照缺席时 60s 轮询恒新鲜）；
+/// - charging：快照 ?? override.isCharging ?? false（IOPS 活数据）；
+/// - plugged：快照 ?? override.externalConnected ?? charging（外接缺席时以
+///   充电态近似——保守方向，充电必外接）。
+///
+/// 快照在位 ⇒ 某表面可见（refreshCadence 1s 采样）；**全表面关闭即清空**
+/// （v1.12.1 冻结修复——旧版停采样不清空，最后一次面板可见时刻的电源态冻结成
+/// 永久旧值，插拔电徽标点击面板才刷新的根因）；反向不成立——可见时也可能短暂
+/// 缺席（重开首帧补采样在途 / 采样失败降级）。快照与 override 双缺席且
+/// daemonPercent nil → 整体 nil，label 回退符号形态（恒渲染红线）。override
+/// 缺席（IOPS 订阅创建失败降级）→ 充电/外接按 false（无徽标），与冷启动初态
+/// 同语义。
+public func menuBarBatteryForm(
+    snapshotPercent: Int?,
+    snapshotIsCharging: Bool?,
+    snapshotExternalConnected: Bool?,
+    powerOverride: PowerOverride?,
+    daemonPercent: Int?
+) -> (percent: Int, charging: Bool, plugged: Bool)? {
+    guard let percent = snapshotPercent ?? daemonPercent else { return nil }
+    let isCharging = snapshotIsCharging ?? (powerOverride?.isCharging ?? false)
+    let plugged = snapshotExternalConnected
+        ?? (powerOverride?.externalConnected ?? isCharging)
+    return (percent, isCharging, plugged)
+}
+
 // MARK: - 遥测采样节奏（WP4 规格 §2.1 P0-2 独立门控）
 
-/// 面板遥测采样间隔（秒）。面板可见 **1s**、面板关闭 **nil（停止采样）**。
-/// 与 status 轮询（refreshInterval）并行独立、不复用同一循环——菜单栏图标数据源
-/// 是 daemonStatus，关闭面板后 batterySnapshot 无消费者，60s 遥测档纯属耗电
-/// （「App 不得成为耗电源」）。未注册 daemon 时遥测照常（门控只有 panelVisible）。
+/// 面板遥测采样间隔（秒）。**任一表面可见 1s、全表面关闭 nil（停止采样）**
+/// （调用点传入面板 ∨ 主窗口合并可见性）。
+/// 与 status 轮询（refreshInterval）并行独立、不复用同一循环——停采样省电
+/// （「App 不得成为耗电源」）的前提是**快照无残留消费者**：菜单栏电池形态
+/// 徽标取值链第一优先源就是 batterySnapshot（menuBarBatteryForm），因此停采样
+/// 必须伴随清空快照（refreshCadence 全表面关闭分支，v1.12.1 冻结修复）——否则
+/// 最后一次采样值冻结成永久旧值，插拔电徽标点击面板才刷新。
+/// 未注册 daemon 时遥测照常（门控只有 panelVisible）。
 public func telemetrySampleInterval(panelVisible: Bool) -> TimeInterval? {
     panelVisible ? 1 : nil
 }

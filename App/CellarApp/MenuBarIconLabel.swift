@@ -83,24 +83,19 @@ struct MenuBarIconLabel: View {
     }
 
     /// 电池电量形态解析（0.18 T3 D-3c；nil = 回退现状 iconState 符号——label
-    /// 必须恒渲染）：percent 取值链 `batterySnapshot?.percent ??
-    /// daemonStatus?.lastPercent`（percentageText 同源先例——全表面不可见时遥测
-    /// 循环不启动、batterySnapshot 冷启动恒 nil，daemonStatus 60s 轮询恒新鲜；
-    /// 双 nil → nil 回退）；isCharging 取值链 `batterySnapshot?.isCharging ??
-    /// powerOverride?.isCharging ?? false`；plugged 取值链
-    /// `batterySnapshot?.externalConnected ?? isCharging`（external 缺席时以
-    /// 充电态近似——保守方向，充电必外接）。
+    /// 必须恒渲染）。取值链纯函数化至 CellarCore.menuBarBatteryForm（v1.12.1
+    /// 冻结修复配套——回退链由 CellarCoreCheck「电池形态」域场景钉死），本处仅
+    /// 组装输入。快照生命周期由 StatusController.refreshCadence 管理：非 nil ⇒
+    /// 有表面可见（全表面关闭即清空——旧版停采样不清空，最后一次面板可见时刻
+    /// 的电源态冻成永久旧值，插拔电徽标点击面板才刷新的根因）；可见时也可能
+    /// 短暂 nil（重开首帧补采样在途），整体 nil 由本链自然回退。
     private var batteryForm: (percent: Int, charging: Bool, plugged: Bool)? {
-        guard let percent = controller.batterySnapshot?.percent
-                ?? controller.daemonStatus?.lastPercent else { return nil }
-        let isCharging = controller.batterySnapshot?.isCharging
-            ?? (controller.powerOverride?.isCharging ?? false)
-        // plugged 链（code-review P2-1）：externalConnected 缺席时走在产的
-        // powerOverride.externalConnected（IOPS 恒新鲜、非可选）——跳过它会让
-        // 冷启动/表面全关时维持态不可达、陈旧快照反向胜出。
-        let plugged = controller.batterySnapshot?.externalConnected
-            ?? (controller.powerOverride?.externalConnected ?? isCharging)
-        return (percent, isCharging, plugged)
+        menuBarBatteryForm(
+            snapshotPercent: controller.batterySnapshot?.percent,
+            snapshotIsCharging: controller.batterySnapshot?.isCharging,
+            snapshotExternalConnected: controller.batterySnapshot?.externalConnected,
+            powerOverride: controller.powerOverride,
+            daemonPercent: controller.daemonStatus?.lastPercent)
     }
 
     /// 电量百分比（v1.10 M2）：开关开 ∧ daemonStatus.lastPercent 非 nil 才渲染
