@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.0-alpha] - 2026-09-08
+
+### Added
+
+- **双风扇同步接管（Phase 5 v1.12）**：风扇智能降温的 boost 介入从「仅 F0」扩为「F0+F1 每风扇槽位状态机」——同开关、同策略、同阈值驱动两扇，各扇按各自 [Mn, Mx] 独立 clamp（F1Mn=1522/F1Mx=5777），进入/冲突检测/能力验证全槽位独立（诚实隔离：一扇失败不拖累另一扇，三连败自动停用该扇回到系统自控）。单风扇机型行为零变化（F1Mn 键缺席 sticky 识别，零额外 SMC 流量）。
+- **F1 写通路 spike 实测 GO**（前置门，Tools/spike-fan-f1.swift）：F1Md=1 解锁 → F1Tg=3650 直写 60s 全窗驻留、转速跟随（T+6s 起 min=3620.9 ≥ 阈 3350）、还原干净；Md=0 直写固件即时拒绝（与 F0 同构镜像）。新事实：F1Md 锁存延迟 ∈(100,400]ms——既有 verifyLadder [100,300,800]ms 第二档覆盖，生产零调参。
+- **doctor 检查 12 扩面**：F1 键族在位矩阵 + F1Md/F1Tg 现态（同款「配置开启=合法介入态 INFO / 关闭态≠0=残留 WARN」分流）；风扇区第二风扇状态行（secondFanPresent 时左/右双行各自带状态词与目标转速）。
+- **XPC 载荷向后兼容**：FanStatus 追加 secondFanPresent/State/TargetRPM/CurrentRPM 四可选字段（新 App + 旧 daemon → nil 隐藏第二行；旧 App + 新 daemon → 忽略未知键，线上字节形态零新增键）。
+
+### 备注
+
+- 决策纯函数层（FanGuard）零修改复用——签名本就按键无关参数化，既有风扇域测试场景全部零修改即回归门。
+- 无新增配置项、policy.json 零迁移（升级后限值/风扇配置原样保留）。
+- 仍为 boost-only 红线：只抬高不压低，静息交还系统；释放统一 Md=0 规范值。
+
 ## [0.18.7-alpha] - 2026-09-07
 
 ### Fixed

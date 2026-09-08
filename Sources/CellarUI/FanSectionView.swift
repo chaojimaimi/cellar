@@ -115,7 +115,19 @@ public struct FanSectionView: View {
             }
 
             if fan != nil && !staleDaemon {
-                statusRow
+                // v1.12 D5：双槽在位（secondFanPresent）→ 左/右两行各自带标签与
+                // 状态词（两扇独立状态机，词可不同——D3 诚实隔离）；nil（旧 daemon
+                // /单风扇）→ 原单行形态字节不变（存量零回归）。
+                if fan?.secondFanPresent == true {
+                    fanStatusRow(
+                        label: CellarL10n.s("fan.fan.left"),
+                        word: effectiveState, targetRPM: fan?.targetRPM)
+                    fanStatusRow(
+                        label: CellarL10n.s("fan.fan.right"),
+                        word: fan?.secondFanState ?? .off, targetRPM: fan?.secondFanTargetRPM)
+                } else {
+                    statusRow
+                }
             }
 
             if fan != nil && !staleDaemon {
@@ -164,11 +176,18 @@ public struct FanSectionView: View {
 
     /// 状态行八态（word + boost 目标 rpm；冲突词整行高优先级呈现）。
     private var statusRow: some View {
-        HStack(spacing: 4) {
-            Image(systemName: statusSymbol)
+        fanStatusRow(label: nil, word: effectiveState, targetRPM: fan?.targetRPM)
+    }
+
+    /// 状态行本体（v1.12 参数化：label 非 nil = 双槽形态的左/右前缀——与面板
+    /// 第三行 L/R 指称统一；nil = 既有单行形态零回归）。
+    private func fanStatusRow(label: String?, word: FanStateWord, targetRPM: Float?) -> some View {
+        let baseText = Self.stateText(word, targetRPM: targetRPM)
+        return HStack(spacing: 4) {
+            Image(systemName: Self.stateSymbol(word))
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(statusColor)
-            Text(statusText)
+                .foregroundStyle(Self.stateColor(word, theme: theme))
+            Text(label.map { "\($0) \(baseText)" } ?? baseText)
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         }
@@ -179,8 +198,9 @@ public struct FanSectionView: View {
         stateOverride ?? fan?.state ?? .off
     }
 
-    private var statusSymbol: String {
-        switch effectiveState {
+    /// 八态词/符号/色（v1.12 抽静态函数——左/右双行共用单一真相，防两行词表漂移）。
+    private static func stateSymbol(_ word: FanStateWord) -> String {
+        switch word {
         case .off, .automatic, .probing: return "fan"
         case .boost: return "fan.fill"
         case .hold: return "slider.horizontal.3"
@@ -190,8 +210,8 @@ public struct FanSectionView: View {
         }
     }
 
-    private var statusColor: Color {
-        switch effectiveState {
+    private static func stateColor(_ word: FanStateWord, theme: CellarTheme) -> Color {
+        switch word {
         case .conflict, .degraded: return theme.alert
         case .boost: return theme.accent
         case .unsupported: return theme.warning
@@ -199,14 +219,13 @@ public struct FanSectionView: View {
         }
     }
 
-    /// 状态文字（八态；boost 带目标 rpm——「加速中 →3200rpm」）。
-    private var statusText: String {
-        switch effectiveState {
+    private static func stateText(_ word: FanStateWord, targetRPM: Float?) -> String {
+        switch word {
         case .off: return CellarL10n.s("fan.status.off")
         case .probing: return CellarL10n.s("fan.status.probing")
         case .automatic: return CellarL10n.s("fan.status.automatic")
         case .boost:
-            let rpm = fan?.targetRPM.map { "\(Int($0.rounded()))" } ?? "?"
+            let rpm = targetRPM.map { "\(Int($0.rounded()))" } ?? "?"
             return CellarL10n.s("fan.status.boost", rpm)
         case .hold: return CellarL10n.s("fan.status.hold")
         case .degraded: return CellarL10n.s("fan.status.degraded")

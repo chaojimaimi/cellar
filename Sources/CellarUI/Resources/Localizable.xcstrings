@@ -2058,6 +2058,40 @@
         }
       }
     },
+    "fan.fan.left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left fan"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "左风扇"
+          }
+        }
+      }
+    },
+    "fan.fan.right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right fan"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右风扇"
+          }
+        }
+      }
+    },
     "fan.status.automatic": {
       "extractionState": "manual",
       "localizations": {

@@ -449,6 +449,21 @@ private func buildCases() -> [SnapshotCase] {
                         cpuSkinHysteresisCentiC: 400
                     ),
                     busy: false, onApply: { _ in }, currentTempC: 31.0)),
+                // v1.12 双槽形态（secondFanPresent）：左自动/右 boost 异词并存——
+                // 两扇独立状态机（D3）的代表快照；标尺口径照 on 态（twoStage 显形
+                // 会拉高行数——dual 用 constantSpeed 保持单屏）。
+                ("dual", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .constantSpeed, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400,
+                        secondFanPresent: true, secondFanState: .boost,
+                        secondFanTargetRPM: 3466, secondFanCurrentRPM: 3450
+                    ),
+                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
             ]
             for (stateName, section) in fanSections {
                 cases.append(SnapshotCase(

@@ -1,22 +1,29 @@
 import Foundation
 import CellarCore
 
-// MARK: - Phase 5 v1.1 风扇智能降温（方案 §3-§6；全部锁内）
+// MARK: - Phase 5 v1.1 风扇智能降温（v1.12 M1 槽位化：F0/F1 每风扇槽位状态机）
 
 /// 风扇状态机的 daemon 侧实现（扩展文件拆分——DaemonCore.swift 触及 800 行硬
 /// 上限；可见性/属主不变量与 DaemonCore+OneShot.swift 同款：cellar-daemon 为
 /// executable target，internal 符号模块外不可达）。语义决策全部经
 /// CellarCore.FanGuard / FanPolicy（CellarCoreCheck 矩阵穷举钉死）转移，本扩展
-/// 只做副作用（写 F0Md/F0Tg、探测、日志）与运行时状态（FanRuntimeState，
-/// 存储在 DaemonCore.swift 的单一属性——扩展不能加存储属性）。
+/// 只做副作用（写 FnMd/FnTg、探测、日志）与运行时状态（FanRuntimeState/FanSlot
+/// 定义在 DaemonCore+FanState.swift——扩展不能加存储属性）。
+///
+/// v1.12 M1 槽位化（方案 §2-D2/D3）：per-fan 字段收进 FanSlot，tick 对每槽独立
+/// 走 冲突门→facts 探测→漂移检测→writeFollowed→decided→副作用→能力推进 全链；
+/// 温度采样一次双扇共享（D1 同开关同策略同阈值）。决策纯函数 FanGuard.decided
+/// 签名按键无关参数化——零修改复用，既有 CellarCoreCheck 风扇场景即回归门。
 ///
 /// 锁纪律（方案 §3）：复用 DaemonCore.lock 单一锁（禁新锁）；10s 风扇 tick 与
-/// 30s 心跳错峰，锁内仅短临界区（1 次温度采样 + 条件性 1-2 次 SMC 写）；
+/// 30s 心跳错峰，锁内仅短临界区（1 次温度采样 + 条件性每槽 1-2 次 SMC 写）；
 /// os_log 一律锁外 emit（events 收集、解锁后统一发）。
 ///
-/// 写纪律（spike 定版，方案 §2.4）：boost 进入 = 两步写（先 F0Md=1 回读一致，
-/// 再 F0Tg=目标 回读一致），释放 = 两步（F0Tg→原值快照 + F0Md=0）；Md=0 下 Tg
-/// 写会被固件即时拒绝（回读=原值）——这本身就是「未解锁」的运行时信号。
+/// 写纪律（spike 定版，方案 §2.4；F1 同构实测 SMC-NOTES §10）：boost 进入 =
+/// 两步写（先 FnMd=1 回读一致，再 FnTg=目标 回读一致），释放 = 两步（FnTg→原值
+/// 快照 + FnMd=0）；Md=0 下 Tg 写会被固件即时拒绝（回读=原值）——这本身就是
+/// 「未解锁」的运行时信号。F1Md 锁存延迟 ∈(100,400]ms（§10.1）——生产
+/// verifyLadder=[100,300,800]ms 第二档覆盖，无需调参。
 extension DaemonCore {
     // MARK: - 入口
 
@@ -30,19 +37,33 @@ extension DaemonCore {
     }
 
     /// 风扇状态快照（DaemonCore.buildStatusLocked 调用；锁内）。
+    /// FanStatus.state/targetRPM/currentRPM/conflictFlag = 槽 0（存量语义零变化）；
+    /// 第二扇四字段仅双槽在位时携带（D5——nil = 旧 daemon/单风扇/未探测，App 隐藏）。
     func fanStatusLocked() -> FanStatus {
         let fanPolicy = policy.fan ?? .default
         // 惰性探测挂点（v1.11 T3 D-3c：status 回包恒组装 → 风扇关态也执行；sticky
-        // 后零成本，client 缺席窗口每轮空探——照 probeFanFactsLocked nil 先例）。
+        // 后零成本。F1 在位探测照同款先例静默执行——结论经 secondFanPresent 面
+        // 可见化，探测本身无 emit 通道）。
         ensureCpuSkinProbeLocked()
+        ensureFan1PresenceLocked()
+        var secondPresent: Bool?
+        var secondState: FanStateWord?
+        var secondTarget: Float?
+        var secondCurrent: Float?
+        if fanState.slots.count == 2 {
+            secondPresent = true
+            secondState = fanState.slots[1].word
+            secondTarget = fanState.slots[1].targetRPM
+            secondCurrent = fanState.slots[1].currentRPM
+        }
         return FanStatus(
             enabled: fanPolicy.enabled,
             strategy: fanPolicy.strategy,
-            state: fanState.word,
-            targetRPM: fanState.targetRPM,
-            currentRPM: fanState.currentRPM,
+            state: fanState.slots[0].word,
+            targetRPM: fanState.slots[0].targetRPM,
+            currentRPM: fanState.slots[0].currentRPM,
             thresholdCentiC: fanPolicy.thresholdCentiC,
-            conflictFlag: fanState.conflictFlag,
+            conflictFlag: fanState.slots[0].conflictFlag,
             speedPercent: fanPolicy.speedPercent,
             stage2Percent: fanPolicy.stage2Percent,
             stage2RiseCentiC: fanPolicy.stage2RiseCentiC,
@@ -51,7 +72,11 @@ extension DaemonCore {
             cpuSkinTempC: fanState.lastCpuSkinTempC,
             cpuSkinSupported: fanState.cpuSkinSupported,
             cpuSkinThresholdCentiC: fanPolicy.cpuSkinThresholdCentiC,
-            cpuSkinHysteresisCentiC: fanPolicy.cpuSkinHysteresisCentiC
+            cpuSkinHysteresisCentiC: fanPolicy.cpuSkinHysteresisCentiC,
+            secondFanPresent: secondPresent,
+            secondFanState: secondState,
+            secondFanTargetRPM: secondTarget,
+            secondFanCurrentRPM: secondCurrent
         )
     }
 
@@ -82,8 +107,8 @@ extension DaemonCore {
     /// setFanConfig：校验（缺席保持合并且行 + validated 整包强校验；策略值域已由
     /// XPCServer validateRequest 前置拒绝）→ 应用 policy（**不改 mode**——
     /// setLimits 的「更新即切 active」语义不适用，方案 §8）→ 持久化 → 开关翻转
-    /// 重置（§5.2）→ 关闭立即释放 / boost 期立即按新配置重算重写（§5.1 D 例外②）
-    /// → 开启路径即时 tick（不等 10s 节拍）→ 返回状态。
+    /// 重置（§5.2，循环全槽）→ 关闭立即释放 / boost 期立即按新配置 per-slot 重算
+    /// 重写（§5.1 D 例外②）→ 开启路径即时 tick（不等 10s 节拍）→ 返回状态。
     func setFanConfig(_ wire: FanWire) throws -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
@@ -114,7 +139,7 @@ extension DaemonCore {
             throw FanSetError.cpuSkinUnsupported
         }
         let oldFan = policy.fan
-        let wasBoost = fanState.boostActive
+        let wasBoost = fanState.slots.contains { $0.boostActive }
         // F-1 纪律：applyPolicyLocked 之外的直接字段更新——policy.fan 是本命令的
         // 专属修改面（模式/限值不动），与 setLimits/disable/enable 的重建点互斥。
         policy.fan = merged
@@ -127,34 +152,42 @@ extension DaemonCore {
         }
 
         // 开关翻转重置（方案 §5.2：仅关→开——重新 opt-in = 新意图，R2 P2-A 同判例）：
-        // 能力/冲突/采样/进入失败/漂移门齐清，重探重试。
+        // 能力/冲突/进入失败/漂移门循环全槽清零重探；采样计数共享单次清。
         if FanGuard.resetRequired(old: oldFan, new: merged) {
-            fanState.capability = .unverified
-            fanState.conflictFlag = false
-            fanState.sampleHealthy = true
+            for i in fanState.slots.indices {
+                fanState.slots[i].capability = .unverified
+                fanState.slots[i].conflictFlag = false
+                fanState.slots[i].entryFailures = 0
+                fanState.slots[i].driftTicks = 0
+                fanState.slots[i].word = .probing
+            }
             fanState.sampleFailures = 0
-            fanState.entryFailures = 0
-            fanState.driftTicks = 0
-            fanState.word = .probing
+            fanState.sampleHealthy = true
             // 防御：翻转期残留 boost 理论不可达（boost 只在 enabled 期存在），兜底释放。
-            if fanState.boostActive {
+            if fanState.slots.contains(where: { $0.boostActive }) {
                 releaseFanLocked(events: &events)
             }
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "风扇开关已开启：能力/冲突门重置（重新 opt-in，重探重试）"
+                message: "风扇开关已开启：能力/冲突门重置（全槽 \(fanState.slots.count) 扇，重新 opt-in，重探重试）"
             ))
         }
         if !merged.enabled {
             // 关闭 → 立即释放（方案 §11 验收 4：关开关 → 立即释放）。
-            if fanState.boostActive {
+            if fanState.slots.contains(where: { $0.boostActive }) {
                 releaseFanLocked(events: &events)
             }
-            fanState.word = .off
-        } else if wasBoost, let target = boostedTargetLocked(policy: merged, events: &events) {
-            // boost 期配置变更 → 立即按新配置重算重写（方案 §5.1 D 例外② + P2-3）。
-            if let current = fanState.targetRPM, target != current {
-                rewriteFanTargetLocked(target: target, events: &events)
+            for i in fanState.slots.indices {
+                fanState.slots[i].word = .off
+            }
+        } else if wasBoost {
+            // boost 期配置变更 → per-slot 立即按新配置重算重写（§5.1 D 例外② + P2-3；
+            // 两扇 Mn/Mx 不同目标天然略异——各槽各算各写，比较去重 per-slot）。
+            for i in fanState.slots.indices {
+                if let target = boostedTargetLocked(index: i, policy: merged, events: &events),
+                   let current = fanState.slots[i].targetRPM, target != current {
+                    rewriteFanTargetLocked(index: i, target: target, events: &events)
+                }
             }
         }
         if merged.enabled {
@@ -164,16 +197,15 @@ extension DaemonCore {
         return buildStatusLocked()
     }
 
-    // MARK: - tick（方案 §5.1 状态机执行体）
+    // MARK: - tick（方案 §5.1 状态机执行体，v1.12 槽位化）
 
-    /// 风扇 tick（10s 节拍；锁内）：温度采样 → 冲突会话门 → facts 探测缓存 →
-    /// 漂移检测 → writeFollowed 证据（路径 A）→ FanGuard.decided → 副作用 →
-    /// 能力推进 + boostTicks 计数。
+    /// 风扇 tick（10s 节拍；锁内）：温度采样（一次双扇共享）→ F1 在位探测 →
+    /// 每槽独立走 fanTickSlotLocked（冲突门/facts/漂移/跟随/决策/副作用/能力推进）。
     func fanTickLocked(events: inout [LogEvent]) {
         // 未启用快速路径：不采样不探测（决策 A 语义直落；释放已由 setFanConfig
         // 即时完成，此处仅为残留防御——理论不可达）。
         guard let fanPolicy = policy.fan, fanPolicy.enabled else {
-            if fanState.boostActive {
+            if fanState.slots.contains(where: { $0.boostActive }) {
                 releaseFanLocked(events: &events)
             }
             return
@@ -181,7 +213,8 @@ extension DaemonCore {
         let modeActive = policy.mode == "active"
 
         // 1) 温度采样（v1.11 T3 双源分支；连续失败 ≥3 → sampleHealthy=false（F 行
-        //    degraded）——两源共用同一 degraded 机制，R-5 不发明新分支）：
+        //    degraded）——两源共用同一 degraded 机制，R-5 不发明新分支；采样一次
+        //    双扇共享——D1 同温同策略）：
         //    battery → BatterySnapshot.temperatureC（与充电热暂停同源，现状零变化）；
         //    cpuSkin → SMC 读 cpuSkinKey（Ts flt 值即 °C，LE 解码直入 °C 口径——
         //    阈值比较统一 °C，与 battery 路径同单位）。探测未命中/客户端缺席按
@@ -219,48 +252,83 @@ extension DaemonCore {
             ))
         }
 
-        // 2) 冲突会话门（方案 §5.3）：冲突标志置位后本适配器会话内不再介入
-        //    （开关翻转重置）；残留 boost 防御性释放（冲突检测路径已释放）。
-        if fanState.conflictFlag {
-            if fanState.boostActive {
-                releaseFanLocked(events: &events)
+        // 1b) F1 在位探测（D4 sticky 机型事实；结论转移在本有日志通道处可见化——
+        //     status 组装路径同函数静默消费）。
+        switch ensureFan1PresenceLocked() {
+        case .newlyPresent:
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "F1Mn 探测命中：双风扇机型——第二风扇槽位启用（v1.12 D4；同策略独立状态机）"
+            ))
+        case .newlyAbsent:
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "F1Mn 键缺席：单风扇机型——F0 单槽运行（机型事实 sticky，不再重探）"
+            ))
+        default:
+            break
+        }
+
+        // 2-7) 每槽独立状态机（D2：同温同策略，进入/冲突/能力全槽位隔离）。
+        for i in fanState.slots.indices {
+            fanTickSlotLocked(i, policy: fanPolicy, temperatureC: temperatureC,
+                              modeActive: modeActive, events: &events)
+        }
+    }
+
+    /// 单槽 tick（方案 §5.1 步骤 2-7 槽位化）：冲突会话门 → facts 探测缓存 →
+    /// 漂移检测 → writeFollowed 证据 → decided → 副作用 → 能力推进，全部以
+    /// fanState.slots[index] 为状态承载（D3 诚实隔离：一扇失败不拖累另一扇）。
+    private func fanTickSlotLocked(
+        _ index: Int, policy fanPolicy: FanPolicy, temperatureC: Double,
+        modeActive: Bool, events: inout [LogEvent]
+    ) {
+        // 2) 冲突会话门（方案 §5.3，per-slot）：该槽冲突置位后本适配器会话内不再
+        //    介入此扇（开关翻转重置）；残留 boost 防御性释放（冲突检测路径已释放）。
+        if fanState.slots[index].conflictFlag {
+            if fanState.slots[index].boostActive {
+                releaseSlotLocked(index: index, events: &events)
             }
-            fanState.word = .conflict
+            fanState.slots[index].word = .conflict
             return
         }
 
-        // 3) facts 探测缓存（方案 §5.1 C' + R1 P3-4 探测时机）：非 boost 期每 tick
-        //    重探；boost 期用缓存，SMCClient 重建（clientGeneration 递增）后失效
-        //    重探。类型/尺寸/值语义与预期不符 → fail-visible + capability=
-        //    unavailable（方案 §4.1 红线：不做值格式猜测）。
-        if fanState.factsProbeGeneration != fanState.clientGeneration || !fanState.boostActive {
-            probeFanFactsLocked(events: &events)
-            // boost 期探测失败 → 立即释放，不盲维持（方案 §5.1 不变量注记）。
-            if fanState.boostActive && fanState.facts == nil {
+        // 3) facts 探测缓存（方案 §5.1 C' + R1 P3-4，per-slot 代际）：非 boost 期
+        //    每 tick 重探；boost 期用缓存，SMCClient 重建（clientGeneration 递增）
+        //    后失效重探。类型/尺寸/值语义与预期不符 → fail-visible +
+        //    capability=unavailable（方案 §4.1 红线：不做值格式猜测）。
+        if fanState.slots[index].factsProbeGeneration != fanState.clientGeneration
+            || !fanState.slots[index].boostActive {
+            probeFanFactsLocked(index: index, events: &events)
+            // boost 期探测失败 → 立即释放该扇，不盲维持（方案 §5.1 不变量注记）。
+            if fanState.slots[index].boostActive && fanState.slots[index].facts == nil {
                 events.append(LogEvent(
                     category: .control, level: .warn,
-                    message: "风扇 boost 期 facts 失效：立即释放（保守，不盲维持）"
+                    message: "风扇 F\(index) boost 期 facts 失效：立即释放（保守，不盲维持）"
                 ))
-                releaseFanLocked(events: &events)
+                releaseSlotLocked(index: index, events: &events)
             }
         }
 
-        // 4) 漂移检测（boost 期；方案 §5.3 主方案 = 行为级回读漂移检测）：写后下
-        //    tick 回读 ≠ 写入值 连续 ≥2 次 → 冲突标志 + 自动 release + 会话内
-        //    暂停介入（GO 判据已排除竞争写——直写模式下漂移即真实外部写者）。
-        //    漂移计数清零**只由本干净回读分支承担**（P1-1：重写成功路径不清零，
-        //    防自家重写掩盖外部写者的跨 tick 累计与自家击穿冲突检测）。
-        if fanState.boostActive, let client = smcClient {
+        // 4) 漂移检测（boost 期；方案 §5.3 主方案 = 行为级回读漂移检测，per-slot
+        //    lastWrittenTg 基准）：写后下 tick 回读 ≠ 写入值 连续 ≥2 次 → 该槽冲突
+        //    标志 + 自动释放该扇 + 会话内不再介入（GO 判据已排除竞争写——直写模式
+        //    下漂移即真实外部写者）。漂移计数清零**只由本干净回读分支承担**（P1-1：
+        //    重写成功路径不清零，防自家重写掩盖外部写者的跨 tick 累计与自家击穿
+        //    冲突检测）。
+        if fanState.slots[index].boostActive, let client = smcClient {
             do {
-                let back = try client.read("F0Tg")
-                if let last = fanState.lastWrittenTg, back != last {
+                let back = try client.read(FanKey.tg(index))
+                if let last = fanState.slots[index].lastWrittenTg, back != last {
                     noteFanWriteMismatchLocked(
-                        FanBodyError.readbackMismatch(key: "F0Tg", desiredHex: hex(last), actualHex: hex(back)),
-                        events: &events, context: "风扇目标漂移检测"
+                        index: index,
+                        FanBodyError.readbackMismatch(
+                            key: FanKey.tg(index), desiredHex: hex(last), actualHex: hex(back)),
+                        events: &events, context: "风扇 F\(index) 目标漂移检测"
                     )
-                    if fanState.conflictFlag { return }
+                    if fanState.slots[index].conflictFlag { return }
                 } else {
-                    fanState.driftTicks = 0
+                    fanState.slots[index].driftTicks = 0
                 }
             } catch let error {
                 if FanGuard.isKeyDomainError(error) {
@@ -268,261 +336,286 @@ extension DaemonCore {
                     // 共享自愈计数；boost 期 Tg 缺席按 degraded 处理走释放（fail-safe）。
                     events.append(LogEvent(
                         category: .control, level: .error,
-                        message: "风扇 F0Tg 回读键域错误（\(error)）：按采样异常处理，释放风扇"
+                        message: "风扇 F\(index)Tg 回读键域错误（\(error)）：按采样异常处理，释放该扇"
                     ))
-                    fanState.word = .degraded
-                    releaseFanLocked(events: &events)
+                    fanState.slots[index].word = .degraded
+                    releaseSlotLocked(index: index, events: &events)
                     return
                 }
-                noteControlFailureLocked(error, events: &events, context: "风扇 F0Tg 回读")
+                noteControlFailureLocked(error, events: &events, context: "风扇 F\(index)Tg 回读")
             }
         }
 
-        // 5) writeFollowed 证据（boost 期；方案 §5.2 路径 A——spike 定版实测可用，
-        //    路径 B 标定不需要，方案 §2.4 条 4）：Ac ≥ 写入目标 − 300rpm。
-        //    Ac 键缺席（keyNotFound）：仅本 tick 无证据（观察窗自会收口到
-        //    unavailable——诚实停用），不进共享自愈计数（P1-2）。
+        // 5) writeFollowed 证据（boost 期；方案 §5.2 路径 A——spike 定版实测可用
+        //    且 F1 同构（SMC-NOTES §10 U2'），路径 B 标定不需要）：该扇 Ac ≥ 写入
+        //    目标 − 300rpm。Ac 键缺席（keyNotFound）：仅本 tick 无证据（观察窗自会
+        //    收口到 unavailable——诚实停用），不进共享自愈计数（P1-2）。
         var writeFollowed = false
-        if fanState.boostActive, let client = smcClient, let target = fanState.targetRPM {
+        if fanState.slots[index].boostActive, let client = smcClient,
+           let target = fanState.slots[index].targetRPM {
             do {
-                let acBytes = try client.read("F0Ac")
+                let acBytes = try client.read(FanKey.ac(index))
                 if let ac = FanSMC.decodeRPM(acBytes) {
-                    fanState.currentRPM = ac
+                    fanState.slots[index].currentRPM = ac
                     writeFollowed = ac >= target - FanGuard.writeFollowFloorRPM
                 }
             } catch let error {
                 if FanGuard.isKeyDomainError(error) {
                     events.append(LogEvent(
                         category: .control, level: .warn,
-                        message: "风扇 F0Ac 回读键域错误（\(error)）：本 tick 无写跟随证据（观察窗收口）"
+                        message: "风扇 F\(index)Ac 回读键域错误（\(error)）：本 tick 无写跟随证据（观察窗收口）"
                     ))
                 } else {
-                    noteControlFailureLocked(error, events: &events, context: "风扇 F0Ac 回读")
+                    noteControlFailureLocked(error, events: &events, context: "风扇 F\(index)Ac 回读")
                 }
             }
         }
 
-        // 6) 决策（方案 §5.1 求值序 A→B→F→C'→C→G→D→E→S，先命中先输出，
-        //    由 FanGuard 钉死——CellarCoreCheck 矩阵同源）。
+        // 6) 决策（方案 §5.1 求值序 A→B→F→C'→C→G→D→E→S，先命中先输出，由
+        //    FanGuard 钉死——签名按键无关，每槽一次；温度/策略/采样健康共享）。
         let decision = FanGuard.decided(
             temperatureC: temperatureC,
             policy: fanPolicy,
             modeActive: modeActive,
-            capability: fanState.capability,
-            boostActive: fanState.boostActive,
-            boostTicks: fanState.boostTicks,
-            currentTargetRPM: fanState.targetRPM,
-            facts: fanState.facts,
+            capability: fanState.slots[index].capability,
+            boostActive: fanState.slots[index].boostActive,
+            boostTicks: fanState.slots[index].boostTicks,
+            currentTargetRPM: fanState.slots[index].targetRPM,
+            facts: fanState.slots[index].facts,
             sampleHealthy: fanState.sampleHealthy
         )
         switch decision {
         case .idle(let word):
-            fanState.word = word
+            fanState.slots[index].word = word
         case .enterBoost(let target):
             // 进入 = 两步写（Md=1 → Tg=target，各带回读校验）；失败 → fail-visible
-            // 不进入；连续失败 ≥3 → 能力关停（方案 §13 R3 诚实结局）。
-            if enterFanBoostLocked(target: target, events: &events) {
-                fanState.word = .boost
+            // 不进入；连续失败 ≥3 → 该扇能力关停（方案 §13 R3 诚实结局）。
+            if enterFanBoostLocked(index: index, target: target, events: &events) {
+                fanState.slots[index].word = .boost
             }
         case .hold:
-            fanState.word = .hold
+            fanState.slots[index].word = .hold
         case .rewrite(let target):
-            rewriteFanTargetLocked(target: target, events: &events)
-            if !fanState.conflictFlag {
-                fanState.word = .boost
+            rewriteFanTargetLocked(index: index, target: target, events: &events)
+            if !fanState.slots[index].conflictFlag {
+                fanState.slots[index].word = .boost
             }
         case .release(let word):
-            if fanState.boostActive {
-                releaseFanLocked(events: &events)
+            if fanState.slots[index].boostActive {
+                releaseSlotLocked(index: index, events: &events)
             }
-            fanState.word = word
+            fanState.slots[index].word = word
         }
 
-        // 7) 能力推进（方案 §5.2；boost 期每 tick）：writeFollowed → verified；
-        //    观察窗到期（boostTicks ≥ 10）未获证据 → unavailable + 保守释放
-        //    （诚实停用，不盲维持 boost）。boostTicks 逐 tick +1（进入置 0、
+        // 7) 能力推进（方案 §5.2；boost 期每 tick，per-slot）：writeFollowed →
+        //    verified；观察窗到期（boostTicks ≥ 10）未获证据 → unavailable + 保守
+        //    释放该扇（诚实停用，不盲维持 boost）。boostTicks 逐 tick +1（进入置 0、
         //    release 清零，R1 P3-4）。
-        if fanState.boostActive {
+        if fanState.slots[index].boostActive {
             let advanced = FanGuard.capabilityAdvanced(
-                current: fanState.capability,
-                boostTicks: fanState.boostTicks,
+                current: fanState.slots[index].capability,
+                boostTicks: fanState.slots[index].boostTicks,
                 writeFollowed: writeFollowed
             )
-            if fanState.capability == .unverified && advanced == .unavailable {
-                fanState.capability = .unavailable
-                fanState.word = .unsupported
-                releaseFanLocked(events: &events)
+            if fanState.slots[index].capability == .unverified && advanced == .unavailable {
+                fanState.slots[index].capability = .unavailable
+                fanState.slots[index].word = .unsupported
+                releaseSlotLocked(index: index, events: &events)
                 events.append(LogEvent(
                     category: .control, level: .warn,
-                    message: "风扇能力观察窗到期（100s）未获写跟随证据：本机无法自动验证风扇控制——已释放并停用（doctor 可复核）"
+                    message: "风扇 F\(index) 能力观察窗到期（100s）未获写跟随证据：该扇无法自动验证风扇控制——已释放并停用（doctor 可复核）"
                 ))
             } else {
-                fanState.capability = advanced
+                fanState.slots[index].capability = advanced
                 // 仅未释放的 boost 期计数（release 已清零——此处不叠加，时序精确）。
-                fanState.boostTicks += 1
+                fanState.slots[index].boostTicks += 1
             }
         }
     }
 
-    // MARK: - 释放（五路口统一出口，方案 §6.4）
+    // MARK: - 释放（五路口统一出口，方案 §6.4；v1.12 循环全槽）
 
     /// 统一释放出口（五路口：①SIGTERM/SIGINT（restoreAndExit 挂钩）②开关关闭/
     /// disable 模式（setFanConfig 即时 + 决策 A）③决策矩阵 case A/B/E/F（tick）
-    /// ④sleepNow 睡眠前释放 ⑤启动恢复分支）。
+    /// ④sleepNow 睡眠前释放 ⑤启动恢复分支）——签名与调用点零改动，内部循环槽。
     ///
-    /// boost 语境：**两步释放**（方案 §2.4 条 3）：F0Tg→原值快照（回读一致）→
-    /// F0Md=0（回读一致）——两步都必须执行，仅停写不停 Md = 未交还；Md 统一写
-    /// 0（系统自动规范值），E0 原值仅 spike 还原语境使用（R3 N-2 定版）。
-    /// 非 boost 语境：启动/睡眠残留检查（方案 §6.5）——F0Md≠0 → 写 0 + warn；
-    /// F0Md=0 而 Tg 残留 → 系统自动模式下 Tg 不生效，仅调试日志。
+    /// boost 语境：逐 boost 槽**两步释放**（方案 §2.4 条 3）：FnTg→原值快照（回读
+    /// 一致）→ FnMd=0（回读一致）——两步都必须执行，仅停写不停 Md = 未交还；Md
+    /// 统一写 0（系统自动规范值），E0 原值仅 spike 还原语境使用（R3 N-2 定版）。
+    /// 非 boost 语境：启动/睡眠残留检查（方案 §6.5）——F0Md 恒查；F1Md 仅双槽
+    /// 在位时查（单风扇机型零额外 SMC 流量）；≠0 → 写 0 + warn。
     func releaseFanLocked(events: inout [LogEvent]) {
-        if fanState.boostActive {
-            guard let client = smcClient else {
+        if fanState.slots.contains(where: { $0.boostActive }) {
+            guard smcClient != nil else {
                 events.append(LogEvent(
                     category: .control, level: .error,
                     message: "风扇释放：无 SMC 客户端——Tg/Md 还原不可执行（boost 态保留，残留交启动恢复兜底）"
                 ))
                 return
             }
-            var releaseOK = true
-            // 第一步：Tg → 原值快照（回读一致）。失败 → 继续第二步（Md=0 本身即
-            // fail-safe 方向——系统自动接管后 Tg 归系统属主），残留由启动恢复兜底。
-            if let original = fanState.originalTg {
-                do {
-                    try client.write("F0Tg", bytes: original)
-                    try verifyFanKey("F0Tg", written: original, client: client)
-                } catch {
-                    releaseOK = false
-                    events.append(LogEvent(
-                        category: .control, level: .error,
-                        message: "风扇释放：F0Tg 还原失败（\(error)）——继续 Md=0（失败方向 fail-safe）"
-                    ))
-                }
-            }
-            // 第二步：Md=0（回读一致）——交还系统自动。
-            do {
-                try client.write("F0Md", bytes: [0x00])
-                try verifyFanKey("F0Md", written: [0x00], client: client)
-            } catch {
-                releaseOK = false
-                events.append(LogEvent(
-                    category: .control, level: .error,
-                    message: "风扇释放：F0Md 还原失败（\(error)）——残留由启动恢复/doctor 兜底"
-                ))
-            }
-            fanState.boostActive = false
-            fanState.boostTicks = 0
-            fanState.targetRPM = nil
-            fanState.currentRPM = nil
-            fanState.lastWrittenTg = nil
-            fanState.originalTg = nil
-            fanState.driftTicks = 0
-            fanState.entryFailures = 0
-            if releaseOK {
-                events.append(LogEvent(
-                    category: .control, level: .info,
-                    message: "风扇已释放：F0Tg→原值 + F0Md=0（交还系统自动）"
-                ))
+            for i in fanState.slots.indices where fanState.slots[i].boostActive {
+                releaseSlotLocked(index: i, events: &events)
             }
             return
         }
         // 非 boost 语境：仅风扇已配置时做残留检查（零配置零 SMC 流量）。
+        // R1 P1-1：残留检查前先 ensure F1 在位探测——启动恢复路径（五路口⑤）
+        // 执行时 slots 恒为 [slot0]（presence 探测挂 status 组装/tick，尚未跑过），
+        // 不补探测则双扇 boost 中崩溃残留的 F1Md=1 在启动时永远清不掉（doctor
+        // 「可重启清理」指引死循环）。sleepNow/SIGTERM 早于首次 status 的边缘态
+        // 同被此覆盖。
         guard policy.fan != nil, let client = smcClient else { return }
-        do {
-            let md = try client.read("F0Md")
-            guard md != [0x00] else {
-                let tg = (try? client.read("F0Tg")).map(hex) ?? "读失败"
+        ensureFan1PresenceLocked()
+        for i in fanState.slots.indices {
+            do {
+                let md = try client.read(FanKey.md(i))
+                guard md != [0x00] else {
+                    let tg = (try? client.read(FanKey.tg(i))).map(hex) ?? "读失败"
+                    events.append(LogEvent(
+                        category: .control, level: .info,
+                        message: "风扇启动检查：F\(i)Md=0（系统自动）F\(i)Tg=\(tg)——无需恢复"
+                    ))
+                    continue
+                }
+                try client.write(FanKey.md(i), bytes: [0x00])
+                try verifyFanKey(FanKey.md(i), written: [0x00], client: client)
                 events.append(LogEvent(
-                    category: .control, level: .info,
-                    message: "风扇启动检查：F0Md=0（系统自动）F0Tg=\(tg)——无需恢复"
+                    category: .control, level: .warn,
+                    message: "风扇启动恢复：F\(i)Md=\(hex(md))≠0（疑似崩溃残留）——已写回 0（系统自动规范值）"
                 ))
-                return
+            } catch {
+                events.append(LogEvent(
+                    category: .control, level: .error,
+                    message: "风扇启动恢复：F\(i)Md 读取/写回失败（\(error)）——残留窗口未收口，doctor 风扇行请核对"
+                ))
             }
-            try client.write("F0Md", bytes: [0x00])
-            try verifyFanKey("F0Md", written: [0x00], client: client)
-            events.append(LogEvent(
-                category: .control, level: .warn,
-                message: "风扇启动恢复：F0Md=\(hex(md))≠0（疑似崩溃残留）——已写回 0（系统自动规范值）"
-            ))
-        } catch {
+        }
+    }
+
+    /// 单槽两步释放（方案 §2.4 条 3）：FnTg→原值快照（回读一致）→ FnMd=0（回读
+    /// 一致）。第一步失败 → 继续第二步（Md=0 本身即 fail-safe 方向——系统自动
+    /// 接管后 Tg 归系统属主），残留由启动恢复兜底；槽位运行时字段全清。
+    private func releaseSlotLocked(index: Int, events: inout [LogEvent]) {
+        guard let client = smcClient else {
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "风扇启动恢复：F0Md 读取/写回失败（\(error)）——残留窗口未收口，doctor 风扇行请核对"
+                message: "风扇 F\(index) 释放：无 SMC 客户端——Tg/Md 还原不可执行（boost 态保留，残留交启动恢复兜底）"
+            ))
+            return
+        }
+        var releaseOK = true
+        if let original = fanState.slots[index].originalTg {
+            do {
+                try client.write(FanKey.tg(index), bytes: original)
+                try verifyFanKey(FanKey.tg(index), written: original, client: client)
+            } catch {
+                releaseOK = false
+                events.append(LogEvent(
+                    category: .control, level: .error,
+                    message: "风扇释放：F\(index)Tg 还原失败（\(error)）——继续 Md=0（失败方向 fail-safe）"
+                ))
+            }
+        }
+        do {
+            try client.write(FanKey.md(index), bytes: [0x00])
+            try verifyFanKey(FanKey.md(index), written: [0x00], client: client)
+        } catch {
+            releaseOK = false
+            events.append(LogEvent(
+                category: .control, level: .error,
+                message: "风扇释放：F\(index)Md 还原失败（\(error)）——残留由启动恢复/doctor 兜底"
+            ))
+        }
+        fanState.slots[index].boostActive = false
+        fanState.slots[index].boostTicks = 0
+        fanState.slots[index].targetRPM = nil
+        fanState.slots[index].currentRPM = nil
+        fanState.slots[index].lastWrittenTg = nil
+        fanState.slots[index].originalTg = nil
+        fanState.slots[index].driftTicks = 0
+        fanState.slots[index].entryFailures = 0
+        if releaseOK {
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "风扇已释放：F\(index)Tg→原值 + F\(index)Md=0（交还系统自动）"
             ))
         }
     }
 
-    // MARK: - 副作用内部（进入/重写/探测）
+    // MARK: - 副作用内部（进入/重写/探测；全部槽位参数化）
 
-    /// 进入 boost（方案 §2.4 条 2 两步写）：原值快照 → F0Md=1（回读一致）→
-    /// F0Tg=目标（回读一致）；任一步失败 → fail-visible 不进入 + 回滚（Tg→原值
+    /// 进入 boost（方案 §2.4 条 2 两步写）：原值快照 → FnMd=1（回读一致）→
+    /// FnTg=目标（回读一致）；任一步失败 → fail-visible 不进入 + 回滚（Tg→原值
     /// + Md=0，防「解锁成功但目标写失败」的半进入态滞留，fail-safe 方向）；
-    /// 连续失败 ≥3 → 能力置 unavailable（§13 R3 诚实结局——写入静默忽略机型）。
+    /// 连续失败 ≥3 → 该扇能力置 unavailable（§13 R3 诚实结局——写入静默忽略
+    /// 机型的诚实隔离：F1 失败不阻 F0，D3）。
     @discardableResult
-    private func enterFanBoostLocked(target: Float, events: inout [LogEvent]) -> Bool {
+    private func enterFanBoostLocked(index: Int, target: Float, events: inout [LogEvent]) -> Bool {
         guard let client = smcClient else { return false }
         let tgBytes = FanSMC.encodeRPM(target)
         do {
             // 原值快照（释放序列的还原目标；读先于一切写）。
-            let currentTg = try client.read("F0Tg")
-            fanState.originalTg = currentTg
-            // 第一步：F0Md=1（回读一致）——Md=0 下 Tg 写会被固件即时拒绝。
-            try client.write("F0Md", bytes: [0x01])
-            try verifyFanKey("F0Md", written: [0x01], client: client)
-            // 第二步：F0Tg=目标（回读一致）。
-            try client.write("F0Tg", bytes: tgBytes)
-            try verifyFanKey("F0Tg", written: tgBytes, client: client)
+            let currentTg = try client.read(FanKey.tg(index))
+            fanState.slots[index].originalTg = currentTg
+            // 第一步：FnMd=1（回读一致）——Md=0 下 Tg 写会被固件即时拒绝
+            // （F1 同构实测 SMC-NOTES §10 U4'；F1Md 锁存 ∈(100,400]ms §10.1，
+            // verifyLadder 第二档覆盖）。
+            try client.write(FanKey.md(index), bytes: [0x01])
+            try verifyFanKey(FanKey.md(index), written: [0x01], client: client)
+            // 第二步：FnTg=目标（回读一致）。
+            try client.write(FanKey.tg(index), bytes: tgBytes)
+            try verifyFanKey(FanKey.tg(index), written: tgBytes, client: client)
         } catch {
-            fanState.entryFailures += 1
+            fanState.slots[index].entryFailures += 1
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "风扇进入 boost 失败（连续第 \(fanState.entryFailures) 次）：\(error)——不进入（fail-visible）"
+                message: "风扇 F\(index) 进入 boost 失败（连续第 \(fanState.slots[index].entryFailures) 次）：\(error)——不进入（fail-visible）"
             ))
-            rollbackFanEntryLocked(client: client, events: &events)
-            if fanState.entryFailures >= FanGuard.sampleFailureLimit {
-                fanState.capability = .unavailable
-                fanState.word = .unsupported
+            rollbackFanEntryLocked(index: index, client: client, events: &events)
+            if fanState.slots[index].entryFailures >= FanGuard.sampleFailureLimit {
+                fanState.slots[index].capability = .unavailable
+                fanState.slots[index].word = .unsupported
                 events.append(LogEvent(
                     category: .control, level: .warn,
-                    message: "风扇进入 boost 连续失败 ≥3 次：能力置为不可用（本机无法介入——M3/M4+ 世代保护的诚实结局，方案 §13 R3）"
+                    message: "风扇 F\(index) 进入 boost 连续失败 ≥3 次：该扇能力置为不可用（本机无法介入该扇——M3/M4+ 世代保护的诚实结局，方案 §13 R3；另一扇不受累，D3）"
                 ))
             }
             return false
         }
-        fanState.entryFailures = 0
-        fanState.boostActive = true
-        fanState.boostTicks = 0
-        fanState.targetRPM = target
-        fanState.lastWrittenTg = tgBytes
-        fanState.driftTicks = 0
+        fanState.slots[index].entryFailures = 0
+        fanState.slots[index].boostActive = true
+        fanState.slots[index].boostTicks = 0
+        fanState.slots[index].targetRPM = target
+        fanState.slots[index].lastWrittenTg = tgBytes
+        fanState.slots[index].driftTicks = 0
         events.append(LogEvent(
             category: .control, level: .info,
-            message: "风扇 boost 进入：F0Md=1 + F0Tg=\(Int(target))rpm（两步写回读校验通过）"
+            message: "风扇 F\(index) boost 进入：\(FanKey.md(index))=1 + \(FanKey.tg(index))=\(Int(target))rpm（两步写回读校验通过）"
         ))
         return true
     }
 
     /// 进入失败回滚（尽力而为：Tg→原值 + Md=0；写失败仅记日志——残留交
     /// 启动恢复/doctor，与释放路径同兜底面）。
-    private func rollbackFanEntryLocked(client: SMCClient, events: inout [LogEvent]) {
-        if let original = fanState.originalTg {
+    private func rollbackFanEntryLocked(index: Int, client: SMCClient, events: inout [LogEvent]) {
+        if let original = fanState.slots[index].originalTg {
             do {
-                try client.write("F0Tg", bytes: original)
-                try verifyFanKey("F0Tg", written: original, client: client)
+                try client.write(FanKey.tg(index), bytes: original)
+                try verifyFanKey(FanKey.tg(index), written: original, client: client)
             } catch {
                 events.append(LogEvent(
                     category: .control, level: .error,
-                    message: "风扇进入回滚：F0Tg 还原失败（\(error)）"
+                    message: "风扇 F\(index) 进入回滚：Tg 还原失败（\(error)）"
                 ))
             }
         }
         do {
-            try client.write("F0Md", bytes: [0x00])
-            try verifyFanKey("F0Md", written: [0x00], client: client)
+            try client.write(FanKey.md(index), bytes: [0x00])
+            try verifyFanKey(FanKey.md(index), written: [0x00], client: client)
         } catch {
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "风扇进入回滚：F0Md 还原失败（\(error)）——残留交启动恢复兜底"
+                message: "风扇 F\(index) 进入回滚：Md 还原失败（\(error)）——残留交启动恢复兜底"
             ))
         }
     }
@@ -532,116 +625,122 @@ extension DaemonCore {
     /// 方案 §5.3）。⚠️ 成功路径**不清 driftTicks**（P1-1）：漂移清零只由 tick
     /// step4 的干净回读 else 分支承担——重写清零会让「重写后同 tick 观察到
     /// 外部漂移」被湮灭，自家重写成为冲突检测的击穿面。
-    private func rewriteFanTargetLocked(target: Float, events: inout [LogEvent]) {
+    private func rewriteFanTargetLocked(index: Int, target: Float, events: inout [LogEvent]) {
         guard let client = smcClient else { return }
         let tgBytes = FanSMC.encodeRPM(target)
         do {
-            try client.write("F0Tg", bytes: tgBytes)
-            try verifyFanKey("F0Tg", written: tgBytes, client: client)
-            fanState.targetRPM = target
-            fanState.lastWrittenTg = tgBytes
+            try client.write(FanKey.tg(index), bytes: tgBytes)
+            try verifyFanKey(FanKey.tg(index), written: tgBytes, client: client)
+            fanState.slots[index].targetRPM = target
+            fanState.slots[index].lastWrittenTg = tgBytes
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "风扇目标重写：F0Tg=\(Int(target))rpm（回读校验通过）"
+                message: "风扇 F\(index) 目标重写：\(FanKey.tg(index))=\(Int(target))rpm（回读校验通过）"
             ))
         } catch {
-            noteFanWriteMismatchLocked(error, events: &events, context: "风扇目标重写")
+            noteFanWriteMismatchLocked(
+                index: index, error, events: &events, context: "风扇 F\(index) 目标重写")
         }
     }
 
-    /// 写/回读干扰统一处理（方案 §5.3 行为级漂移检测）：计数 +1；≥2 → 冲突标志
-    /// + 自动 release + 本适配器会话内不再介入（开关翻转重置）。
-    private func noteFanWriteMismatchLocked(_ error: Error, events: inout [LogEvent], context: String) {
-        fanState.driftTicks += 1
+    /// 写/回读干扰统一处理（方案 §5.3 行为级漂移检测，per-slot）：计数 +1；
+    /// ≥2 → 该槽冲突标志 + 自动释放该扇 + 本适配器会话内不再介入此扇（开关翻转
+    /// 重置）。另一扇不受累（D3 诚实隔离——外部写者可能只驱动单扇）。
+    private func noteFanWriteMismatchLocked(
+        index: Int, _ error: Error, events: inout [LogEvent], context: String
+    ) {
+        fanState.slots[index].driftTicks += 1
         events.append(LogEvent(
             category: .control, level: .warn,
-            message: "\(context)失败（漂移计数 \(fanState.driftTicks)/\(FanGuard.conflictDriftTicks)）：\(error)——疑似其他风扇控制工具干预"
+            message: "\(context)失败（漂移计数 \(fanState.slots[index].driftTicks)/\(FanGuard.conflictDriftTicks)）：\(error)——疑似其他风扇控制工具干预"
         ))
-        if fanState.driftTicks >= FanGuard.conflictDriftTicks {
-            fanState.conflictFlag = true
-            fanState.word = .conflict
-            releaseFanLocked(events: &events)
+        if fanState.slots[index].driftTicks >= FanGuard.conflictDriftTicks {
+            fanState.slots[index].conflictFlag = true
+            fanState.slots[index].word = .conflict
+            releaseSlotLocked(index: index, events: &events)
             events.append(LogEvent(
                 category: .control, level: .warn,
-                message: "检测到其他风扇控制写入者：已释放并暂停介入（会话内不再介入，开关翻转重置）"
+                message: "风扇 F\(index) 检测到其他风扇控制写入者：已释放并暂停该扇介入（会话内不再介入，开关翻转重置）"
             ))
         }
     }
 
-    /// F0Mn/F0Mx 探测（keyInfo + read，LE 解码——方案 §2.4 条 1 U7 定版）。
-    /// 成功 → 缓存 + 代际同步；类型/尺寸/值语义异常 → fail-visible +
+    /// FnMn/FnMx 探测（keyInfo + read，LE 解码——方案 §2.4 条 1 U7 定版；per-slot）。
+    /// 成功 → 缓存 + 代际同步；类型/尺寸/值语义异常 → fail-visible + 该扇
     /// capability=unavailable（方案 §4.1：不做值格式猜测）；传输类失败 → 自愈
     /// 计数 + facts 置 nil（下 tick 重试）。
-    private func probeFanFactsLocked(events: inout [LogEvent]) {
+    private func probeFanFactsLocked(index: Int, events: inout [LogEvent]) {
         guard let client = smcClient else {
-            if fanState.facts != nil {
-                fanState.facts = nil
-                fanState.factsProbeGeneration = -1
+            if fanState.slots[index].facts != nil {
+                fanState.slots[index].facts = nil
+                fanState.slots[index].factsProbeGeneration = -1
                 events.append(LogEvent(
                     category: .control, level: .warn,
-                    message: "风扇 facts 失效：无 SMC 客户端（后端未建立/自愈中）"
+                    message: "风扇 F\(index) facts 失效：无 SMC 客户端（后端未建立/自愈中）"
                 ))
             }
             return
         }
         do {
-            let mnInfo = try client.keyInfo("F0Mn")
-            let mxInfo = try client.keyInfo("F0Mx")
+            let mnInfo = try client.keyInfo(FanKey.mn(index))
+            let mxInfo = try client.keyInfo(FanKey.mx(index))
             let mnIsFlt4 = mnInfo.type.trimmingCharacters(in: .whitespaces) == "flt" && mnInfo.size == 4
             let mxIsFlt4 = mxInfo.type.trimmingCharacters(in: .whitespaces) == "flt" && mxInfo.size == 4
             if !(mnIsFlt4 && mxIsFlt4) {
-                fanState.capability = .unavailable
-                fanState.facts = nil
-                fanState.factsProbeGeneration = -1
+                fanState.slots[index].capability = .unavailable
+                fanState.slots[index].facts = nil
+                fanState.slots[index].factsProbeGeneration = -1
                 events.append(LogEvent(
                     category: .control, level: .error,
-                    message: "风扇键类型/尺寸与预期不符（F0Mn=\(mnInfo.type)/\(mnInfo.size)B，F0Mx=\(mxInfo.type)/\(mxInfo.size)B；预期 flt/4B）——能力置为不可用（fail-visible，不做值格式猜测）"
+                    message: "风扇 F\(index) 键类型/尺寸与预期不符（F\(index)Mn=\(mnInfo.type)/\(mnInfo.size)B，F\(index)Mx=\(mxInfo.type)/\(mxInfo.size)B；预期 flt/4B）——该扇能力置为不可用（fail-visible，不做值格式猜测）"
                 ))
                 return
             }
-            let mnBytes = try client.read("F0Mn")
-            let mxBytes = try client.read("F0Mx")
+            let mnBytes = try client.read(FanKey.mn(index))
+            let mxBytes = try client.read(FanKey.mx(index))
             guard let mn = FanSMC.decodeRPM(mnBytes), let mx = FanSMC.decodeRPM(mxBytes),
                   mn.isFinite, mx.isFinite, mn > 0, mx > 0, mn <= mx else {
-                fanState.capability = .unavailable
-                fanState.facts = nil
-                fanState.factsProbeGeneration = -1
+                fanState.slots[index].capability = .unavailable
+                fanState.slots[index].facts = nil
+                fanState.slots[index].factsProbeGeneration = -1
                 events.append(LogEvent(
                     category: .control, level: .error,
-                    message: "风扇转速值语义异常（F0Mn/F0Mx 解码失败、非正或倒挂）——能力置为不可用（fail-visible）"
+                    message: "风扇 F\(index) 转速值语义异常（Mn/Mx 解码失败、非正或倒挂）——该扇能力置为不可用（fail-visible）"
                 ))
                 return
             }
-            fanState.facts = FanFacts(minRPM: mn, maxRPM: mx)
-            fanState.factsProbeGeneration = fanState.clientGeneration
+            fanState.slots[index].facts = FanFacts(minRPM: mn, maxRPM: mx)
+            fanState.slots[index].factsProbeGeneration = fanState.clientGeneration
         } catch let error {
             if FanGuard.isKeyDomainError(error) {
-                // P1-2：F0Mn/F0Mx 键缺席（keyNotFound/invalidKey）是机型事实——
-                // 不进共享自愈计数（防周期性拆除充电后端）；直接能力置不可用
-                //（B 行接管 =「本机不支持」诚实停用）。
-                if fanState.capability != .unavailable {
-                    fanState.capability = .unavailable
+                // P1-2：键缺席（keyNotFound/invalidKey）是机型事实——不进共享自愈
+                // 计数（防周期性拆除充电后端）；直接能力置不可用（B 行接管 =
+                // 「本机不支持」诚实停用该扇）。
+                if fanState.slots[index].capability != .unavailable {
+                    fanState.slots[index].capability = .unavailable
                     events.append(LogEvent(
                         category: .control, level: .error,
-                        message: "风扇键缺失（\(error)）——能力置为不可用（本机不支持）"
+                        message: "风扇 F\(index) 键缺失（\(error)）——该扇能力置为不可用（本机不支持）"
                     ))
                 }
-                fanState.facts = nil
-                fanState.factsProbeGeneration = -1
+                fanState.slots[index].facts = nil
+                fanState.slots[index].factsProbeGeneration = -1
                 return
             }
-            noteControlFailureLocked(error, events: &events, context: "风扇 facts 探测")
-            fanState.facts = nil
-            fanState.factsProbeGeneration = -1
+            noteControlFailureLocked(error, events: &events, context: "风扇 F\(index) facts 探测")
+            fanState.slots[index].facts = nil
+            fanState.slots[index].factsProbeGeneration = -1
         }
     }
 
-    /// boost 期配置变更的目标重算（facts 失效 → nil 跳过——tick 的 C' 路径接管）。
-    private func boostedTargetLocked(policy: FanPolicy, events: inout [LogEvent]) -> Float? {
-        guard let facts = fanState.facts else {
+    /// boost 期配置变更的 per-slot 目标重算（facts 失效 → nil 跳过——tick 的 C'
+    /// 路径接管）。两扇 Mn/Mx 不同：各槽用各自 facts 算各自目标（D1——百分比
+    /// 语义下目标天然略异，与系统自身异值驱动两扇同构，SMC-NOTES §8.2）。
+    private func boostedTargetLocked(index: Int, policy: FanPolicy, events: inout [LogEvent]) -> Float? {
+        guard let facts = fanState.slots[index].facts else {
             events.append(LogEvent(
                 category: .control, level: .warn,
-                message: "setFan boost 期重算：facts 不可用，暂时跳过（tick 探测成功后自动收敛）"
+                message: "setFan F\(index) boost 期重算：facts 不可用，暂时跳过（tick 探测成功后自动收敛）"
             ))
             return nil
         }
@@ -658,13 +757,16 @@ extension DaemonCore {
     /// 还原写全部误报「写后回读不一致」→ 连续失败 ≥3 → 能力置 unavailable）；
     /// 还原写（Md=0）同样受此影响。故采用锁存重试阶梯：写后依次延时
     /// [100, 300, 800]ms（FanSMC.verifyLadderMs 同源）共三次回读，
-    /// 任一次读值 == 写入值即通过。
+    /// 任一次读值 == 写入值即通过。F1 实测增补（SMC-NOTES §10.1）：F1Md 锁存
+    /// ∈(100,400]ms——第二档覆盖，同阶梯直接适用。
     ///
     /// 锁内持有（线程/锁纪律）：单次校验最坏 100+300+800 = 1.2s 锁内持有，
-    /// 期间心跳/XPC 排队等待——可接受；且阶梯仅发生在 boost 进入两步写/
-    /// 进入回滚/释放两步/重写等**稀有转移写**，非每 tick（tick 常规路径
-    /// hold/idle 不写、漂移检测是只读比对不受影响）。禁止在 tick 常规路径
-    /// 使用本阶梯。
+    /// 期间心跳/XPC 排队等待——可接受。v1.12 双扇口径：同一 tick 双扇串行转移
+    /// 写最坏（双扇进入全阶梯耗尽 + 回滚同耗尽）≈ 9.6s，逼近 10s tick 节拍——
+    /// 仅极端故障形态可达（F1Md 锁存实测落第二/三档，常态进入 ≈0.6-1.4s），
+    /// 心跳延一代可接受不调参；且阶梯仅发生在 boost 进入两步写/进入回滚/释放
+    /// 两步/重写等**稀有转移写**，非每 tick（tick 常规路径 hold/idle 不写、
+    /// 漂移检测是只读比对不受影响）。禁止在 tick 常规路径使用本阶梯。
     private func verifyFanKey(_ key: String, written: [UInt8], client: SMCClient) throws {
         var lastMismatch: FanBodyError?
         for delayMs in FanSMC.verifyLadderMs {
@@ -681,86 +783,5 @@ extension DaemonCore {
 
     private func hex(_ bytes: [UInt8]) -> String {
         bytes.map { String(format: "%02X", $0) }.joined()
-    }
-}
-
-// MARK: - 运行时状态与错误
-
-/// 风扇运行时状态（DaemonCore.swift 的单一存储属性 `var fan`；本文件定义——
-/// 扩展不能加存储属性。崩溃重启即清零——重启后由 startup 的 releaseFanLocked
-/// 残留检查（F0Md≠0 → 写 0）收口，方案 §6.5）。
-struct FanRuntimeState {
-    /// boost 活跃（两步写成功后置位；两步释放后清零）。
-    var boostActive = false
-    /// boost 以来风扇 tick 数（进入置 0，逐 tick +1，release 清零——R1 P3-4）。
-    var boostTicks = 0
-    /// 能力（sticky；仅开关翻转重置——setFanConfig）。
-    var capability: FanCapability = .unverified
-    /// 本机 F0Mn/F0Mx 探测缓存（nil = 未探测成功；boost 期失效 → 立即释放）。
-    var facts: FanFacts?
-    /// facts 探测成功时的客户端代际（≠ clientGeneration → 失效重探）。
-    var factsProbeGeneration = -1
-    /// SMCClient 重建代际（establishBackendLocked 递增——facts 缓存失效信号）。
-    var clientGeneration = 0
-    /// 冲突标志（方案 §5.3：漂移 ≥2 → 置位；会话内暂停介入；开关翻转重置）。
-    var conflictFlag = false
-    /// 进入 boost 连续失败计数（≥3 → 能力 unavailable，§13 R3）。
-    var entryFailures = 0
-    /// 温度采样连续失败计数（≥3 → sampleHealthy=false）。
-    var sampleFailures = 0
-    /// 采样健康（BatterySnapshot 连续失败 ≥3 → false；恢复采样自动复位——
-    /// capability 不因采样抖动重置，方案 §6.6）。
-    var sampleHealthy = true
-    /// 最近成功采样温度（采样失败期间沿用——F 行在温度比较前短路，值不参与判定）。
-    var lastTemperatureC: Double = 0
-    /// CPU 表面温度源探测结论（v1.11 T3；nil = 未探——smcClient 缺席窗口不置
-    /// sticky，下轮重探；true/false = 探测结论 sticky 不回落）。
-    var cpuSkinSupported: Bool?
-    /// CPU 表面温度键（探测命中时记录；nil = 未命中/未探）。
-    var cpuSkinKey: String?
-    /// 最近一次 CPU 表面温度采样 °C（FanStatus.cpuSkinTempC 载荷；源切换清残留）。
-    var lastCpuSkinTempC: Double?
-    /// 状态行词（各决策副作用更新；初值 off = 未配置形态）。
-    var word: FanStateWord = .off
-    /// 最近一次写入目标 rpm（FanStatus.targetRPM 载荷）。
-    var targetRPM: Float?
-    /// 最近一次 F0Ac 活值（仅 boost 期采样；FanStatus.currentRPM 载荷）。
-    var currentRPM: Float?
-    /// 最近一次成功写入的 F0Tg 字节（漂移检测比对基准）。
-    var lastWrittenTg: [UInt8]?
-    /// 漂移连续计数（写后回读不一致/下 tick 回读漂移；清朗回读归零）。
-    var driftTicks = 0
-    /// 进入 boost 时的 F0Tg 原值快照（释放序列第一步的还原目标）。
-    var originalTg: [UInt8]?
-}
-
-/// setFan 拒绝（message = 用户可读文案；XPC errorReply 原文透传，App 上屏）。
-enum FanSetError: Error, Equatable, Sendable, CustomStringConvertible {
-    /// 参数越界（validated 整包 nil——不落半合法策略）。
-    case invalidParameters
-    /// cpuSkin 源请求但本机探测不支持（v1.11 T3 fail-visible，方案 D-3c）。
-    case cpuSkinUnsupported
-
-    public var message: String {
-        switch self {
-        case .invalidParameters: return "风扇参数越界（阈值 30-55°C，转速 40-100%，滞回 1-5°C）"
-        case .cpuSkinUnsupported: return "本机不支持 CPU 表面温度源"
-        }
-    }
-
-    public var description: String { message }
-}
-
-/// 风扇写回读校验失败（字节级不一致；description 进日志与 XPC 错误分支）。
-enum FanBodyError: Error, Equatable, Sendable {
-    case readbackMismatch(key: String, desiredHex: String, actualHex: String)
-}
-
-extension FanBodyError: CustomStringConvertible {
-    public var description: String {
-        switch self {
-        case .readbackMismatch(let key, let desiredHex, let actualHex):
-            return "\(key) 写后回读不一致（期望 \(desiredHex)，实际 \(actualHex)）"
-        }
     }
 }

@@ -247,7 +247,9 @@ public enum FanDecision: Equatable, Sendable {
 /// App 提示升级，照 capabilities/autoDischargeEnabled 先例，方案 §8）。
 /// 字段集 = 方案 §8 定版七字段 + 配置回显三字段（speedPercent/stage2Percent/
 /// stage2RiseCentiC）+ v1.11 T3 温度源五字段（源线值 / cpuSkin 温度与探测结论 /
-/// cpuSkin 双阈值回显——滑杆播种单一真相，R1 P1-4）。旧客户端解码忽略未知键，
+/// cpuSkin 双阈值回显——滑杆播种单一真相，R1 P1-4）+ v1.12 第二扇四字段
+///（secondFanPresent/State/TargetRPM/CurrentRPM——D5，追加在 init 参数表尾带
+/// 默认 nil，既有调用点零破坏）。旧客户端解码忽略未知键，
 /// 向后兼容；新字段全部可选 + 合成 Codable decodeIfPresent——旧 daemon 回包缺席
 /// → nil，App 门控升级提示。
 public struct FanStatus: Codable, Equatable, Sendable {
@@ -282,6 +284,16 @@ public struct FanStatus: Codable, Equatable, Sendable {
     public let cpuSkinThresholdCentiC: Int?
     /// 配置回显：CPU 表面温度释放滞回（厘摄氏度；滑杆播种）。
     public let cpuSkinHysteresisCentiC: Int?
+    /// 第二风扇在位（v1.12 M1 D5；nil = 旧 daemon 回包或槽位未建（单风扇/未探测）
+    /// → App 隐藏第二行且不弹升级提示——纯增强非必需字段；true = 双槽在位）。
+    public let secondFanPresent: Bool?
+    /// 第二风扇状态行词（八态同源映射；nil = 未上报——旧 daemon/单风扇）。
+    public let secondFanState: FanStateWord?
+    /// 第二风扇加速目标 rpm（boost/hold 期最近一次写入目标；nil = 未进入过
+    /// boost/未上报）。
+    public let secondFanTargetRPM: Float?
+    /// 第二风扇当前实际转速 rpm（F1Ac 活值回读；nil = 无/未上报）。
+    public let secondFanCurrentRPM: Float?
 
     public init(
         enabled: Bool,
@@ -298,7 +310,11 @@ public struct FanStatus: Codable, Equatable, Sendable {
         cpuSkinTempC: Double? = nil,
         cpuSkinSupported: Bool? = nil,
         cpuSkinThresholdCentiC: Int? = nil,
-        cpuSkinHysteresisCentiC: Int? = nil
+        cpuSkinHysteresisCentiC: Int? = nil,
+        secondFanPresent: Bool? = nil,
+        secondFanState: FanStateWord? = nil,
+        secondFanTargetRPM: Float? = nil,
+        secondFanCurrentRPM: Float? = nil
     ) {
         self.enabled = enabled
         self.strategy = strategy
@@ -315,6 +331,10 @@ public struct FanStatus: Codable, Equatable, Sendable {
         self.cpuSkinSupported = cpuSkinSupported
         self.cpuSkinThresholdCentiC = cpuSkinThresholdCentiC
         self.cpuSkinHysteresisCentiC = cpuSkinHysteresisCentiC
+        self.secondFanPresent = secondFanPresent
+        self.secondFanState = secondFanState
+        self.secondFanTargetRPM = secondFanTargetRPM
+        self.secondFanCurrentRPM = secondFanCurrentRPM
     }
 }
 

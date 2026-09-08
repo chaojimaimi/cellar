@@ -41,10 +41,14 @@ struct DoctorCommand: ParsableCommand {
         var keyPresence: KeyPresence?
         var dischargeProbe: DischargeProbe?
         // Phase 5 v1.1：检查 12 风扇键只读探测（F0Tg/F0Md/F0Ac/F0Mn/F0Mx 在位 +
-        // F0Md/F0Tg 现态；只读——不写任何键）。
+        // F0Md/F0Tg 现态；只读——不写任何键）。v1.12：F1 键族同款探测（在位矩阵
+        // 空数组 = 单风扇机型事实；doctor 只读面，不判能力）。
         var fanKeysPresent: [String] = []
         var fanMdValue: UInt8?
         var fanTgRPM: Float?
+        var fan1KeysPresent: [String] = []
+        var fan1MdValue: UInt8?
+        var fan1TgRPM: Float?
 
         do {
             let client = try SMCClient.makeDefault()
@@ -65,6 +69,14 @@ struct DoctorCommand: ParsableCommand {
             }
             fanMdValue = (try? client.read("F0Md"))?.first
             fanTgRPM = (try? client.read("F0Tg")).flatMap(FanSMC.decodeRPM)
+            // 检查 12 v1.12 扩面：F1 键族同款只读探测（D6）。
+            for key in ["F1Tg", "F1Md", "F1Ac", "F1Mn", "F1Mx"] {
+                if (try? client.keyExists(key)) == true {
+                    fan1KeysPresent.append(key)
+                }
+            }
+            fan1MdValue = (try? client.read("F1Md"))?.first
+            fan1TgRPM = (try? client.read("F1Tg")).flatMap(FanSMC.decodeRPM)
 
             do {
                 let backend = try RuntimeProbe.probe(client: client)
@@ -201,7 +213,10 @@ struct DoctorCommand: ParsableCommand {
                 keysPresent: fanKeysPresent,
                 mdValue: fanMdValue,
                 tgRPM: fanTgRPM,
-                config: daemonStatus?.fan
+                config: daemonStatus?.fan,
+                keys1Present: fan1KeysPresent,
+                md1Value: fan1MdValue,
+                tg1RPM: fan1TgRPM
             ),
             thermal: thermalStatus,
             thermalProbeAttempted: true,

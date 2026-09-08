@@ -197,12 +197,23 @@ public struct FanDoctorProbe: Equatable, Sendable {
     public let tgRPM: Float?
     /// daemon 风扇配置现态（FanStatus；nil = 旧 daemon 未上报/未运行）。
     public let config: FanStatus?
+    /// v1.12 D6：F1 键族在位列表（nil = 旧 CLI 未探测——渲染面零回归；空数组 =
+    /// 单风扇机型事实）。
+    public let keys1Present: [String]?
+    /// v1.12 D6：F1Md 现态（0=系统自动；nil = 读取失败/缺席/未探测）。
+    public let md1Value: UInt8?
+    /// v1.12 D6：F1Tg 现态 rpm（LE 解码；nil = 读取失败/缺席/未探测）。
+    public let tg1RPM: Float?
 
-    public init(keysPresent: [String], mdValue: UInt8?, tgRPM: Float?, config: FanStatus?) {
+    public init(keysPresent: [String], mdValue: UInt8?, tgRPM: Float?, config: FanStatus?,
+                keys1Present: [String]? = nil, md1Value: UInt8? = nil, tg1RPM: Float? = nil) {
         self.keysPresent = keysPresent
         self.mdValue = mdValue
         self.tgRPM = tgRPM
         self.config = config
+        self.keys1Present = keys1Present
+        self.md1Value = md1Value
+        self.tg1RPM = tg1RPM
     }
 }
 
@@ -469,6 +480,34 @@ public enum DoctorReportGenerator {
             }
             if let tempC = config.cpuSkinTempC {
                 parts.append(String(format: "当前源温度 %.1f°C", tempC))
+            }
+        }
+        // v1.12 D6：第二扇 F1 键族探针（keys1Present nil = 旧 CLI 未探测 → 不渲染，
+        // 行形态零回归；同款介入/残留分流——双扇接管后 F1Md=1 也是合法介入态）。
+        if let keys1 = probe.keys1Present {
+            if keys1.contains("F1Tg") && keys1.contains("F1Md") {
+                parts.append("F1 键在位（" + keys1.joined(separator: "、") + "）——双扇接管可用")
+                if let md1 = probe.md1Value {
+                    if md1 != 0 {
+                        let intervening1 = probe.config?.enabled == true
+                        if intervening1 { status = status == .warn ? .warn : .info }
+                        else { status = .warn }
+                        parts.append(intervening1
+                            ? "F1Md=\(md1)（策略介入中——第二扇加速运行）"
+                            : "F1Md=\(md1)（非系统自动值——疑似残留，daemon 未运行时可重启清理）")
+                    } else {
+                        parts.append("F1Md=0（系统自动）")
+                    }
+                } else {
+                    parts.append("F1Md 读取失败")
+                }
+                if let tg1 = probe.tg1RPM {
+                    parts.append("F1Tg≈\(Int(tg1.rounded()))rpm")
+                } else {
+                    parts.append("F1Tg 读取失败")
+                }
+            } else {
+                parts.append("F1 键缺席（单风扇机型——第二扇不介入，属预期）")
             }
         }
         return DoctorCheck(name: "风扇控制", status: status, detail: parts.joined(separator: "；"))

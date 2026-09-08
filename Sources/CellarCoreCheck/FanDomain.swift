@@ -34,6 +34,7 @@ func runFanDomainScenarios() throws {
     runFanSMCCodecScenarios()
     try runFanStatusCompatibilityScenarios()
     runFanDoctorScenarios()
+    try runSecondFanDomainScenarios()
 }
 
 // MARK: - 场景域内助手（本文件私有；与 MainEntry 的 check/expectEqual 共用）
