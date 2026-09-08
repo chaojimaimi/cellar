@@ -8,14 +8,14 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.16.0-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling, optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, and zh/en bilingual UI. This batch is an experience-maintenance release: a menu-bar battery percentage toggle, a fix for the general-page controls flickering gray during MagSafe LED switches, and aligning the onboarding guard copy with the general page's softened wording. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.19.1-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch is a defect fix: the menu-bar charging/maintenance badges now switch instantly on plug/unplug (live system power state), fixing stale badges that previously required opening the panel to refresh. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
 - **Any charge limit (60–100%)**: including the sub-80% range not natively supported by the system
 - **Hysteresis**: charging stops at the limit and only resumes after self-discharge down to the recovery threshold (default: limit −2%), avoiding frequent on/off cycling
 - **Charge-side thermal pause**: by default charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce), with thresholds configurable on the General page; no hot restart of charging after a thermally terminated discharge
-- **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
+- **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies; since v1.12 both left and right fans are taken over in sync on dual-fan machines, single-fan machines unchanged); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
 - **Optional auto-discharge**: automatically discharges back to the limit when charge is above it (off by default; enabling requires double confirmation; after completion it needs to cool down and the adapter to be replugged before it can trigger again)
 - **Charge schedule** (new in v1.6, off by default): automatically switches the charge limit or fully unlimited charging by weekday and time window (up to 8 entries, 30-minute granularity); edge-triggered — the policy is snapshotted when a window opens and restored when it closes, so manual changes inside a window only last until it ends
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
@@ -29,12 +29,13 @@ A menu-bar icon resident GUI (App/CellarApp.xcodeproj), sharing the same core an
 
 ### Feature overview
 
-- **Menu-bar battery panel**: charge arc, limit range, live status line (level / charging state / temperature / cycles / health / adapter); limit and hysteresis adjustable directly in the panel
-- **Power-flow graph**: real-time visualization of three states — adapter supply / floating at stop / battery supply — including measured battery-side power
+- **Menu-bar battery panel**: charge arc, limit range, live status line (level / charging state / temperature / cycles / health / adapter / CPU surface temperature / left & right fan speeds); limit and hysteresis adjustable directly in the panel
+- **Menu-bar battery glyph**: self-drawn fill-level form (continuous proportional fill + charging bolt / maintenance plug badge + low-battery red) with a percentage toggle; plug/unplug badges switch instantly from the live system power state
+- **Power-flow graph**: real-time visualization of three states — adapter supply / floating at stop / battery supply — including measured battery-side power and live adapter wattage
 - **One-shot actions**: “Charge to Full once” (charges to 100% then automatically restores the limit) and “Discharge to Limit” (adapter off, automatically restores when the level drops to the target)
 - **Battery calibration**: one-click four-phase calibration (full charge → rest/balance → discharge to 10% → restore limit), fully notified, cancellable anytime, auto-aborted on reboot
 - **Automation page (v1.6)**: charge-schedule card — master switch, entry add/edit/delete (seven-weekday picker / 30-minute-granularity start/end / charge limit or unlimited charging), an “Active” badge on the currently matching entry; local notifications on schedule entry / restore
-- **Themes**: native minimal / Cellar Amber dual themes with instant switching, light/dark adaptive; zh/en bilingual
+- **Themes**: native minimal / Cellar Amber / Industrial Gauge themes with instant switching, light/dark adaptive; zh/en bilingual
 - **Settings window**: appearance switch, launch at login, login-item repair, auto-discharge toggle, notifications entry
 - **First-launch 4-step onboarding**: welcome → environment check (conflict gate) → daemon install authorization → set limit
 - **Notifications**: limit reached, write failures, external writer conflict, action complete / safe abort, calibration progress, and more (action-class exempt from cooldown)
@@ -145,14 +146,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 539 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 559 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 90.35%)
-swift run CellarUICheck     # 294 UI snapshot comparisons (three-style matrix) + localization completeness gate
+                            # pure logic, ≥80% · currently 90.43%)
+swift run CellarUICheck     # 300 UI snapshot comparisons (three-style matrix) + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -168,8 +169,16 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Phase 5 · v1.3 statistics (0.8.0-alpha)**: SQLite periodic sampling + battery level / temperature / power history charts + max capacity trend (released)
 - ✅ **Phase 5 · v1.4 calibration scheduling (0.9.0-alpha)**: calibration page with status / schedule / last-run cards + automatic periodic calibration — overnight window, opt-in off by default, deferred when conditions unmet, cancellable anytime (released)
 - ✅ **Phase 5 · v1.5 thermal protection completion (0.10.0-alpha)**: configurable charge-side thermal thresholds (pause 35–45 °C / hysteresis 1–8 °C, defaults 40/37 unchanged) + derived resume point + thermal guard extended to charging-enable paths (Charge-to-Full / calibration) (released)
-- **Phase 5 · v1.6 automation (0.11.0-alpha)**: charge schedule (auto-switch limit / unlimited charging by weekday and time, edge-triggered with enter-window snapshot restore) + `status --json` CLI scripting — Shortcuts integration moved to a v1.7 candidate due to the system restriction on ad-hoc-signed apps without a Team ID
-- Phase 5+: Shortcuts integration (v1.7 candidate), scene automation
+- ✅ **Phase 5 · v1.6 automation (0.11.0-alpha)**: charge schedule (auto-switch limit / unlimited charging by weekday and time, edge-triggered with enter-window snapshot restore) + `status --json` CLI scripting (released) — Shortcuts integration remains on hold due to the system restriction on ad-hoc-signed apps without a Team ID
+- ✅ **Phase 5 · v1.7 native charge-limit coordination (0.13.0-alpha)**: detection and coexistence with the macOS 26.4 native Charge Limit — registration-state detection (read-only powerd ChargeCtrlPolicy parsing), dashboard note & conflict banner (deep link to System Settings), calibration/charge-to-full guards, `doctor` coexistence check #15 + `status` native section; enforcement path unchanged (released)
+- ✅ **Phase 5 · v1.8 MagSafe LED control (0.14.0-alpha)**: take over the MagSafe 3 charging-indicator LED (follow system / off / green / amber) — daemon tick correction + conflict latching (detection of MagHue-class tools) + restore on exit; same-batch walkthrough polish (released)
+- ✅ **Phase 5 · Style C Tier 2 polish + action vocabulary shrink (0.15.0-alpha)**: gauge inner tick ring, fine panel grid background, expanded monospaced numerals; “step-up boost” one-shot action retired (zero config migration) (released)
+- ✅ **Maintenance batch (0.16.0-alpha)**: menu-bar percentage toggle, MagSafe LED switching flicker fix, onboarding guard copy alignment, unsigned-app Gatekeeper guidance (released)
+- ✅ **Phase 5 · v1.11 telemetry batch (0.17.0-alpha)**: live adapter wattage (power-flow live numbers), dual fan temperature sources (battery / CPU surface temperature), window title-bar battery icon (released)
+- ✅ **Maintenance batches (0.18.x-alpha)**: deployment walkthrough fixes (schedule all-day windows, in-panel time picker, left/right fan status rows, etc.) + six rounds of menu-bar battery glyph iteration (self-drawn bitmap final form: continuous proportional fill + charging/maintenance badges + low-battery red) (released)
+- ✅ **Phase 5 · v1.12 dual-fan synchronized takeover (0.19.0-alpha)**: smart fan cooling extended to per-fan slot state machines for left and right fans (F1 write-path spike verified first), doctor fan section dual-row expansion, backward-compatible XPC payload; single-fan machines unchanged (released)
+- ✅ **Maintenance batch (0.19.1-alpha)**: menu-bar battery badge freeze fix — badges now switch instantly on plug/unplug (live system power state) instead of requiring a panel click to refresh (released)
+- Phase 5+: Shortcuts integration (requires a signing Team ID), scene automation
 
 The full roadmap and design documents are published in the release notes.
 
