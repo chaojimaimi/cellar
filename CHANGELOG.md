@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.2-alpha] - 2026-09-09
+
+### Changed
+
+- **功率流向图流光点 30fps 上限钳制（主窗口可见态 CPU 优化）**：`TimelineView(.animation)` → `.animation(minimumInterval: 1/30)`（macOS 12+ API，包平台 13 满足，本机 SDK swiftdoc 语义核实=「更新频率不快于该间隔」）。`.animation` 缺省跟随屏幕刷新率（60Hz / ProMotion 120Hz），每帧全量 Canvas 重绘（节点+边+标签+光点）是主窗口仪表板可见态持续 CPU 的最大单项；钳 30fps 后 60Hz 屏帧成本减半、120Hz 屏减 3/4。**替代 v1.2 验收标准「60fps 目标」**（本地私有 plans 文档不改历史，判据更替在此记录）。
+
+### 备注
+
+- 光点相位取绝对时间（周期恒 1.9/2.0/2.6s），降采样只减帧数不减周期——视觉无差；静帧/reduceMotion/快照路径零改动：300 张快照零 diff、559 场景、l10n 428 key、覆盖率 90.43% 全绿。
+- 复核方法记录：TimelineView 全库唯一消费点经 `command grep` 确认——ugrep 包装尊重 .gitignore 会静默跳过 docs/，全库检索须防此类假阴性。
+- 同批评估不采纳：daemonStatus 发布等值去重（收益不可测——全表面关闭实测 0.0% CPU、可见态重渲染大头为遥测采样与本动画；且该状态管线为 0.19.1 刚修复面，风险收益不成比）。
+- 本项源自外部资源分析工具误诊的排查收官（其「4s 常驻轮询/每次刷新含 SQLite 写/UpdateCycle 库」前提均与代码不符，静息实测 0.0%）；部署后验收：主窗口仪表板可见态 `top -pid $(pgrep -x Cellar)` 前后采样对比 + 光点平滑度目视。
+
 ## [0.19.1-alpha] - 2026-09-08
 
 ### Fixed

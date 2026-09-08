@@ -39,7 +39,8 @@ public enum PowerDiagramState: Equatable, Sendable {
 /// 功率流向三角图：适配器（左上）/ 系统（右上）/ 电池（下中主角位）三节点卡 +
 /// 流动路径曲线（ab 充电边 accent / bs 放电边 warn / 直供边 accent——真实流动
 /// active flow 全 accent 强调，走查 2026-09-04）+ 流动
-/// 光点（TimelineView 驱动 Canvas——60fps 目标；静帧/快照/reduceMotion 下固定
+/// 光点（TimelineView 驱动 Canvas——30fps 上限钳制（0.19.2 主窗口可见态 CPU
+/// 优化，替代 v1.2「60fps 目标」验收判据）；静帧/快照/reduceMotion 下固定
 /// 相位静态渲染，确定性成立）。**只有真实流动的路径才画线**（F3 统一规则）：
 /// charging = ab+direct 双活跃；holding = direct 单活跃；battery = bs 单活跃；
 /// nodata = 无连线。
@@ -107,7 +108,7 @@ public struct PowerFlowDiagramView: View {
             // 缺陷；图形全量经 GraphicsContext 绘制后无该路径。绘制顺序照 mock
             // SVG：节点卡 → 边 → 边标签 → 光点）。
             if animating {
-                TimelineView(.animation) { timeline in
+                TimelineView(.animation(minimumInterval: Self.flowDotFrameInterval)) { timeline in
                     canvasLayer(width: proxy.size.width, height: proxy.size.height, phase: timeline.date.timeIntervalSinceReferenceDate)
                 }
             } else {
@@ -125,6 +126,14 @@ public struct PowerFlowDiagramView: View {
     private var animating: Bool {
         initialAnimating && !reduceMotion && showsFlowDots
     }
+
+    /// 流光点最小帧间隔（30fps）。`.animation` 缺省跟随屏幕刷新率（60Hz /
+    /// ProMotion 120Hz），每帧全量 Canvas 重绘（节点+边+标签+光点）是主窗口
+    /// 可见态持续 CPU 的最大单项；钳 30fps 后 60Hz 屏帧成本减半、120Hz 屏减
+    /// 3/4。光点相位取绝对时间（周期恒 1.9/2.0/2.6s），降采样只减帧数不减
+    /// 周期——视觉无差。快照矩阵四构造点显式 initialAnimating=false 走静态
+    /// 分支，零扰动。
+    private static let flowDotFrameInterval: Double = 1.0 / 30.0
 
     // MARK: - 三边端点动态推导（F2 §2.4）
 
