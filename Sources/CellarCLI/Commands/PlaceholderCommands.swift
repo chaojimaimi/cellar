@@ -361,13 +361,20 @@ enum DaemonInstaller {
         print("✅ launchctl bootstrap 成功")
 
         // 6. 校验：XPC getStatus 重试 5×1s + version 核对（评审 F-3）。
+        // ⚠️ 版本偏斜的期望值来自 CLI 自身常量（0.18.6 / 0.19.3 两次实证）：半旧
+        // CLI 会把新 daemon 误报成「stale daemon」，且旧实现用 throw 走外层 catch
+        // 级联成「daemon 启动校验失败：ExitCode(1)」——方向反转 + 双重误诊。现按
+        // 「一方半旧」分流并直接退出，不再级联。
         var lastError = ""
+        var versionMismatch = false
         for attempt in 1...5 {
             do {
                 let status = try DaemonXPCClient().getStatus()
                 guard status.version == DaemonXPC.daemonVersion else {
-                    print("❌ daemon 版本核对失败：期望 \(DaemonXPC.daemonVersion)，实际 \(status.version)（stale daemon？）")
-                    throw ExitCode(1)
+                    print("❌ daemon 版本核对失败：期望 \(DaemonXPC.daemonVersion)（CLI 版本常量），实际 \(status.version)（daemon 自报）")
+                    print("   二者不一致 = 一方半旧：CLI 侧 → swift build -c release 重建；daemon 侧 → swift build -c release 后重跑本命令")
+                    versionMismatch = true
+                    break
                 }
                 print("✅ daemon 已启动并通过版本核对")
                 DaemonCommandHelpers.printStatus(status)
@@ -383,6 +390,7 @@ enum DaemonInstaller {
                 break
             }
         }
+        if versionMismatch { throw ExitCode(1) }
         print("❌ daemon 启动校验失败（5 次重试）：\(lastError)")
         print("   请检查 /Library/Logs/Cellar/daemon.log 与 launchctl print system/com.cellar.daemon")
         throw ExitCode(1)
