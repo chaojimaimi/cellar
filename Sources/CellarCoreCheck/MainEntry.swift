@@ -380,6 +380,10 @@ struct Main {
         // 双域/decide·targetRPM cpuSkin 路径/wire 三键值域与缺席保持/FanStatus 兼容/
         // doctor 分支——FanTemperatureSourceDomain）。
         try runFanTemperatureSourceDomainScenarios()
+        // v0.19.3 M1：功率流向语义域（方案 §D2 判定表 + §5 十九场景——实测符号
+        // 裁决 kind / 零流 ε 带 / V×I 显示阈值 / 遥测缺席回退分层 / nodata 防御
+        // ——纯函数面，FlowDiagramDomain）。
+        runFlowDiagramDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

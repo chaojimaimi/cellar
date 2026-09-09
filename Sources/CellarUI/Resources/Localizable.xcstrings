@@ -1010,13 +1010,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rated Power"
+            "value": "Negotiated Power"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "额定功率"
+            "value": "协商功率"
           }
         }
       }
@@ -1238,6 +1238,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "功率"
+          }
+        }
+      }
+    },
+    "dashboard.card.spec.power.telemetry": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Power · Telemetry"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "功率 · 遥测"
+          }
+        }
+      }
+    },
+    "dashboard.flow.assist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery assist %.1f W"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池补入 %.1f W"
           }
         }
       }
@@ -2360,6 +2394,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "开启后，温度超过阈值时守护进程将提高风扇转速；关闭开关或退出 App 时自动恢复系统控制。"
+          }
+        }
+      }
+    },
+    "flow.ax.assist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Power flow: battery assist, %@ charge, %@, %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "功率流：电池补入系统，%@ 电量，%@，%@"
           }
         }
       }
@@ -5600,13 +5651,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ W (rated %lld W)"
+            "value": "%@ W (negotiated %lld W)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ W（额定 %lld W）"
+            "value": "%@ W（协商 %lld W）"
           }
         }
       }

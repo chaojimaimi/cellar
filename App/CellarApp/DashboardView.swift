@@ -237,13 +237,15 @@ struct DashboardView: View {
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.secondaryText.opacity(0.25)))
     }
 
+    /// 三角图视觉态（v0.19.3：映射 `flowModel.kind`——形态由实测功率符号裁决，
+    /// assist 补入态新增；nodata 仍由 isNodata 前置判定）。
     private var diagramState: PowerDiagramState {
         guard !isNodata else { return .nodata }
-        switch flowState {
+        switch flowModel.kind {
         case .charging: return .charging
-        case .floating: return .holding
-        case .onBattery: return .battery
-        case nil: return .nodata
+        case .holding: return .holding
+        case .assist: return .assist
+        case .battery: return .battery
         }
     }
 

@@ -18,7 +18,7 @@ import SwiftUI
 // 快照正常而真窗破损 = 提案尺寸依赖型缺陷；图形全量经 GraphicsContext 绘制
 // 后无视图定位路径（详见 canvasLayer WHY）。
 
-/// 三角图视觉态（§3.1 视觉态矩阵的四态；三态映射复用 PowerFlowView 的
+/// 三角图视觉态（§3.1 视觉态矩阵的五态；三态映射复用 PowerFlowView 的
 /// (ext, charging) 二元判定结论——含「ext∧charging 动作中=异常过渡态按
 /// charging 呈现」）。
 public enum PowerDiagramState: Equatable, Sendable {
@@ -29,6 +29,10 @@ public enum PowerDiagramState: Equatable, Sendable {
     /// 外接 + 停充：仅适配器→系统直供（真实流动 + 流光点）；电池两缘无连线
     /// （F3：方向/流动只在有流动时呈现——停充态电池无进出，画线即误导）。
     case holding
+    /// 外接 + 电池补入：适配器直供边 + 电池→系统边双活跃，无适配器→电池边
+    /// （v0.19.3——形态由实测功率符号裁决，BP < −ε；用户可读出
+    /// 适配器 + 电池 = 系统）。
+    case assist
     /// 电池供电：电池→系统（−W，warn）；适配器节点降档（未接入）。
     case battery
     /// 遥测快照 nil：三节点灰卡悬浮、无连线（组合空态，快照矩阵登记
@@ -42,8 +46,8 @@ public enum PowerDiagramState: Equatable, Sendable {
 /// 光点（TimelineView 驱动 Canvas——30fps 上限钳制（0.19.2 主窗口可见态 CPU
 /// 优化，替代 v1.2「60fps 目标」验收判据）；静帧/快照/reduceMotion 下固定
 /// 相位静态渲染，确定性成立）。**只有真实流动的路径才画线**（F3 统一规则）：
-/// charging = ab+direct 双活跃；holding = direct 单活跃；battery = bs 单活跃；
-/// nodata = 无连线。
+/// charging = ab+direct 双活跃；holding = direct 单活跃；assist = direct+bs
+/// 双活跃（电池补入，v0.19.3）；battery = bs 单活跃；nodata = 无连线。
 ///
 /// - 布局几何 = mock SVG viewBox 560×244 的归一化映射（mock 为唯一视觉事实源）；
 /// - 文本全部经 CellarL10n（flow.*）；色值全 token 消费（G2：本组件零 Color
@@ -269,6 +273,11 @@ public struct PowerFlowDiagramView: View {
                 // 致「停充无动态」观感）。
                 drawEdge(context: &context, edge: .direct, geometry: edgeGeometry(.direct, cards: cards, size: size), color: theme.accent, scale: scale)
                 drawEdgeLabel(context: &context, text: supplyLine, color: theme.accent, semibold: false, anchor: edgeGeometry(.direct, cards: cards, size: size).labelAnchor, scale: scale)
+            case .assist:
+                drawEdge(context: &context, edge: .direct, geometry: edgeGeometry(.direct, cards: cards, size: size), color: theme.accent, scale: scale)
+                drawEdge(context: &context, edge: .bs, geometry: edgeGeometry(.bs, cards: cards, size: size), color: theme.warning, scale: scale)
+                drawEdgeLabel(context: &context, text: supplyLine, color: theme.accent, semibold: false, anchor: edgeGeometry(.direct, cards: cards, size: size).labelAnchor, scale: scale)
+                drawEdgeLabel(context: &context, text: powerBS, color: theme.warning, semibold: true, anchor: edgeGeometry(.bs, cards: cards, size: size).labelAnchor, scale: scale)
             case .battery:
                 drawEdge(context: &context, edge: .bs, geometry: edgeGeometry(.bs, cards: cards, size: size), color: theme.warning, scale: scale)
                 drawEdgeLabel(context: &context, text: powerBS, color: theme.warning, semibold: true, anchor: edgeGeometry(.bs, cards: cards, size: size).labelAnchor, scale: scale)
@@ -343,11 +352,13 @@ public struct PowerFlowDiagramView: View {
 
     /// 活跃光点边（F3「流动才画线」同规则）：charging：AB 3 点 accent + AS 2 点
     /// accent（直供 accent 化）；holding：AS 2 点 accent（停充直供 = 真实流动）；
+    /// assist：AS accent + BS warn（电池补入 = 真实流动，v0.19.3）；
     /// battery：BS 2 点 warn；nodata 无连线无光点。
     private var activeDottedEdges: [EdgePath] {
         switch state {
         case .charging: return [.ab, .direct]
         case .holding: return [.direct]
+        case .assist: return [.direct, .bs]
         case .battery: return [.bs]
         case .nodata: return []
         }

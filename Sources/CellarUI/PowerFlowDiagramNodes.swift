@@ -299,6 +299,14 @@ extension PowerFlowDiagramView {
                 "flow.ax.holding",
                 batteryPercentText
             )
+        case .assist:
+            // v0.19.3：补入态摘要（参数序 percent, supplyLine, powerBS）。
+            return CellarL10n.s(
+                "flow.ax.assist",
+                batteryPercentText,
+                supplyLine ?? CellarL10n.s("common.nodata"),
+                powerBS ?? CellarL10n.s("common.nodata")
+            )
         case .battery:
             return CellarL10n.s(
                 "flow.ax.battery",

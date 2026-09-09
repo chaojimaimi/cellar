@@ -52,7 +52,9 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
 // CPU 表面温度 + 双风扇转速三格，既有 StatusLine 构造零改动缺席路径零 diff）；
 // 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
-// fanSource 非 nil「Cellar」小字样例，既有 StatusLine_*（含 thirdRow）构造零改动））
+// fanSource 非 nil「Cellar」小字样例，既有 StatusLine_*（含 thirdRow）构造零改动）；
+// v0.19.3 自 300 扩 306——功率流三角图 assist 补入态 6 新增
+// （PowerFlowDiagram_assist_*，既有 4 态构造零改动））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -555,6 +557,15 @@ private func buildCases() -> [SnapshotCase] {
                     state: .holding, batteryPercent: 81, batteryVoltage: "12.3 V",
                     adapterLine: "65 W · 在位", systemLine: CellarL10n.s("common.nodata"),
                     supplyLine: "直供", initialAnimating: false)),
+                // v0.19.3 功率流向语义批：assist 补入态 6 张（300 → 306，全部全新
+                // 文件——新增非扰动）：直供边 accent（supplyLine「直供 · 29.9 W」）
+                // + 电池→系统边 warn（powerBS「电池补入 6.5 W」）双活跃、无
+                // 适配器→电池边；系统节点补「36.4 W 负载」——golden 即守恒记录
+                // （29.9 + 6.5 = 36.4）。
+                ("assist", PowerFlowDiagramView(
+                    state: .assist, batteryPercent: 78, batteryVoltage: "12.3 V",
+                    adapterLine: "65 W · 在位", systemLine: "36.4 W 负载",
+                    powerBS: "电池补入 6.5 W", supplyLine: "直供 · 29.9 W", initialAnimating: false)),
                 ("battery", PowerFlowDiagramView(
                     state: .battery, batteryPercent: 62, batteryVoltage: "11.9 V",
                     adapterLine: "未接入", systemLine: "12.4 W 负载",

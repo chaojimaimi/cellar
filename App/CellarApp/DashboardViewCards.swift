@@ -64,7 +64,7 @@ extension DashboardView {
             kv(CellarL10n.s("statusline.current"),
                value: currentValue,
                unit: snapshot == nil ? nil : CellarL10n.s("dashboard.unit.ampere"))
-            kv(CellarL10n.s("dashboard.card.spec.power"),
+            kv(CellarL10n.s(powerSpecLabelKey),
                value: powerValue,
                unit: snapshot == nil ? nil : CellarL10n.s("dashboard.unit.watt"))
             kv(CellarL10n.s("dashboard.card.spec.capacity"),
@@ -82,19 +82,45 @@ extension DashboardView {
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.secondaryText.opacity(0.25)))
     }
 
-    /// 电流方向按电源态（真机符号语义未定：方向一律以 isCharging 为准，
-    /// BatterySnapshot 注记——mock +2.87/−1.05 同口径）。
+    /// 功率/电流符号（v0.19.3 §D5 kind 全函数，与流向图同源裁决）：
+    /// `assist → −`（放电补差）；`charging → +`；`holding / battery →
+    /// isCharging ? + : −`（kind == .charging ⟹ isCharging，故与「遥测源按 kind /
+    /// 回退值按 isCharging」的分源意图等价；`.battery` 态 edge 非 nil 但来自 V×I，
+    /// 必须落在 isCharging 支，R3 P1）。
+    private var batterySign: Double {
+        switch flowModel.kind {
+        case .assist: return -1
+        case .charging: return 1
+        case .holding, .battery: return (snapshot?.isCharging ?? false) ? 1 : -1
+        }
+    }
+
+    /// 电流幅值不变（|amperageMA|），符号用同一 kind 全函数（与功率行同向）。
     private var currentValue: String {
         guard let snapshot else { return CellarL10n.s("common.nodata") }
         let magnitude = Double(abs(snapshot.amperageMA)) / 1000
-        return String(format: "%+.2f", snapshot.isCharging ? magnitude : -magnitude)
+        return String(format: "%+.2f", batterySign * magnitude)
     }
 
+    /// 功率幅值取 `flowModel.batteryEdgeW ?? batteryPowerW` 绝对值（遥测源按 kind
+    /// 同快照；回退/缺席落 V×I 现状）。
     private var powerValue: String {
-        guard let snapshot else { return CellarL10n.s("common.nodata") }
-        let watts = abs(batteryPowerW)
+        guard snapshot != nil else { return CellarL10n.s("common.nodata") }
+        let watts = abs(flowModel.batteryEdgeW ?? batteryPowerW)
         guard watts >= 0.05 else { return "0.0" }
-        return String(format: "%+.1f", snapshot.isCharging ? watts : -watts)
+        return String(format: "%+.1f", batterySign * watts)
+    }
+
+    /// 功率行标签（v0.19.3 §D5）：值来源为遥测 BP（kind ∈ {charging, assist} 且
+    /// 遥测齐全）→ 「功率 · 遥测」，否则「功率」。⚠️ 含 SP 合取项——BP 在场 /
+    /// SP 缺席走回退（值仍是 V×I，场景 19），漏项即错标（R3 P1）。
+    private var powerSpecLabelKey: String.LocalizationValue {
+        let telemetryReady = snapshot?.telemetry?.systemPowerInMW != nil
+            && snapshot?.telemetry?.batteryPowerMW != nil
+        if flowModel.kind == .assist || (flowModel.kind == .charging && telemetryReady) {
+            return "dashboard.card.spec.power.telemetry"
+        }
+        return "dashboard.card.spec.power"
     }
 
     /// 千分位分组（mock 5,103——NumberFormatter 分组形态）。

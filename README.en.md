@@ -8,7 +8,7 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.19.1-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch is a defect fix: the menu-bar charging/maintenance badges now switch instantly on plug/unplug (live system power state), fixing stale badges that previously required opening the panel to refresh. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.19.3-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch fixes power-flow semantics: all three edge figures of the external-power triangle now come from the same telemetry snapshot (the triangle closes exactly), a new “battery assist” form shows a battery supplementing an undersized adapter, and the adapter’s “rated” wording becomes “negotiated” (PD contract tier). Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
@@ -50,12 +50,12 @@ A menu-bar icon resident GUI (App/CellarApp.xcodeproj), sharing the same core an
 
 **Dual-route choice matrix**:
 
-| Scenario                                        | Recommended route       | Reason                                                          |
-| ----------------------------------------------- | ----------------------- | --------------------------------------------------------------- |
-| Regular everyday use                            | App-managed (panel)     | Installs/uninstalls together with the App; managed uniformly in System Settings |
-| Developers/testers replacing the App frequently | Manual (CLI)            | Daemon decoupled from the App bundle; replacing the App has zero impact |
-| Repeated spawn failures on the managed route    | Manual (CLI)            | Deterministic recovery, bypasses system registration-cache issues |
-| Manual-route users returning to managed         | Panel migration guide   | Clean up manual residue first, then install via the panel       |
+| Scenario                                        | Recommended route     | Reason                                                                          |
+| ----------------------------------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| Regular everyday use                            | App-managed (panel)   | Installs/uninstalls together with the App; managed uniformly in System Settings |
+| Developers/testers replacing the App frequently | Manual (CLI)          | Daemon decoupled from the App bundle; replacing the App has zero impact         |
+| Repeated spawn failures on the managed route    | Manual (CLI)          | Deterministic recovery, bypasses system registration-cache issues               |
+| Manual-route users returning to managed         | Panel migration guide | Clean up manual residue first, then install via the panel                       |
 
 ### Discharge to Limit (support conditions and safety notes)
 
@@ -95,12 +95,12 @@ Cellar must be used exclusively with other charge-management tools/daemons: both
 
 ## System requirements
 
-| Component        | Requirement                                                                             |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| Machine          | Apple Silicon MacBook                                                                    |
-| OS               | macOS 26+ (Tahoe control backend, validated on real hardware); earlier systems use the experimental Legacy backend (unvalidated) |
-| GUI (App)        | macOS 26+ (hard requirement)                                                             |
-| Permissions      | Reads need no privileges; writes go through the root daemon (CLI needs `sudo`; App is authorized via System Settings, admin account required) |
+| Component   | Requirement                                                                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Machine     | Apple Silicon MacBook                                                                                                                         |
+| OS          | macOS 26+ (Tahoe control backend, validated on real hardware); earlier systems use the experimental Legacy backend (unvalidated)              |
+| GUI (App)   | macOS 26+ (hard requirement)                                                                                                                  |
+| Permissions | Reads need no privileges; writes go through the root daemon (CLI needs `sudo`; App is authorized via System Settings, admin account required) |
 
 ## Build & install
 
@@ -146,14 +146,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 559 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 578 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 90.43%)
-swift run CellarUICheck     # 300 UI snapshot comparisons (three-style matrix) + localization completeness gate
+                            # pure logic, ≥80% · currently 90.57%)
+swift run CellarUICheck     # 306 UI snapshot comparisons (three-style matrix) + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -178,6 +178,8 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Maintenance batches (0.18.x-alpha)**: deployment walkthrough fixes (schedule all-day windows, in-panel time picker, left/right fan status rows, etc.) + six rounds of menu-bar battery glyph iteration (self-drawn bitmap final form: continuous proportional fill + charging/maintenance badges + low-battery red) (released)
 - ✅ **Phase 5 · v1.12 dual-fan synchronized takeover (0.19.0-alpha)**: smart fan cooling extended to per-fan slot state machines for left and right fans (F1 write-path spike verified first), doctor fan section dual-row expansion, backward-compatible XPC payload; single-fan machines unchanged (released)
 - ✅ **Maintenance batch (0.19.1-alpha)**: menu-bar battery badge freeze fix — badges now switch instantly on plug/unplug (live system power state) instead of requiring a panel click to refresh (released)
+- ✅ **Maintenance batch (0.19.2-alpha)**: CPU optimization while the main window is visible — power-flow diagram flow-dot animation capped at 30 fps (halves per-frame cost on 60 Hz displays, quarters it on 120 Hz) with unchanged dot period and identical visuals (released)
+- ✅ **Maintenance batch (0.19.3-alpha)**: power-flow semantics fix — the three external-power triangle figures now come from one telemetry snapshot (the triangle closes exactly), a new “battery assist” form renders an undersized adapter supplemented by the battery, battery-card signs follow measured flow, and the adapter’s “rated” wording becomes “negotiated” (PD contract tier) (released)
 - Phase 5+: Shortcuts integration (requires a signing Team ID), scene automation
 
 The full roadmap and design documents are published in the release notes.
