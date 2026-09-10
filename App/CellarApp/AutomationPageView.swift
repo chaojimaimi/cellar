@@ -10,8 +10,8 @@ import SwiftUI
 /// 宿主页持编辑展开态与 config 修改流（方案 §3.1 R1 P2-2 规则①——单条展开互斥
 /// 的承载点）：组件回调交回条目级操作（开关/增删改）→ 本页合并出**完整 config**
 /// → 紧凑 JSON（ChargeScheduleConfig.encoded）经 applyChargeSchedule 全量下发
-/// （daemon 三级校验，UD-6 全键覆盖语义）。Shortcuts 卡随 M2.5 NO-GO 缩面移除
-/// （Intents 降级 v1.7，复活后随 Intents 批一并加回）。
+/// （daemon 三级校验，UD-6 全键覆盖语义）。Shortcuts 卡随 M2.5 NO-GO 移除
+/// （AppIntents 系统硬要求签名 Team ID，项目不引入付费签名——已终止不再规划）。
 struct AutomationPageView: View {
     @EnvironmentObject private var statusController: StatusController
     @Environment(\.cellarTheme) private var theme

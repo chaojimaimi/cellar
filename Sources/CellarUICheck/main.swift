@@ -592,7 +592,7 @@ private func buildCases() -> [SnapshotCase] {
             // 以退役前 zh 原文字面量钉死，golden 逐字节不变（swift build 形态
             // s() 本就恒解析 zh-Hans，语义等价）；v1.6 起校准/自动化亦实页化，
             // TBDPlaceholderView 已无 App 消费面——快照矩阵保留钉死形态
-            // （组件仍在 CellarUI，Intents/场景联动复活时可能复用）。
+            // （组件仍在 CellarUI，留作通用占位组件，防渲染漂移回归）。
             let placeholder = TBDPlaceholderView(
                 icon: "chart.bar",
                 title: CellarL10n.s("main.page.stats"),
