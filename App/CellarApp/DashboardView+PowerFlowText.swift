@@ -31,7 +31,8 @@ extension DashboardView {
     }
 
     /// 功率流向显示模型（v0.19.3 §D4——判定全部下沉 CellarCore 纯函数
-    /// `flowDiagramModel`，本文件只做字符串组装）。
+    /// `flowDiagramModel`，本文件只做字符串组装）。v0.19.5 §D2：六参直调透传
+    /// controller 前态投影（assist 代际确认门的判定输入）。
     var flowModel: FlowDiagramModel {
         flowDiagramModel(
             externalConnected: snapshot?.externalConnected ?? false,
@@ -39,7 +40,8 @@ extension DashboardView {
             systemPowerInMW: snapshot?.telemetry?.systemPowerInMW,
             batteryPowerMW: snapshot?.telemetry?.batteryPowerMW,
             batteryVoltageMV: snapshot?.voltageMV ?? 0,
-            batteryAmperageMA: snapshot?.amperageMA ?? 0
+            batteryAmperageMA: snapshot?.amperageMA ?? 0,
+            previous: statusController.flowPreviousSample
         )
     }
 
@@ -74,13 +76,22 @@ extension DashboardView {
     }
 
     /// 适配器→系统边标签（v0.19.3 按 kind 分派）：**charging** → 直供边真实流量
-    /// = 系统负载（现状口径）；**assist** → 「直供 · SP W」（适配器实际输出）；
+    /// = 系统负载（现状口径；v0.19.5 未确认窗口子形态例外——load=nil、direct=SP
+    /// 时改「直供 · SP W」，见分支内注释）；**assist** → 「直供 · SP W」（适配器实际输出）；
     /// **holding** → SP 在场显「直供 · SP W」/ 缺席 → 「直供」纯词；电池供电 → nil
     /// （边不显示，放电路径由 B→S 边承载）。
     var supplyLineText: String? {
         guard snapshot?.externalConnected == true else { return nil }
         switch flowModel.kind {
         case .charging:
+            // 未确认窗口子形态（v0.19.5 评审 P1-1）：kind=.charging 但 load=nil、
+            // direct=SP——SP 是适配器输入不是系统负载，「负载」措辞会把输入当
+            // 负载误导（与事故「系统 89.2 W」同型）；改「直供 · SP W」（与 golden
+            // 钉死形态一致）。识别式唯一：常规 charging 两值恒同源非 nil、② 回退
+            // charging direct=nil、异常 SP<BP 两值同 nil。
+            if flowModel.systemLoadW == nil, let spW = flowModel.directEdgeW {
+                return CellarL10n.s("dashboard.supply.power", String(format: "%.1f", spW))
+            }
             guard let loadW = flowModel.directEdgeW else { return nil }
             return CellarL10n.s("dashboard.sysLine.load", loadW)
         case .assist:

@@ -43,6 +43,21 @@ final class StatusController: ObservableObject {
     /// 处理。菜单栏电池形态徽标取值链（menuBarBatteryForm 快照第一优先）依赖
     /// 此契约，否则停采样后的最后值冻结成永久旧值，插拔电徽标点击面板才刷新。
     @Published private(set) var batterySnapshot: BatterySnapshot?
+    /// 流向判定前态双槽（v0.19.5 §D3——「上一帧」语义的宿主）。
+    ///
+    /// WHY 双槽不能单槽直写：`batterySnapshot = new` 的视图重算虽在下一 runloop，
+    /// 但同函数内顺序赋值会让消费点读到「本帧当前态」→ `generationChanged` 恒
+    /// false → assist 确认门/锁存整体失效。定版：每帧先用 `flowPreviousSample`
+    /// （= 上一帧）判定本帧 kind，再把本帧三元组存入 `pendingTriple`，下一帧
+    /// 采样时才提交为 `flowPreviousSample`（§D3 顺序契约：①提交上帧 → ②采样
+    /// → ③判定 → ④写回 pending → ⑤发布）。
+    /// 上帧算好、待生效的三元组（下一帧 ① 提交进 flowPreviousSample）。
+    private var pendingTriple: FlowDiagramPreviousSample?
+    /// 消费点读的判定前态（= 上一帧三元组）。internal 只读投影（§D2 四入口
+    /// 接线：PanelView / DashboardView+PowerFlowText 经此透传）；**非 @Published**
+    /// ——纯判定输入，不驱动视图刷新（kind 判定随 batterySnapshot 发布重建时
+    /// 自然取到最新值）。
+    private(set) var flowPreviousSample: FlowDiagramPreviousSample?
     /// App 侧 IOPS 实时电源态（WP5 §2.4 图标即时化数据源；nil = 尚未收到电源
     /// 事件/读取失败——图标回退 daemonStatus 快照，零行为变化）。
     @Published private(set) var powerOverride: PowerOverride?
@@ -183,6 +198,10 @@ final class StatusController: ObservableObject {
             // powerOverride（IOPS 活数据 + 复查阶梯）+ daemonStatus.lastPercent；
             // 面板重开时本函数已接线立即补采样（无数据窗口有界于一次采样时长）。
             batterySnapshot = nil
+            // v0.19.5 §D3 前态清空路径之一：全表面关闭断代——两槽同步置 nil，
+            // 重开首帧即首代保守语义（previous == nil → assist 一律未确认）。
+            pendingTriple = nil
+            flowPreviousSample = nil
             return
         }
         if anyVisible {
@@ -303,7 +322,15 @@ final class StatusController: ObservableObject {
     /// 采样失败 → batterySnapshot=nil + os_log（不进横幅、不触发图标 .alert）。
     /// 成功后挂样本环（电源态翻转先清环——R1 P1-3，杜绝充电↔放电异态混合
     /// 样本拟合出小斜率产生错误估算）。
+    ///
+    /// v0.19.5 §D3 双槽时序（顺序写反则 assist 确认门整体失效）：②采样结果
+    /// 过两守卫后 → ①提交上帧（pendingTriple → flowPreviousSample，⚠️必须在
+    /// 两守卫**之后**——否则在途采样被守卫 return 时会提交 pending 而不发布
+    /// 快照，前态推进与发布脱钩）→ ③用上帧前态判本帧 kind（仅推进前态）→
+    /// ④本帧三元组入 pendingTriple 待生效 → ⑤发布快照（消费点用上帧 prev
+    /// 判定，与 ③ 同输入同结果）。
     private func sampleBatteryOnce() async {
+        // ② 采样（物理上先于守卫——守卫检查的是本 Task 的取消态/表面可见态）。
         let snapshot = await Task.detached { [batteryMonitor] in
             try? batteryMonitor.snapshot()
         }.value
@@ -312,12 +339,33 @@ final class StatusController: ObservableObject {
         // 快照）瞬间可能存在一个已起飞的 detached 采样，放行会把「面板可见时刻」
         // 的值重新冻进快照，旧根因复发。采样结果只在有表面可见时发布。
         guard panelVisible || mainWindowVisible else { return }
-        batterySnapshot = snapshot
-        if let snapshot {
-            ingestSampleRing(snapshot)
-        } else {
-            Self.log.error("电池快照采样失败（面板显「遥测不可用」降级形态）")
+        // ① 提交上帧（首帧 pendingTriple == nil → flowPreviousSample 保持
+        // nil → 首代保守语义）。
+        if let pending = pendingTriple {
+            flowPreviousSample = pending
         }
+        guard let snapshot else {
+            // 采样失败 → batterySnapshot=nil + 前态断代（v0.19.5 §D3 清空路径
+            // 之二：两槽同步置 nil，重开首帧即首代保守语义）。
+            batterySnapshot = nil
+            pendingTriple = nil
+            flowPreviousSample = nil
+            Self.log.error("电池快照采样失败（面板显「遥测不可用」降级形态）")
+            return
+        }
+        // ③ 用上帧前态判本帧 kind（遥测缺席帧照常走此处——kind 为 ② 回退
+        // 分支结果，SP/BP 存 nil，下一帧 generationChanged 判定自然处理）。
+        let kind = flowModel(of: snapshot, previous: flowPreviousSample).kind
+        // ④ 本帧三元组待生效（下一帧 ① 才提交为消费点前态）。
+        pendingTriple = FlowDiagramPreviousSample(
+            systemPowerInMW: snapshot.telemetry?.systemPowerInMW,
+            batteryPowerMW: snapshot.telemetry?.batteryPowerMW,
+            kind: kind
+        )
+        // ⑤ 发布（视图按 batterySnapshot 重建时读到的 flowPreviousSample =
+        // 上一帧，与 ③ 判定同输入）。
+        batterySnapshot = snapshot
+        ingestSampleRing(snapshot)
     }
 
     /// 样本环写入（仅遥测运行期经 sampleBatteryOnce 调用）：电源态

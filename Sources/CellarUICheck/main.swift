@@ -58,7 +58,13 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 0.19.4 自 306 扩 318——面板功率流向行 assist 态 6 新增（PowerFlow_assist_*，
 // PowerFlowView 签名迁移 kind/batteryEdgeW，既有 3 态渲染逐字节一致）+ 状态行
 // assist 态 6 新增（StatusLine_assist_*：复刻真机截图现场 SP=29800/BP=−22600/
-// 32W 适配器））
+// 32W 适配器）；
+// v0.19.5 自 318 扩 330——状态行未确认窗口态 6 新增（StatusLine_unconfirmed_*：
+// isCharging=true + BP=−25300 + 遥测 SP=64000，组件无前态 → 自动落未确认窗口
+// ——方向词随 isCharging、数字不造数）+ 功率流三角图未确认窗口态 6 新增
+// （PowerFlowDiagram_unconfirmed_*：state:.charging + powerAB:nil + 直供边 SP
+// + 系统行 nodata）；StatusLine_assist ×6 构造传 previous（满足确认条件，
+// 渲染形态不变 → golden 零 diff））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -177,7 +183,9 @@ private func wrap(
 // 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
 // fanSource 非 nil 样例——转速后「Cellar」来源小字钉死）；
 // 0.19.4 自 306 扩 318——面板功率流向行 assist 态 6 新增（PowerFlow_assist_*）+
-// 状态行 assist 态 6 新增（StatusLine_assist_*，真机现场复刻））
+// 状态行 assist 态 6 新增（StatusLine_assist_*，真机现场复刻）；
+// v0.19.5 自 318 扩 330——状态行/功率流三角图未确认窗口态各 6 新增
+// （StatusLine_unconfirmed_* / PowerFlowDiagram_unconfirmed_*））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -360,6 +368,9 @@ private func buildCases() -> [SnapshotCase] {
             // 协商 32W / SP=29800 mW / BP=−22600 mW / isCharging=true）——电源段
             // 「外接 · 电池补入」（强调色 warning）+ 电流段「放电 1.94 A」
             // （kind=.assist → .discharging，与电池卡符号一致）形态钉死。
+            // v0.19.5 §4：构造**显式传 previous**（prevBP<−ε + SP 换代 → 换代
+            // 确认）——assist 形态维持，golden 零 diff（R2 P3「需前态的组装点必须
+            // 显式传参」的快照面落点）。
             // --regen --only=StatusLine_assist 只跑本组。
             let statusAssist = makeSnapshot(
                 percent: 85, isCharging: true, externalConnected: true,
@@ -371,12 +382,42 @@ private func buildCases() -> [SnapshotCase] {
                 telemetry: ["SystemPowerIn": 29_800, "SystemLoad": 52_400,
                             "BatteryPower": -22_600, "AdapterEfficiencyLoss": 2_000,
                             "SystemVoltageIn": 19_446, "SystemCurrentIn": 1_533])
+            let statusAssistPrevious = FlowDiagramPreviousSample(
+                systemPowerInMW: 28_000, batteryPowerMW: -20_000, kind: nil)
             cases.append(SnapshotCase(
                 name: "StatusLine_assist_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                 width: 304, height: nil, style: style, scheme: scheme
             ) {
                 AnyView(wrap(style, scheme) {
-                    StatusLineView(snapshot: statusAssist)
+                    StatusLineView(snapshot: statusAssist, previous: statusAssistPrevious)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
+            // v0.19.5 §4 状态行未确认窗口态 1 case ×3 风格 ×2 外观 = 6 张（318 → 330
+            // 本批两组之一，全部全新文件——新增非扰动）：复刻事故现场（方案 §1.1：
+            // SP=64000 / BP=−25300 / isCharging=true、电量 89%）且**不传 previous**
+            // （组件无前态 = 首代保守）→ BP<−ε 未确认 → kind 跟随 isCharging 落
+            // .charging——电源段「外接 · 充电中」（**不误判 assist**）+ 电流段
+            // 「充电 2.17 A」（方向词随最新策略态）形态钉死（数字不造数由
+            // CellarCoreCheck 场景 26 钉模型面，本组钉渲染面）。
+            let statusUnconfirmed = makeSnapshot(
+                percent: 89, isCharging: true, externalConnected: true,
+                // −2 168 mA ≈ BP 25 300 mW ÷ 11 670 mV（与遥测自洽的充电电流，
+                // 本机 raw 约定：充电为负）。
+                amperageMA: -2_168,
+                adapter: ["Watts": 96, "AdapterVoltage": 20_150, "Current": 3_291,
+                          "Name": "96W USB-C Power Adapter", "Description": "adapter",
+                          "IsWireless": false],
+                telemetry: ["SystemPowerIn": 64_000, "SystemLoad": 89_200,
+                            "BatteryPower": -25_300, "AdapterEfficiencyLoss": 8_000,
+                            "SystemVoltageIn": 19_446, "SystemCurrentIn": 3_291])
+            cases.append(SnapshotCase(
+                name: "StatusLine_unconfirmed_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(snapshot: statusUnconfirmed)
                         .frame(width: 304, alignment: .leading)
                 })
             })
@@ -613,7 +654,19 @@ private func buildCases() -> [SnapshotCase] {
                     state: .nodata, batteryPercent: nil, batteryVoltage: "",
                     adapterLine: "", systemLine: "",
                     initialAnimating: false)),
-            ]
+                // v0.19.5 §4 未确认窗口态 6 张（318 → 330，全部全新文件——新增非
+                // 扰动；R1 P1 定夺：该形态为全新用户可见组合，必须 golden 钉死）：
+                // 充电起步瞬态未确认窗口的 App 层组装形态（§D1 ③——kind 跟随
+                // isCharging 落 charging、batteryEdgeW=nil 不造数、直供边照显 SP、
+                // 系统负载无实测值）——state:.charging + powerAB:nil + 适配器→电池
+                // 边不画 + 直供边「直供 · 64.0 W」（事故现场 SP=64.0）+ 系统行
+                // 「—」（common.nodata）。PowerFlowDiagramView 组件本体零改动，
+                // 形态由 state/labels 组合自然产生。
+                ("unconfirmed", PowerFlowDiagramView(
+                    state: .charging, batteryPercent: 89, batteryVoltage: "12.8 V",
+                    adapterLine: "64.0 W · 在位", systemLine: CellarL10n.s("common.nodata"),
+                    powerAB: nil, supplyLine: "直供 · 64.0 W", initialAnimating: false)),
+        ]
             for (stateName, diagram) in diagramStates {
                 cases.append(SnapshotCase(
                     name: "PowerFlowDiagram_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",

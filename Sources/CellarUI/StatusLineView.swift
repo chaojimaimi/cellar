@@ -26,6 +26,11 @@ public struct StatusLineView: View {
     /// 风扇来源标注词（0.18.1 T7：转速后小字——「系统/Cellar」策略来源澄清；
     /// nil = 不显后缀，缺席路径输出与既有构造逐字节一致——既有 golden 零 diff）。
     public let fanSource: String?
+    /// 流向判定前态（v0.19.5 §D2——上一帧采样三元组，assist 代际确认门的判定
+    /// 输入）。默认 nil 向后兼容：既有构造点零改动（nil = 首代保守语义，BP<−ε
+    /// 落未确认窗口）；**需代际确认的组装点必须显式传参**（R2 P3——生产面板
+    /// 组装点传 controller 投影，漏传则稳态 assist 在状态行退化为「充电中」）。
+    public let previous: FlowDiagramPreviousSample?
     @Environment(\.cellarTheme) private var theme
 
     public init(
@@ -34,7 +39,8 @@ public struct StatusLineView: View {
         cpuSkinTempC: Double? = nil,
         fanLRPM: Double? = nil,
         fanRRPM: Double? = nil,
-        fanSource: String? = nil
+        fanSource: String? = nil,
+        previous: FlowDiagramPreviousSample? = nil
     ) {
         self.snapshot = snapshot
         self.tempPauseActive = tempPauseActive
@@ -42,6 +48,7 @@ public struct StatusLineView: View {
         self.fanLRPM = fanLRPM
         self.fanRRPM = fanRRPM
         self.fanSource = fanSource
+        self.previous = previous
     }
 
     public var body: some View {
@@ -98,7 +105,7 @@ public struct StatusLineView: View {
     /// 回退路径，结论与旧二元版逐字节一致，既有 golden 零 diff）。
     private func powerSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: CellarL10n.s("statusline.power")) {
-            switch flowModel(of: snapshot).kind {
+            switch flowModel(of: snapshot, previous: previous).kind {
             case .charging:
                 Text(theme.word(.statusChargingExternal))
             case .holding:
@@ -135,7 +142,7 @@ public struct StatusLineView: View {
     private func currentSegment(_ snapshot: BatterySnapshot) -> some View {
         let amperage = Double(abs(snapshot.amperageMA)) / 1000
         let ampText = String(format: "%.2f A", amperage)
-        let direction = currentDirection(kind: flowModel(of: snapshot).kind)
+        let direction = currentDirection(kind: flowModel(of: snapshot, previous: previous).kind)
         let word = direction.map {
             switch $0 {
             case .charging: return CellarL10n.s("direction.charging")

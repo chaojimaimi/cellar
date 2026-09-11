@@ -94,14 +94,16 @@ struct PanelView: View {
             // 0.18 T5 D-5c：第三行观察增强——CPU 表面温度 + 双风扇实时转速
             // （CpuFanMonitor 30s 采样；nil 格隐藏，单风扇合并格由组件内收敛）。
             // 0.18.1 T7：风扇来源标注（状态词映射 fanSourceWord，fan 缺席 → nil
-            // 不显——旧 daemon 缺席兼容照既有）。
+            // 不显后缀——旧 daemon 缺席兼容照既有）。v0.19.5 §D2/R2 P3：前态
+            // **显式传参**（漏传则稳态 assist 在状态行退化为「充电中」）。
             StatusLineView(
                 snapshot: statusController.batterySnapshot,
                 tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true,
                 cpuSkinTempC: cpuFanMonitor.cpuSkinTempC,
                 fanLRPM: cpuFanMonitor.fanRPMs?.first,
                 fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil },
-                fanSource: fanSourceWord
+                fanSource: fanSourceWord,
+                previous: statusController.flowPreviousSample
             )
 
             // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
@@ -209,8 +211,12 @@ struct PanelView: View {
 
     /// 面板流向显示模型投影（0.19.4 §1.1：flowModel(of:) 单一判据便捷入口——
     /// 流向行 kind/batteryEdgeW、藏酒环 AX 摘要选词、bolt 徽标同模型取出）。
+    /// v0.19.5 §D2：透传 controller 前态投影（上一帧三元组——assist 代际确认门
+    /// 的判定输入，§D3 双槽时序）。
     private var panelFlowModel: FlowDiagramModel? {
-        statusController.batterySnapshot.map { flowModel(of: $0) }
+        statusController.batterySnapshot.map {
+            flowModel(of: $0, previous: statusController.flowPreviousSample)
+        }
     }
 
     private var gaugeAxLabel: String {
