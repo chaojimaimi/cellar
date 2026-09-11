@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.4-alpha] - 2026-09-11
+
+### Fixed
+
+- **补入态显示语义统一（0.19.3 已知形态收口）**：面板功率流向行、状态行电源段、电流方向词、主窗口头栏徽章、藏酒环 AX 摘要（面板 + 主窗口）、适配器卡状态词、藏酒环闪电徽标——全部从 `isCharging` 策略位切换到 `FlowDiagramKind` 实测裁决（`PowerFlow` 三态枚举退役删除，全 App 流向判据归一）。补入态（弱适配器 + 高负载，`IsCharging=Yes` 而电池实测放电补差）下不再误显「充电中」：流向行画电池→Mac 左向箭头（warning 色）+「电池补入」词 + 放电向功率；电源段「外接 · 电池补入」；电流方向词「放电」（与电池卡负号一致）；徽章「电池补入」；适配器卡「直供 + 电池补入」；时间瓦片按电池语义外推「预计可用」。
+- **电流方向词两处语义修正（如实登记的行为差异）**：① 拔电瞬态（`isCharging` 暂留 true）方向词由「充电」翻转为「放电」——`ext=false` 恒落 battery 态，方向词与实测一致（旧边界为沿用陈旧标志位的妥协）；② 遥测在场且 `|BP| ≤ 50 mW` 的零流子情形，电源段词/方向词/徽章/徽标由「充电中」族翻为「已停充」族——0.19.3 登记的徽章/图形分叉随统一收口一并消除。
+
+### 备注
+
+- 判定零新增：全批复用 0.19.3 钉死的 `flowDiagramModel` 判定表，新增仅 `flowModel(of:)` 快照便捷投影与 `currentDirection(kind:)` 四态映射；`currentDirection` 二参版与已弃用的 `currentDirectionWord` 一并删除。
+- 面板流向行功率数字与形态同源：遥测裁决时取遥测 `|BP|`（与三角图边标签一致），遥测缺席回退 `V×I`（既有行为）。
+- 全门禁：584 场景（+6 净增：投影等价性 ×2、方向四态映射 ×4；用例 92/108 迁移为 kind 版并改写期望）、318 张快照（+12：`PowerFlow_assist` / `StatusLine_assist` 各 6，复刻真机现场 SP 29.8 W / BP −22.6 W / 协商 32 W；既有 306 张零 diff 实证）、l10n 439 key（+8）、状态机覆盖率 90.59%。
+- 无配置项 / 线协议变更；升级后限值 / 风扇 / 日程 / LED 配置原样保留。
+- 方案与评审记录：docs/plans/phase5-0.19.4-assist-wording.md（本地，R1 REVISE 九条处置 → R2 PASS 定稿）。
+
 ## [0.19.3-alpha] - 2026-09-09
 
 ### Fixed

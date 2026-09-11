@@ -8,7 +8,7 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.19.3-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch fixes power-flow semantics: all three edge figures of the external-power triangle now come from the same telemetry snapshot (the triangle closes exactly), a new “battery assist” form shows a battery supplementing an undersized adapter, and the adapter’s “rated” wording becomes “negotiated” (PD contract tier). Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.19.4-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch unifies battery-assist display semantics, closing the “known form” registered in 0.19.3: the panel flow row, power-segment wording, current-direction word, header badge, adapter-card status word, and the gauge bolt badge now all follow the measured verdict (a single FlowDiagramKind source; the three-state PowerFlow enum is retired) — no more false “Charging” while the battery supplements an undersized adapter, and the unplug-transient direction word now reads “discharging” (a registered semantic correction). Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
@@ -146,14 +146,14 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 578 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 584 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 90.57%)
-swift run CellarUICheck     # 306 UI snapshot comparisons (three-style matrix) + localization completeness gate
+                            # pure logic, ≥80% · currently 90.59%)
+swift run CellarUICheck     # 318 UI snapshot comparisons (three-style matrix) + localization completeness gate
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -180,6 +180,7 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Maintenance batch (0.19.1-alpha)**: menu-bar battery badge freeze fix — badges now switch instantly on plug/unplug (live system power state) instead of requiring a panel click to refresh (released)
 - ✅ **Maintenance batch (0.19.2-alpha)**: CPU optimization while the main window is visible — power-flow diagram flow-dot animation capped at 30 fps (halves per-frame cost on 60 Hz displays, quarters it on 120 Hz) with unchanged dot period and identical visuals (released)
 - ✅ **Maintenance batch (0.19.3-alpha)**: power-flow semantics fix — the three external-power triangle figures now come from one telemetry snapshot (the triangle closes exactly), a new “battery assist” form renders an undersized adapter supplemented by the battery, battery-card signs follow measured flow, and the adapter’s “rated” wording becomes “negotiated” (PD contract tier) (released)
+- ✅ **Maintenance batch (0.19.4-alpha)**: battery-assist display unification (closing the known form registered in 0.19.3) — the panel flow row, power-segment wording, current-direction word, header badge, adapter-card status word, and gauge bolt badge now all follow the measured FlowDiagramKind verdict (the three-state PowerFlow enum is retired); no more false “Charging” during battery assist, and the unplug-transient direction word now reads “discharging” (a registered semantic correction) (released)
 
 The full roadmap and design documents are published in the release notes.
 
