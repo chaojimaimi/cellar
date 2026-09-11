@@ -7,7 +7,7 @@ import SwiftUI
 /// 1s 遥测快照 + daemonStatus 轮询）：头栏（页题/实时徽章/低电量 chip/状态徽章）
 /// → 英雄区（功率流三角图 + 藏酒环）→ 四指标带 → 三卡片。
 ///
-/// - 视觉态四态见 §3.1（PowerFlow.flow 三态映射复用 + nodata 组合空态）；
+/// - 视觉态四态见 §3.1（0.19.4 §1：flowModel.kind 四态单一判据 + nodata 组合空态）；
 /// - band 语义照 §3.1：daemonStatus 非 nil 且 mode ≠ "disabled" 才画
 ///   （外接断开仍显示：限充在位）；
 /// - nodata：tiles/卡片数值全「—」、三角图 nodata 形态、gauge 数字「—」；
@@ -45,12 +45,10 @@ struct DashboardView: View {
         statusController.batterySnapshot
     }
 
-    /// 三态映射复用 PowerFlowView.flow（(ext, charging) 二元判定单一实现——含异常
-    /// 过渡态结论）。
-    var flowState: PowerFlow? {
-        snapshot.flatMap {
-            PowerFlowView.flow(externalConnected: $0.externalConnected, isCharging: $0.isCharging)
-        }
+    /// 流向判据（0.19.4 §1：PowerFlow 三态枚举删除，FlowDiagramKind 统一接管——
+    /// flowModel 已在位（DashboardView+PowerFlowText），kind 直取；nodata → nil）。
+    var flowState: FlowDiagramKind? {
+        snapshot != nil ? flowModel.kind : nil
     }
 
     var isNodata: Bool { snapshot == nil }
@@ -116,8 +114,10 @@ struct DashboardView: View {
     private var stateChipText: String {
         switch flowState {
         case .charging: return theme.word(.dashboardStateCharging)
-        case .floating: return theme.word(.dashboardStateHolding)
-        case .onBattery: return theme.word(.dashboardStateBattery)
+        case .holding: return theme.word(.dashboardStateHolding)
+        // 0.19.4 §1.2：assist 补入态徽章词（旧 PowerFlow 三态下误显「充电中」）。
+        case .assist: return theme.word(.dashboardStateAssist)
+        case .battery: return theme.word(.dashboardStateBattery)
         case nil: return CellarL10n.s("common.nodata")
         }
     }
@@ -254,12 +254,15 @@ struct DashboardView: View {
         GaugeState(
             percent: snapshot?.percent,
             band: bandRange,
-            isCharging: snapshot?.isCharging ?? false,
+            // 0.19.4 §0-6：bolt 徽标改由 kind == .charging 驱动（与面板同一规则——
+            // assist 态不亮 bolt；holding 态本就无 bolt，行为零变化）。
+            isCharging: flowState == .charging,
             axLabel: gaugeAxLabel
         )
     }
 
-    /// 藏酒环 AX 摘要（照面板 gaugeAxLabel 组装模式：电量 + band + 电源态词）。
+    /// 藏酒环 AX 摘要（照面板 gaugeAxLabel 组装模式：电量 + band + 电源态词；
+    /// 0.19.4 §1.2：电源态词由 flowModel kind 选词，assist 追加 powerFlowAssist）。
     private var gaugeAxLabel: String {
         var parts: [String] = []
         if let percent = snapshot?.percent {
@@ -274,8 +277,9 @@ struct DashboardView: View {
         if let flowState {
             switch flowState {
             case .charging: parts.append(theme.word(.powerFlowCharging))
-            case .floating: parts.append(theme.word(.powerFlowFloating))
-            case .onBattery: parts.append(theme.word(.powerFlowOnBattery))
+            case .holding: parts.append(theme.word(.powerFlowFloating))
+            case .assist: parts.append(theme.word(.powerFlowAssist))
+            case .battery: parts.append(theme.word(.powerFlowOnBattery))
             }
         }
         return parts.joined(separator: CellarL10n.s("common.joinSeparator"))

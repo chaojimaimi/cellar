@@ -99,4 +99,14 @@ public enum VocabularyWord: String, CaseIterable, Sendable {
     case nativeLimitFullOnceHintManual
     /// fullOnce（充满一次）按钮禁用辅助文案——通用口径（仅非手动策略/OBC 等）。
     case nativeLimitFullOnceHintGeneric
+    // 0.19.4 补入态词汇统一批（方案 §2）：assist 补入态三词条——功率流向短标签 /
+    // 状态行电源段 / 仪表板状态徽章。industrial 回退 native 不单列（照既有纪律：
+    // industrial 从不单列词条，直接复用 native 表）。
+    /// 功率流向短标签——电池补入（PowerFlowView assist 态；en: Battery Assist）。
+    case powerFlowAssist
+    /// 电源段补入态（native「外接 · 电池补入」；amber「外接 · 补电入窖」）。
+    case statusAssistExternal
+    /// 仪表板状态徽章补入态（native「电池补入」；amber「电池补入 · 窖藏补给」——
+    /// 照「充电中 · 酒液入窖」构词）。
+    case dashboardStateAssist
 }

@@ -116,3 +116,18 @@ public func flowDiagramModel(
     }
     return FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: spW, systemLoadW: load)
 }
+
+/// 快照 → 流向显示模型便捷投影（0.19.4 §1.1——flowDiagramModel 的 BatterySnapshot
+/// 入口；面板/状态行/徽章共用，防各消费点重写六参调用；消费方按需取 .kind /
+/// .batteryEdgeW）。全模型变体定版（R2 P2-③）：PanelView 同点需取 batteryEdgeW，
+/// 只返 kind 会留六参重写的缝。
+public func flowModel(of snapshot: BatterySnapshot) -> FlowDiagramModel {
+    flowDiagramModel(
+        externalConnected: snapshot.externalConnected,
+        isCharging: snapshot.isCharging,
+        systemPowerInMW: snapshot.telemetry?.systemPowerInMW,
+        batteryPowerMW: snapshot.telemetry?.batteryPowerMW,
+        batteryVoltageMV: snapshot.voltageMV,
+        batteryAmperageMA: snapshot.amperageMA
+    )
+}

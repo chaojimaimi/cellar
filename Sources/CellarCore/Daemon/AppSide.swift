@@ -157,38 +157,33 @@ public func telemetrySampleInterval(panelVisible: Bool) -> TimeInterval? {
     panelVisible ? 1 : nil
 }
 
-// MARK: - 状态行电流方向（WP4 规格 §7.2 P2-2 修复；WP4 §4.3 枚举下沉消除双真相）
+// MARK: - 状态行电流方向（WP4 规格 §7.2 P2-2 修复；WP4 §4.3 枚举下沉消除双真相；0.19.4 §1.1 kind 版接管）
 
 /// 电流方向枚举（判定逻辑唯一真相；展示词条由 UI 层经 CellarL10n 本地化——
 /// 本类型不含用户可见串）。
 public enum CurrentDirection: String, Equatable, Sendable {
-    /// 充电中（isCharging 优先）。
+    /// 充电中（kind == .charging——实际受电）。
     case charging
-    /// 电池供电（未外接）。
+    /// 放电（kind ∈ {.assist, .battery}——补入/电池供电）。
     case discharging
 }
 
-/// 电流方向判定（规格 §7.2 方向词规则，三分支）：isCharging 优先——边界（外接
-/// 断开瞬间 isCharging 可能仍为 true）按充电呈现；其次 !externalConnected → 放电；
-/// 其余（外接 + 停充）→ nil（方向词隐藏、幅值照显——修「停充态显示放电
-/// 0.00 A」的自相矛盾）。
-public func currentDirection(isCharging: Bool, externalConnected: Bool) -> CurrentDirection? {
-    if isCharging { return .charging }
-    if !externalConnected { return .discharging }
-    return nil
-}
-
-/// ⚠️ 已弃用（WP4 §4.3）：新消费面（StatusLineView）改用
-/// `currentDirection(isCharging:externalConnected:)` 枚举 + CellarL10n 词条
-/// （direction.charging / direction.discharging）。本包装仅保留中文 token 语义
-/// 供 CellarCoreCheck 用例 92 钉死行为（枚举 →「充电/放电」token，行为零变化）。
-/// 不加 `@available(*, deprecated)`：CellarCoreCheck 钉死场景仍调用本函数，属性
-/// 会产生编译警告，与「构建零警告」门冲突——以文档注记方式弃用（偏差登记）。
-public func currentDirectionWord(isCharging: Bool, externalConnected: Bool) -> String? {
-    switch currentDirection(isCharging: isCharging, externalConnected: externalConnected) {
-    case .charging: return "充电"
-    case .discharging: return "放电"
-    case nil: return nil
+/// 电流方向判定（0.19.4 §1.1 kind 版，替代 isCharging 二参版——FlowDiagramKind
+/// 统一接管全 App 流向判据后，方向词与流向形态同源裁决）：charging → .charging；
+/// assist / battery → .discharging；holding → nil（只显幅值，方向词隐藏——修
+/// 「停充态显示放电 0.00 A」的自相矛盾语义由 holding 态承接）。
+///
+/// ⚠️ 语义变更如实登记（0.19.4 §1.1，CHANGELOG 引用）：
+/// 1. 旧二参版钉死的边界 (isCharging=true, ext=false)（拔电瞬态按充电呈现）在
+///    kind 版下翻转为 .discharging——ext=false 经 flowDiagramModel ① 恒得 .battery。
+///    有意修正：拔电后电池确实在放电，方向词「放电」比沿用陈旧 isCharging 位更诚实。
+/// 2. ③-holding 子情形（遥测在场 ∧ isCharging=true ∧ |BP|≤ε）：方向词由「充电」
+///    翻为 nil（只显幅值）——0.19.3 已登记的徽章/图形分叉随统一收口一并消除。
+public func currentDirection(kind: FlowDiagramKind) -> CurrentDirection? {
+    switch kind {
+    case .charging: return .charging
+    case .assist, .battery: return .discharging
+    case .holding: return nil
     }
 }
 

@@ -382,8 +382,9 @@ struct Main {
         try runFanTemperatureSourceDomainScenarios()
         // v0.19.3 M1：功率流向语义域（方案 §D2 判定表 + §5 十九场景——实测符号
         // 裁决 kind / 零流 ε 带 / V×I 显示阈值 / 遥测缺席回退分层 / nodata 防御
-        // ——纯函数面，FlowDiagramDomain）。
-        runFlowDiagramDomainScenarios()
+        // ——纯函数面，FlowDiagramDomain）。0.19.4 §5：+6 场景（flowModel(of:)
+        // 等价性 ×2 + currentDirection(kind:) 四态 ×4），总数 578 → 584。
+        try runFlowDiagramDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
@@ -1972,31 +1973,53 @@ struct Main {
                   "用例91", "对照：status 图标档关闭后仍 60s（遥测档不复用同一循环，互不干扰）")
         }
 
-        // 用例 92：状态行电流方向词（规格 §7.2 P2-2 修复）——三分支
-        // （充电/放电/隐藏）+ 全组合边界。修「停充态显示放电 0.00 A」自相矛盾：
-        // 外接 + 停充 → nil（方向词隐藏、幅值照显）。
+        // 用例 92：状态行电流方向词（0.19.4 §1.1 迁移——二参版与 currentDirectionWord
+        // 一并删除，kind 版接管）：四象限经 flowDiagramModel（遥测缺席 → ② 回退）
+        // 投影 kind 后取方向。⚠️ 期望按 §1.1 语义变更改写：旧钉死边界
+        // (isCharging=true, ext=false)（拔电瞬态按充电呈现）翻转为 .discharging——
+        // ext=false 恒落 .battery（有意修正：拔电后电池确实在放电，方向词「放电」
+        // 比沿用陈旧 isCharging 位更诚实；CHANGELOG 登记行为差异，方案 R-6）。
         do {
-            check(currentDirectionWord(isCharging: true, externalConnected: true) == "充电",
-                  "用例92", "充电中（外接）→ 充电")
-            check(currentDirectionWord(isCharging: true, externalConnected: false) == "充电",
-                  "用例92", "边界：isCharging 优先（外接断开瞬间仍按充电呈现）")
-            check(currentDirectionWord(isCharging: false, externalConnected: false) == "放电",
-                  "用例92", "电池供电（未外接）→ 放电")
-            check(currentDirectionWord(isCharging: false, externalConnected: true) == nil,
-                  "用例92", "外接 + 停充 → nil（方向词隐藏，修「停充显放电 0.00 A」）")
+            check(currentDirection(kind: flowDiagramModel(
+                        externalConnected: true, isCharging: true,
+                        systemPowerInMW: nil, batteryPowerMW: nil,
+                        batteryVoltageMV: 11_670, batteryAmperageMA: -1_800).kind) == .charging,
+                  "用例92", "充电中（外接）→ .charging")
+            check(currentDirection(kind: flowDiagramModel(
+                        externalConnected: false, isCharging: true,
+                        systemPowerInMW: nil, batteryPowerMW: nil,
+                        batteryVoltageMV: 11_670, batteryAmperageMA: 950).kind) == .discharging,
+                  "用例92", "拔电瞬态边界翻转：ext=false → .battery → .discharging（§1.1 有意修正）")
+            check(currentDirection(kind: flowDiagramModel(
+                        externalConnected: false, isCharging: false,
+                        systemPowerInMW: nil, batteryPowerMW: nil,
+                        batteryVoltageMV: 11_670, batteryAmperageMA: 950).kind) == .discharging,
+                  "用例92", "电池供电（未外接）→ .discharging")
+            check(currentDirection(kind: flowDiagramModel(
+                        externalConnected: true, isCharging: false,
+                        systemPowerInMW: nil, batteryPowerMW: nil,
+                        batteryVoltageMV: 11_670, batteryAmperageMA: -30).kind) == nil,
+                  "用例92", "外接 + 停充 → nil（方向词隐藏，「停充显放电 0.00 A」语义由 holding 承接）")
         }
 
-        // 用例 108：CurrentDirection 枚举判定（WP4 §4.3 下沉——判定逻辑唯一真相，
-        // 与用例 92 的薄包装中文 token 钉死互为镜像；StatusLineView 消费本枚举）。
+        // 用例 108：CurrentDirection kind 版四象限（0.19.4 §1.1 迁移——与用例 92
+        // 互为镜像：92 走六参直调入口，本例走 flowModel(of:) 快照便捷投影入口；
+        // StatusLineView 消费本枚举）。
         do {
-            check(currentDirection(isCharging: true, externalConnected: true) == .charging,
-                  "用例108", "充电中（外接）→ .charging")
-            check(currentDirection(isCharging: true, externalConnected: false) == .charging,
-                  "用例108", "边界：isCharging 优先 → .charging")
-            check(currentDirection(isCharging: false, externalConnected: false) == .discharging,
-                  "用例108", "电池供电（未外接）→ .discharging")
-            check(currentDirection(isCharging: false, externalConnected: true) == nil,
-                  "用例108", "外接 + 停充 → nil（方向词隐藏）")
+            func snapshot(ext: Bool, charging: Bool) throws -> BatterySnapshot {
+                var props = batteryProps()
+                props["ExternalConnected"] = ext
+                props["IsCharging"] = charging
+                return try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            }
+            check(currentDirection(kind: flowModel(of: try snapshot(ext: true, charging: true)).kind) == .charging,
+                  "用例108", "充电中（外接）→ .charging（快照入口）")
+            check(currentDirection(kind: flowModel(of: try snapshot(ext: false, charging: true)).kind) == .discharging,
+                  "用例108", "拔电瞬态边界翻转 → .discharging（快照入口，§1.1 登记）")
+            check(currentDirection(kind: flowModel(of: try snapshot(ext: false, charging: false)).kind) == .discharging,
+                  "用例108", "电池供电（未外接）→ .discharging（快照入口）")
+            check(currentDirection(kind: flowModel(of: try snapshot(ext: true, charging: false)).kind) == nil,
+                  "用例108", "外接 + 停充 → nil（快照入口，方向词隐藏）")
         }
 
         // MARK: - 场景（Phase 2 WP5 首启引导 + 冲突门 + 通知中心，用例 93+）
@@ -2428,7 +2451,7 @@ struct Main {
                     == "vocabulary.amber.statusHoldingExternal",
                 "用例106", "key 形态钉死：vocabulary.<style>.<word>（§3.6 示例 = 真实词条名）"
             )
-            check(VocabularyWord.allCases.count == 22, "用例106", "词条数 = 22（对账表定版 7 成员 + WP2' 新增 4：powerFlow×3 + health×1 + 走查批 F1 新增 5：dashboard*×5 + v1.7 M3 新增 4：nativeLimitNote/OpenSettings/CalibrationHintManual/CalibrationHintGeneric + review P2-1 新增 2：FullOnceHintManual/Generic，不多不少）")
+            check(VocabularyWord.allCases.count == 25, "用例106", "词条数 = 25（对账表定版 7 成员 + WP2' 新增 4：powerFlow×3 + health×1 + 走查批 F1 新增 5：dashboard*×5 + v1.7 M3 新增 4：nativeLimitNote/OpenSettings/CalibrationHintManual/CalibrationHintGeneric + review P2-1 新增 2：FullOnceHintManual/Generic + 0.19.4 §2 新增 3：powerFlowAssist/statusAssistExternal/dashboardStateAssist，不多不少）")
         }
 
         // 用例 107：AppConfigStore.update 原子读改写（评审 P0-1 定版）——

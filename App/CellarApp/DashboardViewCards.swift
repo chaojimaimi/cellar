@@ -263,8 +263,10 @@ extension DashboardView {
     private var adapterStatusWord: String {
         switch flowState {
         case .charging: return CellarL10n.s("dashboard.card.adapter.status.charging")
-        case .floating: return CellarL10n.s("dashboard.card.adapter.status.holding")
-        case .onBattery, nil: return CellarL10n.s("common.nodata")
+        case .holding: return CellarL10n.s("dashboard.card.adapter.status.holding")
+        // 0.19.4 §1.2：assist → 「直供 + 电池补入」（新 catalog key）。
+        case .assist: return CellarL10n.s("dashboard.card.adapter.status.assist")
+        case .battery, nil: return CellarL10n.s("common.nodata")
         }
     }
 }

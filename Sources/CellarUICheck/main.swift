@@ -54,7 +54,11 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
 // fanSource 非 nil「Cellar」小字样例，既有 StatusLine_*（含 thirdRow）构造零改动）；
 // v0.19.3 自 300 扩 306——功率流三角图 assist 补入态 6 新增
-// （PowerFlowDiagram_assist_*，既有 4 态构造零改动））
+// （PowerFlowDiagram_assist_*，既有 4 态构造零改动）；
+// 0.19.4 自 306 扩 318——面板功率流向行 assist 态 6 新增（PowerFlow_assist_*，
+// PowerFlowView 签名迁移 kind/batteryEdgeW，既有 3 态渲染逐字节一致）+ 状态行
+// assist 态 6 新增（StatusLine_assist_*：复刻真机截图现场 SP=29800/BP=−22600/
+// 32W 适配器））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -171,7 +175,9 @@ private func wrap(
 // 0.18 自 282 扩 288——状态行第三行可见态 6 新增（StatusLine_thirdRow：
 // CPU 表面温度 + 双风扇转速三格，SMC 实测活值样例钉死）；
 // 0.18.1 自 288 扩 294——状态行第三行来源标注态 6 新增（StatusLine_thirdRowFanSource：
-// fanSource 非 nil 样例——转速后「Cellar」来源小字钉死））
+// fanSource 非 nil 样例——转速后「Cellar」来源小字钉死）；
+// 0.19.4 自 306 扩 318——面板功率流向行 assist 态 6 新增（PowerFlow_assist_*）+
+// 状态行 assist 态 6 新增（StatusLine_assist_*，真机现场复刻））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -349,22 +355,53 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
-            // 功率流向 3 态（充电/停充漂浮/电池供电）×4（WP2' §4.2 新增 12 张）：
-            // 输入 = 快照两字段投影（externalConnected/isCharging）；onBattery 以
-            // (false, false) 入阵（(false, true) 为异常过渡态按 .charging 呈现，映射
-            // 语义由 PowerFlowView.flow 单一实现，矩阵 3 态全绿即覆盖）。
-            let powerFlows: [(String, Bool?, Bool?)] = [
-                ("charging", true, true),
-                ("floating", true, false),
-                ("onBattery", false, false),
+            // 0.19.4 §5 状态行 assist 态 1 case ×3 风格 ×2 外观 = 6 张（306 → 318
+            // 本批两组之一，全部全新文件——新增非扰动）：复刻真机截图现场（2026-09-10：
+            // 协商 32W / SP=29800 mW / BP=−22600 mW / isCharging=true）——电源段
+            // 「外接 · 电池补入」（强调色 warning）+ 电流段「放电 1.94 A」
+            // （kind=.assist → .discharging，与电池卡符号一致）形态钉死。
+            // --regen --only=StatusLine_assist 只跑本组。
+            let statusAssist = makeSnapshot(
+                percent: 85, isCharging: true, externalConnected: true,
+                // 1 937 mA ≈ BP 22 600 mW ÷ 11 670 mV（与遥测自洽的放电电流）。
+                amperageMA: 1_937,
+                adapter: ["Watts": 32, "AdapterVoltage": 20_150, "Current": 1_600,
+                          "Name": "32W USB-C Power Adapter", "Description": "adapter",
+                          "IsWireless": false],
+                telemetry: ["SystemPowerIn": 29_800, "SystemLoad": 52_400,
+                            "BatteryPower": -22_600, "AdapterEfficiencyLoss": 2_000,
+                            "SystemVoltageIn": 19_446, "SystemCurrentIn": 1_533])
+            cases.append(SnapshotCase(
+                name: "StatusLine_assist_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(snapshot: statusAssist)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
+            // 功率流向 4 态（充电/停充保持/电池供电/电池补入）×3 风格 ×2 外观
+            // （WP2' §4.2 新增 12 张；0.19.4 §1 签名迁移 kind/batteryEdgeW——旧
+            // (externalConnected, isCharging) 三态真值表随 PowerFlow 枚举删除）：
+            // 既有 3 态 12 张 golden 零 diff 前提 = kind 语义一一同构
+            // （floating≡holding、onBattery≡battery）且 batteryEdgeW 取值与旧
+            // batteryPowerW 显示结果逐字节一致（charging +33 W / onBattery −8 W）；
+            // assist 6 张全新（kind=.assist, batteryEdgeW=−22.6——复刻真机截图
+            // 现场 |BP|=22.6 W，左向箭头 warning 色 + 「电池补入」词 + 「−23 W」）。
+            let powerFlows: [(String, FlowDiagramKind, Double?)] = [
+                ("charging", .charging, 33.0),
+                ("floating", .holding, nil),
+                ("onBattery", .battery, 8.2),
+                ("assist", .assist, -22.6),
             ]
-            for (flowName, external, charging) in powerFlows {
+            for (flowName, kind, edgeW) in powerFlows {
                 cases.append(SnapshotCase(
                     name: "PowerFlow_\(flowName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                     width: 304, height: nil, style: style, scheme: scheme
                 ) {
                     AnyView(wrap(style, scheme) {
-                        PowerFlowView(externalConnected: external, isCharging: charging, batteryPowerW: flowName == "charging" ? 33.0 : flowName == "onBattery" ? -8.2 : nil)
+                        PowerFlowView(kind: kind, batteryEdgeW: edgeW)
                             .frame(width: 304, alignment: .leading)
                     })
                 })

@@ -91,48 +91,51 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 电源段：外接（充电中/已停充）或电池供电，词随风格（§3.5 对账表——
-    /// statusChargingExternal / statusHoldingExternal / statusBattery）。
+    /// 电源段：外接（充电中/已停充/电池补入）或电池供电，词随风格（§3.5 对账表——
+    /// statusChargingExternal / statusHoldingExternal / statusBattery；0.19.4 §1.2
+    /// 新增 statusAssistExternal）。0.19.4 §1：判定由 `flowModel(of:).kind` 派生
+    /// （FlowDiagramKind 统一接管——旧 isCharging 二元分支删除；遥测缺席走 ②
+    /// 回退路径，结论与旧二元版逐字节一致，既有 golden 零 diff）。
     private func powerSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: CellarL10n.s("statusline.power")) {
-            if snapshot.externalConnected && snapshot.isCharging {
+            switch flowModel(of: snapshot).kind {
+            case .charging:
                 Text(theme.word(.statusChargingExternal))
-            } else if snapshot.externalConnected {
-                holdingWord
-            } else {
+            case .holding:
+                holdingWord(theme.word(.statusHoldingExternal), color: theme.holding)
+            case .assist:
+                holdingWord(theme.word(.statusAssistExternal), color: theme.warning)
+            case .battery:
                 Text(theme.word(.statusBattery))
             }
         }
     }
 
-    /// 停充段：语汇串按「·」拆两段渲染——前缀普通色 + 状态词 holding 强调色
-    /// （规格 §2.4 语义保持，A 原生视觉零回归）；串内无「·」时整串强调（回退
+    /// 停充/补入段：语汇串按「·」拆两段渲染——前缀普通色 + 状态词强调色
+    /// （规格 §2.4 语义保持；0.19.4 §1.2 R1 P2-7 抽参化：holding 传 theme.holding
+    /// 原值零变化，assist 传 theme.warning）；串内无「·」时整串强调（回退
     /// 安全，不丢语义）。
     @ViewBuilder
-    private var holdingWord: some View {
-        let full = theme.word(.statusHoldingExternal)
-        if let separator = full.firstIndex(of: "·") {
+    private func holdingWord(_ word: String, color: Color) -> some View {
+        if let separator = word.firstIndex(of: "·") {
             HStack(spacing: 0) {
-                Text(String(full[...separator]))
-                Text(String(full[full.index(after: separator)...]))
-                    .foregroundStyle(theme.holding)
+                Text(String(word[...separator]))
+                Text(String(word[word.index(after: separator)...]))
+                    .foregroundStyle(color)
             }
         } else {
-            Text(full)
-                .foregroundStyle(theme.holding)
+            Text(word)
+                .foregroundStyle(color)
         }
     }
 
-    /// 电流段：幅值（mA → A，两位小数）+ 方向词（currentDirection 纯函数，
-    /// 规格 §7.2；方向词 nil = 外接停充 → 只显幅值不标方向；方向词经
-    /// CellarL10n 词条解析，native/amber 同值不 B 化——WP4 §4.3）。
+    /// 电流段：幅值（mA → A，两位小数）+ 方向词（0.19.4 §1.1：currentDirection
+    /// kind 版纯函数——方向词与流向形态同源裁决；holding → nil 只显幅值不标
+    /// 方向；方向词经 CellarL10n 词条解析，native/amber 同值不 B 化——WP4 §4.3）。
     private func currentSegment(_ snapshot: BatterySnapshot) -> some View {
         let amperage = Double(abs(snapshot.amperageMA)) / 1000
         let ampText = String(format: "%.2f A", amperage)
-        let direction = currentDirection(
-            isCharging: snapshot.isCharging,
-            externalConnected: snapshot.externalConnected
-        )
+        let direction = currentDirection(kind: flowModel(of: snapshot).kind)
         let word = direction.map {
             switch $0 {
             case .charging: return CellarL10n.s("direction.charging")

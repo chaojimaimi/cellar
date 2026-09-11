@@ -335,6 +335,11 @@ public struct CellarTheme: Sendable {
             return "系统充电上限已激活，充满一次需充满 100%——请先在系统设置中关闭"
         case .nativeLimitFullOnceHintGeneric:
             return "检测到系统充电策略占用，充满一次需充满 100%"
+        // 0.19.4 补入态词汇统一批（方案 §2）：assist 三词条 native 兜底常量
+        // （与 catalog vocabulary.native.* 一字不差——回退链终点）。
+        case .powerFlowAssist: return "电池补入"
+        case .statusAssistExternal: return "外接 · 电池补入"
+        case .dashboardStateAssist: return "电池补入"
         }
     }
 

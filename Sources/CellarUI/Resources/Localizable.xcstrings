@@ -1038,6 +1038,23 @@
         }
       }
     },
+    "dashboard.card.adapter.status.assist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct + Battery Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直供 + 电池补入"
+          }
+        }
+      }
+    },
     "dashboard.card.adapter.status.charging": {
       "extractionState": "manual",
       "localizations": {
@@ -4251,6 +4268,23 @@
         }
       }
     },
+    "powerflow.axAssist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External power, battery assisting"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外接电源，电池补入供电"
+          }
+        }
+      }
+    },
     "powerflow.axCharging": {
       "extractionState": "manual",
       "localizations": {
@@ -6002,6 +6036,23 @@
         }
       }
     },
+    "vocabulary.amber.dashboardStateAssist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery Assist · Cellar Reserves"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池补入 · 窖藏补给"
+          }
+        }
+      }
+    },
     "vocabulary.amber.dashboardStateBattery": {
       "extractionState": "manual",
       "localizations": {
@@ -6206,6 +6257,23 @@
         }
       }
     },
+    "vocabulary.amber.powerFlowAssist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池补入"
+          }
+        }
+      }
+    },
     "vocabulary.amber.powerFlowCharging": {
       "extractionState": "manual",
       "localizations": {
@@ -6270,6 +6338,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "封存"
+          }
+        }
+      }
+    },
+    "vocabulary.amber.statusAssistExternal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External · Cellar Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外接 · 补电入窖"
           }
         }
       }
@@ -6372,6 +6457,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "电量"
+          }
+        }
+      }
+    },
+    "vocabulary.native.dashboardStateAssist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池补入"
           }
         }
       }
@@ -6580,6 +6682,23 @@
         }
       }
     },
+    "vocabulary.native.powerFlowAssist": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池补入"
+          }
+        }
+      }
+    },
     "vocabulary.native.powerFlowCharging": {
       "extractionState": "manual",
       "localizations": {
@@ -6644,6 +6763,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "退出"
+          }
+        }
+      }
+    },
+    "vocabulary.native.statusAssistExternal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External · Battery Assist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外接 · 电池补入"
           }
         }
       }

@@ -78,15 +78,13 @@ struct PanelView: View {
                 .padding(.top, 4)
 
             // WP2' §4.2：功率流向图（数据源 = App 侧 1s telemetry 快照——非
-            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。batteryPowerW
-            // = 电池侧实测功率（Voltage×Amperage，WP1.5 §7.5：适配器实际输出无
-            // 公开数据源，电池侧为可靠替代）。
+            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。0.19.4 §1.2：
+            // kind/batteryEdgeW 直取 flowModel(of:) 投影（FlowDiagramKind 单一
+            // 判据；数字随形态同源——遥测裁决时取遥测 |BP|/1000，与三角图边标签
+            // 同源，② 回退维持 |V×I|）。
             PowerFlowView(
-                externalConnected: statusController.batterySnapshot?.externalConnected,
-                isCharging: statusController.batterySnapshot?.isCharging,
-                batteryPowerW: statusController.batterySnapshot.map {
-                    Double($0.voltageMV) * Double($0.amperageMA) / 1_000_000
-                },
+                kind: panelFlowModel?.kind,
+                batteryEdgeW: panelFlowModel?.batteryEdgeW,
                 // Phase 5 v1.1：风扇状态行（仅 boost/hold 介入期显形；off 完全隐形）。
                 fanStatus: statusController.daemonStatus?.fan
             )
@@ -209,6 +207,12 @@ struct PanelView: View {
         return (status.upperLimit - status.hysteresis)...status.upperLimit
     }
 
+    /// 面板流向显示模型投影（0.19.4 §1.1：flowModel(of:) 单一判据便捷入口——
+    /// 流向行 kind/batteryEdgeW、藏酒环 AX 摘要选词、bolt 徽标同模型取出）。
+    private var panelFlowModel: FlowDiagramModel? {
+        statusController.batterySnapshot.map { flowModel(of: $0) }
+    }
+
     private var gaugeAxLabel: String {
         var parts: [String] = []
         if let percent = statusController.batterySnapshot?.percent {
@@ -219,13 +223,14 @@ struct PanelView: View {
         if let band = gaugeBand {
             parts.append(CellarL10n.s("panel.gaugeAx.band", CellarL10n.s("vocabulary.native.limitLabel"), band.upperBound))
         }
-        if let snapshot = statusController.batterySnapshot {
-            if snapshot.isCharging {
-                parts.append(theme.word(.powerFlowCharging))
-            } else if snapshot.externalConnected {
-                parts.append(theme.word(.powerFlowFloating))
-            } else {
-                parts.append(theme.word(.powerFlowOnBattery))
+        // 0.19.4 §1.2：电源态词由 flowModel kind 选词（旧 isCharging 策略位选词
+        // 删除——assist 态不再误报「充电中」）。
+        if let kind = panelFlowModel?.kind {
+            switch kind {
+            case .charging: parts.append(theme.word(.powerFlowCharging))
+            case .holding: parts.append(theme.word(.powerFlowFloating))
+            case .assist: parts.append(theme.word(.powerFlowAssist))
+            case .battery: parts.append(theme.word(.powerFlowOnBattery))
             }
         }
         // 分隔符按语言本地化（zh 全角逗号 / en 半角逗号+空格）。
@@ -236,7 +241,10 @@ struct PanelView: View {
         GaugeState(
             percent: statusController.batterySnapshot?.percent,
             band: gaugeBand,
-            isCharging: statusController.batterySnapshot?.isCharging ?? false,
+            // 0.19.4 §0-6：bolt 徽标改由 kind == .charging 驱动——assist 态「补入」
+            // 词旁亮闪电属同屏矛盾；holding 态 isCharging=false 本就无 bolt，
+            // ② 回退路径 kind=.charging 时 bolt 保持（行为零变化）。
+            isCharging: panelFlowModel?.kind == .charging,
             axLabel: gaugeAxLabel
         )
     }

@@ -4,11 +4,15 @@
 // → batteryEdgeW=nil，不得产出「−0.0 W」）/ 遥测缺席回退分层（charging=viEdge、
 // holding direct=spW）/ assist 不看策略位 / SP<BP 异常 load=nil / nodata 全零
 // 防御——纯函数面（FlowDiagramModel，Equatable 整体断言）。
+// 0.19.4 §5：补入态词汇统一批配套——场景 20/21（flowModel(of:) 快照投影 ≡ 六参
+// 直调）+ 场景 22–25（currentDirection(kind:) 四态映射），总数 578 → 584。
 import CellarCore
 import Foundation
 
 /// 功率流向语义场景域入口（Main.main 调用；断言经 MainEntry.swift 的 internal 助手）。
-func runFlowDiagramDomainScenarios() {
+/// 0.19.4：转 throws（场景 20/21 经 BatterySnapshotParser 构造快照——
+/// 与 runChargeScheduleDomainScenarios 等 throws 域同先例）。
+func runFlowDiagramDomainScenarios() throws {
     // 入参工厂（默认外接 + 充电使能 + V×I 零——把注意力集中在被测判定上）。
     func makeModel(
         externalConnected: Bool = true,
@@ -185,5 +189,58 @@ func runFlowDiagramDomainScenarios() {
         let model = makeModel(isCharging: true, systemPowerInMW: nil, batteryPowerMW: 6_500, batteryVoltageMV: 11_670, batteryAmperageMA: 1_800)
         expectEqual(model, FlowDiagramModel(kind: .charging, batteryEdgeW: 21.006, directEdgeW: nil, systemLoadW: nil),
                     "流向-19", "BP 在场/SP 缺席 → 回退 charging（edge=|V×I|）")
+    }
+
+    // 场景 20：flowModel(of:) 快照便捷投影 ≡ 六参直调（0.19.4 §1.1/§5-1）——
+    // 遥测在场 assist：复刻真机截图现场（SP=29800, BP=−22600, isCharging=true）。
+    // 快照经 BatterySnapshotParser 真实解析路径构造（batteryProps + 遥测键）。
+    do {
+        var props = batteryProps()
+        props["PowerTelemetryData"] = ["SystemPowerIn": 29_800, "BatteryPower": -22_600]
+        let snapshot = try BatterySnapshotParser.parse(props, timestamp: Date(timeIntervalSince1970: 0))
+        let projected = flowModel(of: snapshot)
+        let direct = makeModel(
+            externalConnected: snapshot.externalConnected, isCharging: snapshot.isCharging,
+            systemPowerInMW: 29_800, batteryPowerMW: -22_600,
+            batteryVoltageMV: snapshot.voltageMV, batteryAmperageMA: snapshot.amperageMA
+        )
+        expectEqual(projected, direct, "流向-20", "flowModel(of:) ≡ 六参直调（遥测在场 assist）")
+        check(projected.kind == .assist && projected.batteryEdgeW == -22.6 && projected.directEdgeW == 29.8,
+              "流向-20", "投影 kind == .assist，edge=−22.6 / direct=29.8（真机现场复刻）")
+    }
+
+    // 场景 21：flowModel(of:) ≡ 六参直调（遥测缺席 → ② 回退 charging，
+    // edge=|V×I|=9.048351，batteryProps 12211 mV × −741 mA）。
+    do {
+        let snapshot = try BatterySnapshotParser.parse(batteryProps(), timestamp: Date(timeIntervalSince1970: 0))
+        let projected = flowModel(of: snapshot)
+        let direct = makeModel(
+            externalConnected: snapshot.externalConnected, isCharging: snapshot.isCharging,
+            systemPowerInMW: nil, batteryPowerMW: nil,
+            batteryVoltageMV: snapshot.voltageMV, batteryAmperageMA: snapshot.amperageMA
+        )
+        expectEqual(projected, direct, "流向-21", "flowModel(of:) ≡ 六参直调（遥测缺席回退 charging）")
+        check(projected.kind == .charging && projected.batteryEdgeW == 9.048351
+                && projected.directEdgeW == nil && projected.systemLoadW == nil,
+              "流向-21", "投影 kind == .charging，edge=|V×I|，direct/load=nil")
+    }
+
+    // 场景 22–25：currentDirection(kind:) 四态映射（0.19.4 §1.1——charging →
+    // .charging；assist / battery → .discharging；holding → nil 只显幅值）。
+    do {
+        expectEqual(currentDirection(kind: .charging), .charging,
+                    "流向-22", "currentDirection(.charging) → .charging")
+    }
+    do {
+        expectEqual(currentDirection(kind: .assist), .discharging,
+                    "流向-23", "currentDirection(.assist) → .discharging（补入 = 放电向）")
+    }
+    do {
+        expectEqual(currentDirection(kind: .battery), .discharging,
+                    "流向-24", "currentDirection(.battery) → .discharging")
+    }
+    do {
+        check(currentDirection(kind: .holding) == nil,
+              "流向-25", "currentDirection(.holding) → nil（方向词隐藏、幅值照显）")
     }
 }

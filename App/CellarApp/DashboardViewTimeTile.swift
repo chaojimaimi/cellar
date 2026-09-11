@@ -16,7 +16,9 @@ extension DashboardView {
     // ---- 时间 tile（§3.6：满电还需 / 预计可用）----
 
     var timeTileTitle: String {
-        flowState == .onBattery
+        // 0.19.4 §1.2：assist 按 battery 语义（补入期电池真实放电，15 分钟窗速率
+        // 外推有意义）。
+        flowState == .battery || flowState == .assist
             ? CellarL10n.s("dashboard.tile.time.battery")
             : CellarL10n.s("dashboard.tile.time.charging")
     }
@@ -42,8 +44,9 @@ extension DashboardView {
     var timeTileSubtitle: String {
         switch flowState {
         case .charging: return CellarL10n.s("dashboard.tile.time.sub.charging")
-        case .floating: return CellarL10n.s("dashboard.tile.time.sub.holding")
-        case .onBattery: return CellarL10n.s("dashboard.tile.time.sub.battery")
+        case .holding: return CellarL10n.s("dashboard.tile.time.sub.holding")
+        // 0.19.4 §1.2：assist 复用 battery 副标「按近 15 分钟功耗外推」（不新增 key）。
+        case .assist, .battery: return CellarL10n.s("dashboard.tile.time.sub.battery")
         case nil: return CellarL10n.s("common.nodata")
         }
     }
@@ -55,8 +58,12 @@ extension DashboardView {
         let state: TimeEstimateState
         switch flowState {
         case .charging: state = .charging
-        case .floating: state = .holding
-        case .onBattery: state = .battery
+        case .holding: state = .holding
+        // 0.19.4 §1.2：assist → .battery（补入期电池真实放电，外推有意义）。
+        // 已知边界（R1 P2-5，接受不治理）：样本环清环键为 (isCharging,
+        // externalConnected)，charging↔assist 翻转不清环，存在最长 15 分钟
+        // 反向斜率混合窗（TimeEstimator 多数自愈为 nil「—」）。
+        case .assist, .battery: state = .battery
         case nil: return nil
         }
         // upperLimit 仅 charging 分支使用（至充限上沿外推）；battery/holding 的
