@@ -75,6 +75,20 @@ public enum Discharge {
             && replugPassed
     }
 
+    /// v0.19.6 意图降限观察（方案 docs/plans/v0.19.6-auto-discharge-rearm.md §3.2，
+    /// daemon 侧挂点 applyPolicyLocked guard 后/赋值前）：有效上限变更观察判定。
+    /// **无条件更新语义由返回值承载**——nextObserved 恒为 current，调用方不得自行
+    /// 分支决定是否更新（钉死播种纪律：防调用方漏播种，两步序列 75→80→75 的第二拍
+    /// 会以陈旧 previous 误判）；rearm 仅在**有效上限下调**（current < previous）时
+    /// true——意图性降限重开自动放电重插门（G1），上调/等值/首次播种均不开门。
+    /// 纯函数无记忆：previous 由 daemon 锁内变量传入（与 autoTriggerReady 同分层
+    /// ——判定进 CellarCore 场景域，daemon 只做副作用）。
+    public static func limitObservation(
+        previous: Int?, current: Int
+    ) -> (rearm: Bool, nextObserved: Int) {
+        (rearm: previous.map { current < $0 } ?? false, nextObserved: current)
+    }
+
     /// 创建放电动作（deadline = now + 2h；targetPercent = 启动时策略上限快照）。
     public static func start(
         now: Date,

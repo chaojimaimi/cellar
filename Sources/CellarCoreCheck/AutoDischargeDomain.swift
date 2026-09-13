@@ -16,6 +16,9 @@
 //    Core 侧可测先决「轨道占用拒绝再启动」（.alreadyActive 语义基础）见放电-24
 // ⑧ 通知矩阵：autostart 首样本 / 转移 / 终态链不遮蔽 / fullOnce 前缀豁免回归
 // ⑨ 事件承载：autoDischargeStarted 关联值 == current.upperLimit
+// ⑩ 意图降限观察（v0.19.6 方案 §5 九项）：limitObservation 判定（下调/上调/
+//    等值/首次播种）/两步序列播种纪律锚点/重武装 × margin/冷却/enabled 组合
+//    G1→G2 闭环/恢复场景等价——观察器接线本体在 cellar-daemon（照 ⑦ 盲区先例）
 
 import CellarCore
 import Foundation
@@ -287,4 +290,60 @@ func runAutoDischargeDomainScenarios() throws {
             hysteresis: 2, lastAction: "enforce:disableCharging"
         )
     ) == [], "自动-19", "回归：fullOnce:done → enforce:disableCharging → 无事件（P1-4 前缀豁免）")
+
+    // ---- ⑩ 意图降限观察（v0.19.6 维护批，方案 §5 九项；盲区见文件头 ⑩）----
+
+    // 自动-20：limitObservation 判定两侧 + 首次播种（方案 §5 1–3）。
+    do {
+        let lowered = Discharge.limitObservation(previous: 80, current: 75)
+        check(lowered.rearm && lowered.nextObserved == 75, "自动-20",
+              "下调 80→75 → rearm=true、nextObserved=75（意图开门）")
+        let raised = Discharge.limitObservation(previous: 75, current: 80)
+        check(!raised.rearm && raised.nextObserved == 80, "自动-20",
+              "上调 75→80 → rearm=false、nextObserved=80（无条件更新语义钉死）")
+        let equal = Discharge.limitObservation(previous: 80, current: 80)
+        check(!equal.rearm && equal.nextObserved == 80, "自动-20",
+              "等值 → rearm=false、nextObserved=current")
+        let first = Discharge.limitObservation(previous: nil, current: 80)
+        check(!first.rearm && first.nextObserved == 80, "自动-20",
+              "首次 previous=nil → rearm=false、nextObserved=current（播种由返回值承载，非调用方分支）")
+    }
+
+    // 自动-21：两步序列 75→80→75（方案 §5 4）：第一步必须播种 80，第二步以 80 为
+    // previous 才命中——钉死播种纪律与「仅降限触发」（防接线烤入同坏代码的 Core 锚点）。
+    do {
+        let step1 = Discharge.limitObservation(previous: 75, current: 80)
+        check(!step1.rearm && step1.nextObserved == 80, "自动-21",
+              "第一步 75→80：rearm=false、nextObserved=80（播种）")
+        let step2 = Discharge.limitObservation(previous: step1.nextObserved, current: 75)
+        check(step2.rearm && step2.nextObserved == 75, "自动-21",
+              "第二步 80→75（previous=第一步播种值）→ rearm=true、nextObserved=75")
+    }
+
+    // 自动-22：G1→G2 闭环（方案 §5 5）：完成后重插门关 → 模拟降限重武装（观察器
+    // 置 adapterCycleSinceCompletion=true）→ autoTriggerReady 全链通过（margin
+    // 82 ≥ 80+2、冷却已过）。
+    check(!ready(lastAutoCompletion: completedAnHourAgo, adapterCycleSinceCompletion: false), "自动-22",
+          "前置：完成一小时后无翻转 → 不触发（重插门关）")
+    check(ready(lastAutoCompletion: completedAnHourAgo, adapterCycleSinceCompletion: true), "自动-22",
+          "降限重武装（翻转门重开）→ 触发（margin 82≥80+2、冷却已过，G1→G2 闭环）")
+
+    // 自动-23：重武装但冷却未过 → 不触发（方案 §5 6：冷却门独立生效）。
+    check(!ready(now: t0, lastAutoCompletion: t0.addingTimeInterval(-(29 * 60 + 59)), adapterCycleSinceCompletion: true), "自动-23",
+          "重武装但距完成 29:59 → 不触发（重武装不豁免冷却门）")
+
+    // 自动-24：重武装但 margin 不足 → 不触发（方案 §5 7：margin 门独立生效）。
+    check(!ready(percent: 76, upperLimit: 75, adapterCycleSinceCompletion: true), "自动-24",
+          "重武装但 percent 76 < 75+2 → 不触发（重武装不豁免 margin 门）")
+
+    // 自动-25：重武装但 enabled=false → 不触发（方案 §5 8：重武装无害性钉死——
+    // 门状态仅被 autoTriggerReady 消费，auto 关时不开门）。
+    check(!ready(enabled: false, adapterCycleSinceCompletion: true)
+            && !ready(enabled: nil, adapterCycleSinceCompletion: true), "自动-25",
+          "重武装但 enabled=false / nil → 不触发")
+
+    // 自动-26：恢复场景等价（previous=base 80、current=75 → rearm=true，方案 §5 9：
+    // restoreBase 降限与进窗降限同链）。
+    check(Discharge.limitObservation(previous: 80, current: 75).rearm, "自动-26",
+          "恢复场景等价（base 80 → current 75）→ rearm=true")
 }

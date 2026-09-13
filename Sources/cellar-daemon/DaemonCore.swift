@@ -94,6 +94,9 @@ final class DaemonCore: @unchecked Sendable {
     /// 武装后的转移（真实拔/插）才开门。首 tick lastStatus nil 的恒真比较同理被
     /// disarm 吸收（崩溃恢复已记冷却关门）。
     var adapterCycleArmed = true
+    /// v0.19.6 意图降限观察（applyPolicyLocked 挂点）：上次观察到的有效上限。
+    /// 锁内普通变量不持久化（与冷却/翻转门同款纪律——重启即清，重启本就重置门）。
+    var lastObservedAutoDischargeLimit: Int?
 
     // MARK: - 生命周期
 
@@ -947,6 +950,9 @@ final class DaemonCore: @unchecked Sendable {
     /// Phase 5 v1.6 起 internal——DaemonCore+Schedule.swift 的日程转移（applyEntry
     /// limit 段 / restoreBase 段，工单转移执行禁令指定的复用段落）复用本方法
     ///（persistPolicyLocked v1.1 同款放宽先例；executable internal 模块外不可达）。
+    /// F-1 纪律（v0.19.6）：upperLimit 禁止字段直写——`policy.<字段> =` 既有直写
+    /// 先例的字段名单（schedule/fan/thermal/calibrationSchedule/magSafeLedMode）
+    /// 不含它，必须走本函数——意图降限重武装观察器的挂点在此。
     func applyPolicyLocked(_ newPolicy: DaemonPolicy, events: inout [LogEvent]) {
         guard let limit = try? LimitPolicy(upperLimit: newPolicy.upperLimit, hysteresis: newPolicy.hysteresis) else {
             events.append(LogEvent(
@@ -955,6 +961,22 @@ final class DaemonCore: @unchecked Sendable {
             ))
             return
         }
+        // v0.19.6 意图降限观察（R1 P3：guard 通过后、policy 赋值前——被拒策略不得
+        // 幽灵播种/误日志）。无条件播种由 limitObservation 返回值承载，不做调用方
+        // 分支。日志插值安全性：rearm=true 蕴含 previous 非 nil（previous 为 nil 时
+        // `?? false` 兜底，map 闭包不执行），故 if 块内读到的 lastObservedAutoDischargeLimit
+        // 必为现值（覆盖发生在块后），`?? -1` 分支实际不可达（保留防御写法）。
+        let observation = Discharge.limitObservation(
+            previous: lastObservedAutoDischargeLimit, current: newPolicy.upperLimit
+        )
+        if observation.rearm {
+            adapterCycleSinceAutoCompletion = true
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "有效上限下调（\(lastObservedAutoDischargeLimit ?? -1)% → \(newPolicy.upperLimit)%）：重置自动放电重插门（意图开门）"
+            ))
+        }
+        lastObservedAutoDischargeLimit = observation.nextObserved
         policy = newPolicy
         controller.updatePolicy(limit)
     }

@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.6-alpha] - 2026-09-13
+
+### Fixed
+
+- **自动放电重插门重武装（意图性降限开门）**：走查实证——日程窗口降限（如 18:00 切 75%）后电量漂浮在日间上限值，因自动放电被「完成后须拔插适配器」的重插门挡住（该门早于日程功能存在，降限意图无法重开它）。现策略汇聚点 `applyPolicyLocked`（upperLimit 整策略赋值唯一落点）新增上限观察器：有效上限下调即重置重插门并留 info 日志，下一 tick（≤30s）自动放电按既有触发链（余量 +2、30 分钟冷却）接管。覆盖日程进窗 / 退出恢复更低 base / 滑杆 / 日程配置修改四来源；SIGHUP 重读更低限同链生效（含持久化失败回落分叉）。
+
+### 备注
+
+- 重插门在无降限时语义不变：完成一次放电后仍需拔插适配器或重启 daemon 才可再次自动触发（防乒乓语义保持）。
+- 已知边界：放电运行中滑杆降限先取消在轨动作并记 30 分钟冷却，重武装后最迟 30 分钟接管；放电运行中 SIGHUP 降限的组合延迟兑现（保守无害）。
+- wire/XPC/UI 零改动；golden 快照 330 零扰动；场景 593→600（`Discharge.limitObservation` 判定域 + 观察器组合时序）；coverage 90.76%。
+
 ## [0.19.5-alpha] - 2026-09-11
 
 ### Fixed
