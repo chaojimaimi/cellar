@@ -1,6 +1,20 @@
 import CellarCore
 import SwiftUI
 
+/// 细粒度 pending 字段（v0.19.7 §3.1）：与节内控件一一对应——仅被提交的控件呈
+/// pending（禁用），节内其余控件全程可用。threshold 控件按源分流 wire 键
+/// `threshold`/`cpuThreshold`，pending 同为 .threshold——显式字段 > wire 键推导
+/// （双键分流使推导不可靠）。
+public enum FanPendingField: Equatable, Sendable {
+    case enabled
+    case strategy
+    case source
+    case threshold
+    case speed
+    case stage2
+    case stage2Rise
+}
+
 /// 风扇智能降温区（Phase 5 v1.1 §7；**参数驱动**——CellarUICheck 仅 import
 /// CellarCore/CellarUI，App 侧薄包装桥接 StatusController；照 CalibrationSectionView
 /// 先例）：
@@ -16,16 +30,19 @@ import SwiftUI
 /// - 状态行八态（fan.status.*）：已关闭/探测中/自动/加速中→N rpm/保持/已暂停介入
 ///   （采样异常）/本机不支持/检测到其他风扇控制写入者。
 ///
-/// 变更即应用（onApply(FanWire)——缺席字段 = daemon 保持现值）；本地滑杆态在
-/// init 从 daemon 状态播种（照 CalibrationSectionView 的参数注入先例，快照矩阵
-/// 可直接构造）。
+/// 变更即应用（onApply(FanWire, FanPendingField)——缺席字段 = daemon 保持现值，
+/// 第二参钉细粒度 pending）；本地滑杆态在 init 从 daemon 状态播种（照
+/// CalibrationSectionView 的参数注入先例，快照矩阵可直接构造），v0.19.7 起 fan
+/// nil→non-nil 到达沿全量回灌（修启动期先渲染后回包的显示陈旧）。
 public struct FanSectionView: View {
     /// daemon 风扇状态（nil = 旧 daemon 未上报 → 控件禁用 + 升级提示）。
     public let fan: FanStatus?
-    /// 控制器 busy（控件禁用）。
-    public let busy: Bool
-    /// 应用回调（App 侧桥接 setFan；缺席字段保持现值）。
-    public let onApply: (FanWire) -> Void
+    /// 细粒度 pending（v0.19.7）：仅被提交的控件呈禁用态，节内其余控件（含勾选框）
+    /// 全程可用；nil = 无在途提交。默认 nil——既有构造点机械更新即可零扰动。
+    public let pendingField: FanPendingField?
+    /// 应用回调（App 侧桥接 setFan；缺席字段保持现值；第二参 = 提交字段，控制器
+    /// 据此钉细粒度 pending）。
+    public let onApply: (FanWire, FanPendingField) -> Void
     /// 快照矩阵注入：初始展开确认块（渲染 inactive 形态的确认态；生产恒默认 false）。
     public let initialConfirmVisible: Bool
     /// 快照矩阵注入：状态行词覆盖（生产用 fan.state；矩阵可钉死特定态）。
@@ -52,36 +69,73 @@ public struct FanSectionView: View {
 
     public init(
         fan: FanStatus?,
-        busy: Bool,
-        onApply: @escaping (FanWire) -> Void,
+        pendingField: FanPendingField? = nil,
+        onApply: @escaping (FanWire, FanPendingField) -> Void,
         initialConfirmVisible: Bool = false,
         stateOverride: FanStateWord? = nil,
         showsTitle: Bool = true,
         currentTempC: Double? = nil
     ) {
-        let base = fan ?? FanStatus(
-            enabled: false, strategy: .constantSpeed, state: .off,
-            targetRPM: nil, currentRPM: nil, thresholdCentiC: FanPolicy.default.thresholdCentiC,
-            conflictFlag: false
-        )
         self.fan = fan
-        self.busy = busy
+        self.pendingField = pendingField
         self.onApply = onApply
         self.initialConfirmVisible = initialConfirmVisible
         self.stateOverride = stateOverride
         self.showsTitle = showsTitle
         self.currentTempC = currentTempC
         _showConfirm = State(initialValue: initialConfirmVisible)
-        _strategy = State(initialValue: base.strategy)
+        // 六值 @State 播种调 seedAll 等价逻辑（静态纯函数 seedValues——与 seedAll
+        // 回灌共用单一真相）。⚠️ init 内不得直接调 seedAll：未安装态对 @State
+        // wrappedValue 赋值 = 运行时「constantly changing initial value」未定义
+        // 行为（实测 ImageRenderer 渲染出占位值/空 Picker），State(initialValue:)
+        // 形态是既有 golden 逐字节零扰动的机械保证。
+        let seeds = Self.seedValues(from: fan)
+        _strategy = State(initialValue: seeds.strategy)
+        _temperatureSource = State(initialValue: seeds.source)
+        _thresholdC = State(initialValue: seeds.thresholdC)
+        _speedPercent = State(initialValue: seeds.speedPercent)
+        _stage2Percent = State(initialValue: seeds.stage2Percent)
+        _stage2RiseC = State(initialValue: seeds.stage2RiseC)
+    }
+
+    /// 播种值计算（纯函数；init 播种与 seedAll 回灌的单一真相）。
+    private static func seedValues(from fan: FanStatus?) -> (
+        strategy: FanStrategy, source: FanTemperatureSource, thresholdC: Double,
+        speedPercent: Double, stage2Percent: Double, stage2RiseC: Double
+    ) {
+        let base = fan ?? FanStatus(
+            enabled: false, strategy: .constantSpeed, state: .off,
+            targetRPM: nil, currentRPM: nil, thresholdCentiC: FanPolicy.default.thresholdCentiC,
+            conflictFlag: false
+        )
         // 温度源播种（D-3f：线值 nil/0 → battery——旧 daemon 按 battery 口径）；
         // 阈值滑杆播种随源（battery 域 threshold / cpuSkin 域 cpuSkinThreshold——
         // 双阈值回显 = 播种单一真相，R1 P1-4）。
-        let source = Self.wiredSource(base)
-        _temperatureSource = State(initialValue: source)
-        _thresholdC = State(initialValue: Double(Self.seedThresholdCentiC(fan: base, source: source)) / 100)
-        _speedPercent = State(initialValue: Double(base.speedPercent))
-        _stage2Percent = State(initialValue: Double(base.stage2Percent))
-        _stage2RiseC = State(initialValue: Double(base.stage2RiseCentiC) / 100)
+        let source = wiredSource(base)
+        return (
+            strategy: base.strategy,
+            source: source,
+            thresholdC: Double(seedThresholdCentiC(fan: base, source: source)) / 100,
+            speedPercent: Double(base.speedPercent),
+            stage2Percent: Double(base.stage2Percent),
+            stage2RiseC: Double(base.stage2RiseCentiC) / 100
+        )
+    }
+
+    /// 全量回灌（v0.19.7 §3.2.3 自 init 播种抽取）：六值 @State 自 fan 覆写——
+    /// strategy/temperatureSource/thresholdC/speedPercent/stage2Percent/
+    /// stage2RiseC。**不动 showConfirm**——确认块开合是用户会话态，重连沿复位它
+    /// 会凭空收起打开中的确认块（R2 P3）。调用点 = fan 到达沿（仅沿触发、不逐值
+    /// 回灌——防细粒度 pending 期它字段回包 clobber 用户正在拖动的 @State）。
+    /// 已安装态（视图存活期）的 wrappedValue 赋值是 onChange 通路的标准形态。
+    private func seedAll(from fan: FanStatus?) {
+        let seeds = Self.seedValues(from: fan)
+        strategy = seeds.strategy
+        temperatureSource = seeds.source
+        thresholdC = seeds.thresholdC
+        speedPercent = seeds.speedPercent
+        stage2Percent = seeds.stage2Percent
+        stage2RiseC = seeds.stage2RiseC
     }
 
     public var body: some View {
@@ -108,7 +162,7 @@ public struct FanSectionView: View {
                     }
                 }
             }
-            .disabled(busy || staleDaemon)
+            .disabled(pendingField == .enabled || staleDaemon)
 
             if showConfirm && !staleDaemon {
                 confirmBlock
@@ -149,6 +203,15 @@ public struct FanSectionView: View {
                 .foregroundStyle(theme.tertiaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // 回灌（v0.19.7 G1）：App 冷启动先渲染通用页时 init 按 FanPolicy.default
+        // 播种（fan 尚未回包）——不回灌则控件停留陈旧默认值，陈旧期交互会把默认
+        // 值单键写回（历史配置被真实重置的成因通道）。仅 false→true 到达沿全量重
+        // 播种（断连沿控件随 fan==nil 隐藏，无需处置）；onChange 不参与静态渲染
+        // ——既有 golden 零扰动。
+        .onChange(of: fan != nil) { arrived in
+            guard arrived, let fan else { return }
+            seedAll(from: fan)
+        }
     }
 
     // MARK: - 子区
@@ -162,10 +225,10 @@ public struct FanSectionView: View {
             HStack(spacing: 8) {
                 Button(CellarL10n.s("fan.confirm")) {
                     showConfirm = false
-                    onApply(FanWire(enabled: 1))
+                    onApply(FanWire(enabled: 1), .enabled)
                 }
                 .controlSize(.small)
-                .disabled(busy)
+                .disabled(pendingField == .enabled)
                 Button(CellarL10n.s("panel.action.back")) {
                     showConfirm = false
                 }
@@ -242,9 +305,9 @@ public struct FanSectionView: View {
             }
         }
         .pickerStyle(.menu)
-        .disabled(busy)
+        .disabled(pendingField == .strategy)
         .onChange(of: strategy) { _ in
-            onApply(FanWire(strategy: FanWire.wireValue(strategy)))
+            onApply(FanWire(strategy: FanWire.wireValue(strategy)), .strategy)
         }
     }
 
@@ -267,12 +330,12 @@ public struct FanSectionView: View {
                 Text(CellarL10n.s("fan.source.cpuSkin")).tag(FanTemperatureSource.cpuSkin)
             }
             .pickerStyle(.menu)
-            .disabled(busy || sourceGateNote != nil)
+            .disabled(pendingField == .source || sourceGateNote != nil)
             .onChange(of: temperatureSource) { newSource in
                 // 源切换重播种（新逻辑）：滑杆值域/阈值随源切换；回写经 FanWire
                 // source 键（阈值键由 applyThreshold 随源分流）。
                 thresholdC = reseededThreshold(for: newSource)
-                onApply(FanWire(source: FanWire.wireValue(newSource)))
+                onApply(FanWire(source: FanWire.wireValue(newSource)), .source)
             }
             if let note = sourceGateNote {
                 Text(note)
@@ -342,7 +405,7 @@ public struct FanSectionView: View {
             Slider(value: $thresholdC, in: thresholdRange, step: 0.5, onEditingChanged: { editing in
                 if !editing { applyThreshold() }
             })
-                .disabled(busy)
+                .disabled(pendingField == .threshold)
         }
     }
 
@@ -351,8 +414,8 @@ public struct FanSectionView: View {
     private func applyThreshold() {
         let centiC = UInt64(Int((thresholdC * 100).rounded()))
         switch temperatureSource {
-        case .battery: onApply(FanWire(threshold: centiC))
-        case .cpuSkin: onApply(FanWire(cpuThreshold: centiC))
+        case .battery: onApply(FanWire(threshold: centiC), .threshold)
+        case .cpuSkin: onApply(FanWire(cpuThreshold: centiC), .threshold)
         }
     }
 
@@ -366,9 +429,9 @@ public struct FanSectionView: View {
             }
             .font(.caption)
             Slider(value: $speedPercent, in: 40...100, step: 1, onEditingChanged: { editing in
-                if !editing { onApply(FanWire(speed: UInt64(Int(speedPercent)))) }
+                if !editing { onApply(FanWire(speed: UInt64(Int(speedPercent))), .speed) }
             })
-                .disabled(busy)
+                .disabled(pendingField == .speed)
         }
     }
 
@@ -383,9 +446,9 @@ public struct FanSectionView: View {
             }
             .font(.caption)
             Slider(value: $stage2Percent, in: 60...100, step: 1, onEditingChanged: { editing in
-                if !editing { onApply(FanWire(stage2: UInt64(Int(stage2Percent)))) }
+                if !editing { onApply(FanWire(stage2: UInt64(Int(stage2Percent))), .stage2) }
             })
-                .disabled(busy)
+                .disabled(pendingField == .stage2)
             HStack {
                 Text(CellarL10n.s("fan.stage2Rise"))
                 Spacer()
@@ -394,9 +457,9 @@ public struct FanSectionView: View {
             }
             .font(.caption)
             Slider(value: $stage2RiseC, in: 1...5, step: 0.5, onEditingChanged: { editing in
-                if !editing { onApply(FanWire(stage2Rise: UInt64(Int((stage2RiseC * 100).rounded())))) }
+                if !editing { onApply(FanWire(stage2Rise: UInt64(Int((stage2RiseC * 100).rounded()))), .stage2Rise) }
             })
-                .disabled(busy)
+                .disabled(pendingField == .stage2Rise)
         }
     }
 
@@ -413,7 +476,7 @@ public struct FanSectionView: View {
             showConfirm = true
         } else {
             showConfirm = false
-            onApply(FanWire(enabled: 0))
+            onApply(FanWire(enabled: 0), .enabled)
         }
     }
 }

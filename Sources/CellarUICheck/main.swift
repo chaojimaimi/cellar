@@ -65,6 +65,9 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // （PowerFlowDiagram_unconfirmed_*：state:.charging + powerAB:nil + 直供边 SP
 // + 系统行 nodata）；StatusLine_assist ×6 构造传 previous（满足确认条件，
 // 渲染形态不变 → golden 零 diff））
+// v0.19.7 自 330 扩 336——通用页风扇节细粒度 pending 态 6 新增
+// （FanSection_pending_*：仅阈值滑杆禁用的单控件形态钉死，既有 FanSection
+// 构造 busy 删参 + pendingField 默认 nil → 渲染零 diff））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -185,7 +188,8 @@ private func wrap(
 // 0.19.4 自 306 扩 318——面板功率流向行 assist 态 6 新增（PowerFlow_assist_*）+
 // 状态行 assist 态 6 新增（StatusLine_assist_*，真机现场复刻）；
 // v0.19.5 自 318 扩 330——状态行/功率流三角图未确认窗口态各 6 新增
-// （StatusLine_unconfirmed_* / PowerFlowDiagram_unconfirmed_*））
+// （StatusLine_unconfirmed_* / PowerFlowDiagram_unconfirmed_*）；
+// v0.19.7 自 330 扩 336——风扇节细粒度 pending 态 6 新增（FanSection_pending_*））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -518,7 +522,7 @@ private func buildCases() -> [SnapshotCase] {
                         cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
                         cpuSkinHysteresisCentiC: 400
                     ),
-                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
+                    onApply: { _, _ in }, currentTempC: 31.0)),
                 ("on", FanSectionView(
                     fan: FanStatus(
                         enabled: true, strategy: .twoStage, state: .automatic,
@@ -528,7 +532,7 @@ private func buildCases() -> [SnapshotCase] {
                         cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
                         cpuSkinHysteresisCentiC: 400
                     ),
-                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
+                    onApply: { _, _ in }, currentTempC: 31.0)),
                 // v1.12 双槽形态（secondFanPresent）：左自动/右 boost 异词并存——
                 // 两扇独立状态机（D3）的代表快照；标尺口径照 on 态（twoStage 显形
                 // 会拉高行数——dual 用 constantSpeed 保持单屏）。
@@ -543,7 +547,22 @@ private func buildCases() -> [SnapshotCase] {
                         secondFanPresent: true, secondFanState: .boost,
                         secondFanTargetRPM: 3466, secondFanCurrentRPM: 3450
                     ),
-                    busy: false, onApply: { _ in }, currentTempC: 31.0)),
+                    onApply: { _, _ in }, currentTempC: 31.0)),
+                // v0.19.7 细粒度 pending 态 1 case ×3 风格 ×2 外观 = 6 张（330 → 336，
+                // 全部全新文件——新增非扰动）：照 on 态夹具 + pendingField 钉死
+                // .threshold——仅阈值滑杆呈禁用态，节内其余控件（勾选框/策略/源/
+                // 转速滑杆）全程可用（防回退为整节禁用的回归钉，方案 §3.5）。
+                // --regen --only=FanSection_pending 只跑本组。
+                ("pending", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .twoStage, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
+                    ),
+                    pendingField: .threshold, onApply: { _, _ in }, currentTempC: 31.0)),
             ]
             for (stateName, section) in fanSections {
                 cases.append(SnapshotCase(

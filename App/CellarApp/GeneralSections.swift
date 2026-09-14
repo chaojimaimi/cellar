@@ -173,10 +173,11 @@ struct GeneralSections: View {
             // 旧 daemon（fan==nil）控件禁用 + 升级提示）。v1.11 T3：currentTempC
             // 注入当前源温度（battery 源 = 1s 遥测电池温度 / cpuSkin 源 = daemon
             // 回显——FanStatus 无电池温度回显字段，battery 侧只有 App 层快照可给）。
+            // v0.19.7：pendingField 接 fan 专用细粒度 pending；onApply 走排队通道。
             FanSectionView(
                 fan: statusController.fanStatus,
-                busy: statusController.busy,
-                onApply: { statusController.setFan($0) },
+                pendingField: statusController.fanPendingField,
+                onApply: { statusController.setFan($0, field: $1) },
                 showsTitle: false,
                 currentTempC: currentFanTempC
             )

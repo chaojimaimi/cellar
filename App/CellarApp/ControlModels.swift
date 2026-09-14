@@ -33,7 +33,10 @@ enum ControlAttempt: Equatable {
     case startCalibration
     case cancelCalibration
     /// Phase 5 v1.1 风扇设置（重试 = 重发上次 FanWire——缺席保持语义下无害）。
-    case setFan(FanWire)
+    /// v0.19.7 关联值扩二元组（wire + pending field）：fan 排队通道的 lastAttempt
+    /// compare-and-clear 需按 (wire, field) 逐笔比对，防并发交错误清重试槽
+    /// （方案 §3.3.5/B6）。
+    case setFan(FanWire, FanPendingField)
     /// Phase 5 v1.4 校准调度（重试 = 重发上次全键 wire——全键覆盖语义下幂等无害）。
     case setCalibrationSchedule(CalibrationScheduleWire)
     /// Phase 5 v1.5 充电热暂停（重试 = 重发上次全键 wire——全键覆盖语义下幂等

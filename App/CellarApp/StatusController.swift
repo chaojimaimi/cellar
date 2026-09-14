@@ -16,6 +16,16 @@ final class StatusController: ObservableObject {
     @Published private(set) var daemonStatus: DaemonStatus?
     @Published private(set) var connection: ConnectionState = .unknown
     @Published private(set) var busy = false
+    /// fan 专用细粒度 pending（v0.19.7 §3.3）：fan 提交不置全局 busy（整节闪灰
+    /// 根除）——仅被提交控件经 FanSectionView.pendingField 呈禁用态。**必须
+    /// @Published**：ObservableObject 非 @Published 变更不触发 objectWillChange，
+    /// pending 视觉会静默失效（R1 P3）。
+    @Published private(set) var fanPendingField: FanPendingField?
+    /// fan 单槽排队（latest-wins，深度恒 1）：飞行中收到新提交 → 暂存，回包后
+    /// 自动补发——根治 runControl `guard !busy` 对并发提交的静默丢弃（细粒度
+    /// pending 打开「飞行中第二笔提交」窗口后的前置防线，方案 §1/§3.3）。非视觉
+    /// 态不入 @Published。
+    private var fanQueuedApply: (wire: FanWire, field: FanPendingField)?
     @Published private(set) var controlFeedback: ControlFeedback?
     /// MagSafe LED 独立轻路径状态槽（v1.10 M2）：pending = LED 在途（不进全局 busy，防通用页全节闪灰）；
     /// feedback = 组件内轻提示（成功 5s 清 / 失败常驻，不写全局 controlFeedback——横幅归属隔离）。
@@ -482,12 +492,66 @@ final class StatusController: ObservableObject {
 
     /// 风扇设置（FanWire 缺席字段 = daemon 保持现值；成功反馈由统一通道上屏）。
     /// 失败三态走统一控制通道（daemonError 原文 / stale 比对 / 连接态）。
-    func setFan(_ wire: FanWire) {
-        runControl(
-            attempt: .setFan(wire),
-            operation: { try DaemonXPCClient().setFan(wire) },
-            successFeedback: CellarL10n.s("status.summary.setFan")
-        )
+    /// v0.19.7 自 runControl 迁出为 fan 专用提交通道：**不置全局 busy**（细粒度
+    /// pending，fanPendingField 钉被提交控件）；飞行中再收到提交 → 入单槽
+    /// （latest-wins 覆盖旧槽）return，回包后自动补发。入口语义照 runControl：
+    /// 清旧横幅 + 记 lastAttempt（重试依据）；XPC 后台执行 + 主线程回包纪律同款。
+    func setFan(_ wire: FanWire, field: FanPendingField) {
+        guard fanPendingField == nil else {
+            fanQueuedApply = (wire, field)   // 飞行中：latest-wins 覆盖旧槽
+            return
+        }
+        fanPendingField = field
+        controlFeedback = nil
+        lastAttempt = .setFan(wire, field)
+        Task.detached { [weak self] in
+            let result: Result<DaemonStatus, DaemonClientError>
+            do {
+                result = .success(try DaemonXPCClient().setFan(wire))
+            } catch let error as DaemonClientError {
+                result = .failure(error)
+            } catch {
+                // 协议域外错误（编码失败等）：按 daemon 拒绝呈现，不静默（同 runControl）。
+                result = .failure(.daemonError(String(describing: error)))
+            }
+            await MainActor.run {
+                self?.finishFanApply(result: result, wire: wire, field: field)
+            }
+        }
+    }
+
+    /// fan 回包处理（主 actor；照 finishControl 语义逐项保持，方案 §3.3.3）：
+    /// 成功 → ingest + 成功反馈 + lastAttempt **compare-and-clear**（仅当仍是
+    /// 本笔 (wire, field) 才清——fan 不置 busy 后与其他 runControl 操作可交错，
+    /// 无条件清槽会踩掉他操作的重试槽；LED 先例正是为此不写 lastAttempt）；
+    /// 失败 → classifyControlFailure（全局横幅/stale 比对不变；lastAttempt 照
+    /// runControl 失败保留）。收尾按单槽队列补发：非空 → 取出重走 setFan 完整
+    /// 入口语义（含 lastAttempt 重记录 + controlFeedback 清旧——否则补发笔失败
+    /// 时重试槽已被前笔成功清空，重试钮退化，R2 P3）；空 → pending 复位。
+    private func finishFanApply(
+        result: Result<DaemonStatus, DaemonClientError>,
+        wire: FanWire,
+        field: FanPendingField
+    ) {
+        switch result {
+        case .success(let status):
+            ingest(status: status)
+            setSuccessFeedback(CellarL10n.s("status.summary.setFan"))
+            if lastAttempt == .setFan(wire, field) {
+                lastAttempt = nil
+            }
+        case .failure(let error):
+            classifyControlFailure(error) { self.controlFeedback = $0 }
+        }
+        // code-review P0：先清 pending 再补发——setFan 首行 guard fanPendingField
+        // == nil 否则入槽；若带着旧 pending 调补发，补发笔会被弹回队列且再无
+        // finishFanApply 驱动源，fan 通道永久卡死（无在飞 Task、pending 恒非 nil）。
+        // MainActor 同步序列内 nil→新 field 中间态同周期合并，无视觉闪烁。
+        fanPendingField = nil
+        if let queued = fanQueuedApply {
+            fanQueuedApply = nil
+            setFan(queued.wire, field: queued.field)
+        }
     }
 
     // MARK: - Phase 5 v1.4 校准调度
@@ -609,8 +673,10 @@ final class StatusController: ObservableObject {
             calibrateStart()
         case .cancelCalibration:
             calibrateCancel()
-        case .setFan(let wire):
-            setFan(wire)
+        case .setFan(let wire, let field):
+            // 走同一排队通道（v0.19.7）：落在 fan 飞行期自然入队（fan 不置 busy，
+            // 既有 `guard !busy` 对 fan 通道不再拦截，语义正确）。
+            setFan(wire, field: field)
         case .setCalibrationSchedule(let wire):
             applyCalibrationSchedule(wire)
         case .setThermal(let wire):
