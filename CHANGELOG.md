@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.9-alpha] - 2026-09-15
+
+### Fixed
+
+- **macOS 27 遥测恢复补全（gauge 字段族迁移）**：0.19.8 重定位温度后，doctor 仍报 `missingRequiredField("DesignCapacity")`——macOS 27 把 DesignCapacity（必填）/NominalChargeCapacity/AppleRawCurrentCapacity（健康度输入）等 gauge 字段族一并迁入了 `BatteryData` 子字典。现解析器查找顺序改为「顶层优先（macOS 26 及更早零变化）→ BatteryData 子字典回退」，对全部必需与相关可选字段生效——后续同族迁移不再断监控。类型错误仍在命中字典内原地抛出（不跨字典掩盖数据损坏）。
+
 ## [0.19.8-alpha] - 2026-09-15
 
 ### Fixed

@@ -29,23 +29,30 @@ public enum BatterySnapshotParser {
         // ChargerData 子字典（v1.7 原生限充运行态签名 NotChargingReason 的来源；
         // 提取模式照 BatteryData 先例——缺席/类型不符 → 整字段 nil 容错）。
         let chargerData = props["ChargerData"] as? [String: Any]
+        // v0.19.9 macOS 27 兼容：gauge 字段族（DesignCapacity/NominalChargeCapacity/
+        // RemainingCapacity 等）自顶层迁入 BatteryData 子字典——查找顺序恒「顶层优先
+        // （macOS 26 语义零变化）→ BatteryData 回退（27）」，对全部必需/相关可选字段
+        // 生效，防后续迁移再断。Temperature 不在节点 BatteryData（spike 0/10），
+        // 走独立的 SMC TB1T/TB2T 回退链（v0.19.8）。
+        let dicts: [[String: Any]] = batteryData.map { [props, $0] } ?? [props]
         return BatterySnapshot(
-            percent: try requiredInt(props, "CurrentCapacity"),
-            isCharging: try requiredBool(props, "IsCharging"),
-            externalConnected: try requiredBool(props, "ExternalConnected"),
-            voltageMV: try requiredInt(props, "Voltage"),
-            amperageMA: try requiredInt(props, "Amperage"),
+            percent: try requiredInt(dicts, "CurrentCapacity"),
+            isCharging: try requiredBool(dicts, "IsCharging"),
+            externalConnected: try requiredBool(dicts, "ExternalConnected"),
+            voltageMV: try requiredInt(dicts, "Voltage"),
+            amperageMA: try requiredInt(dicts, "Amperage"),
             temperatureCentiC: try temperature(props, fallback: temperatureFallbackCentiC),
-            cycleCount: try requiredInt(props, "CycleCount"),
-            designCapacityMAh: try requiredInt(props, "DesignCapacity"),
+            cycleCount: try requiredInt(dicts, "CycleCount"),
+            designCapacityMAh: try requiredInt(dicts, "DesignCapacity"),
             maxCapacityPercent: intValue(props["MaxCapacity"]),
             fullyCharged: boolValue(props["FullyCharged"]),
             rawMaxCapacityMAh: intValue(props["AppleRawMaxCapacity"]),
-            rawCurrentCapacityMAh: intValue(props["AppleRawCurrentCapacity"]),
+            rawCurrentCapacityMAh: intValueAcross(dicts, "AppleRawCurrentCapacity"),
             // ⚠️ 键名以真机 ioreg 实测为准（2026-09-03）：NominalChargeCapacity——
             // 无 Apple 前缀（曾误写 AppleNominalChargeCapacity 致解析恒空、
             // 健康度静默回退 rawMax 口径，面板 86% vs 系统 90% 的差异来源）。
-            nominalChargeCapacityMAh: intValue(props["NominalChargeCapacity"]),
+            // v0.19.9：27 迁入 BatteryData，跨字典查找。
+            nominalChargeCapacityMAh: intValueAcross(dicts, "NominalChargeCapacity"),
             cellVoltagesMV: batteryData.flatMap { cellVoltages(from: $0) },
             fccMAh: batteryData.flatMap { intValue($0["FccComp1"]) },
             adapter: adapter(from: props["AdapterDetails"]),
@@ -59,11 +66,26 @@ public enum BatterySnapshotParser {
 
     // MARK: - 必需字段提取
 
-    /// 必需 Int：缺失 → `.missingRequiredField`；类型不符 → `.invalidFieldType`。
-    private static func requiredInt(_ props: [String: Any], _ key: String) throws -> Int {
-        guard let raw = props[key] else { throw BatteryMonitorError.missingRequiredField(key) }
-        guard let value = intValue(raw) else { throw BatteryMonitorError.invalidFieldType(key) }
-        return value
+    /// 必需 Int（v0.19.9 跨字典）：按序取首个命中字典；缺失 → `.missingRequiredField`；
+    /// 类型不符 → `.invalidFieldType`（命中字典内类型不符不继续找后续字典——类型错误
+    /// 是数据损坏信号，跨字典重试会掩盖）。
+    private static func requiredInt(_ dicts: [[String: Any]], _ key: String) throws -> Int {
+        for dict in dicts {
+            guard let raw = dict[key] else { continue }
+            guard let value = intValue(raw) else { throw BatteryMonitorError.invalidFieldType(key) }
+            return value
+        }
+        throw BatteryMonitorError.missingRequiredField(key)
+    }
+
+    /// 必需 Bool（v0.19.9 跨字典，语义同 requiredInt）。
+    private static func requiredBool(_ dicts: [[String: Any]], _ key: String) throws -> Bool {
+        for dict in dicts {
+            guard let raw = dict[key] else { continue }
+            guard let value = boolValue(raw) else { throw BatteryMonitorError.invalidFieldType(key) }
+            return value
+        }
+        throw BatteryMonitorError.missingRequiredField(key)
     }
 
     /// 温度取值三分支（v0.19.8 macOS 27 兼容，方案 §3.1.1——Temperature 是唯一
@@ -83,11 +105,14 @@ public enum BatterySnapshotParser {
         return value
     }
 
-    /// 必需 Bool：缺失 → `.missingRequiredField`；非 Bool / 非 0/1 数值 → `.invalidFieldType`。
-    private static func requiredBool(_ props: [String: Any], _ key: String) throws -> Bool {
-        guard let raw = props[key] else { throw BatteryMonitorError.missingRequiredField(key) }
-        guard let value = boolValue(raw) else { throw BatteryMonitorError.invalidFieldType(key) }
-        return value
+    /// 可选 Int 跨字典查找（v0.19.9）：顶层优先；键缺失**与类型不符**均回退
+    /// BatteryData（可选字段 nil 容错语义无错误面可掩——与必需字段的「类型错误
+    /// 不跨字典」是有意的不对称）。
+    private static func intValueAcross(_ dicts: [[String: Any]], _ key: String) -> Int? {
+        for dict in dicts {
+            if let value = intValue(dict[key]) { return value }
+        }
+        return nil
     }
 
     // MARK: - 统一数值 / Bool 转换

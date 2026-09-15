@@ -1144,6 +1144,63 @@ struct Main {
                          "用例118", "回退 nil → .missingRequiredField(\"Temperature\") 原文上抛")
         }
 
+        // 用例 120：v0.19.9 macOS 27 gauge 字段族迁移——顶层无 DesignCapacity/
+        // NominalChargeCapacity/AppleRawCurrentCapacity，BatteryData 子字典承接
+        //（跨字典回退主路）。真实 27 形态（spike/活机 ioreg 实证）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "DesignCapacity")
+            props.removeValue(forKey: "AppleRawCurrentCapacity")
+            props["NominalChargeCapacity"] = nil
+            props["BatteryData"] = [
+                "CellVoltage": [4072, 4071, 4068],
+                "FccComp1": 7616,
+                "DesignCapacity": 8694,
+                "NominalChargeCapacity": 7608,
+                "AppleRawCurrentCapacity": 7293,
+            ] as [String: Any]
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            expectEqual(s.designCapacityMAh, 8694, "用例120", "DesignCapacity 顶层缺失 → BatteryData 回退（27 形态）")
+            expectEqual(s.nominalChargeCapacityMAh, 7608, "用例120", "NominalChargeCapacity 跨字典回退（健康度输入）")
+            expectEqual(s.rawCurrentCapacityMAh, 7293, "用例120", "AppleRawCurrentCapacity 跨字典回退")
+            expectEqual(s.percent, 86, "用例120", "其余必需字段不受影响（抽查 percent）")
+        }
+
+        // 用例 121：顶层优先——两处都在时用顶层（macOS 26 语义零变化，R2 纪律）。
+        do {
+            var props = batteryProps()
+            props["DesignCapacity"] = 8500
+            props["BatteryData"] = ["CellVoltage": [4072], "FccComp1": 7616, "DesignCapacity": 8694] as [String: Any]
+            let s = try BatterySnapshotParser.parse(props, timestamp: timeZero)
+            expectEqual(s.designCapacityMAh, 8500, "用例121", "顶层命中优先 → 8500（BatteryData 同名键不覆盖）")
+        }
+
+        // 用例 122：回退字典内类型不符 → .invalidFieldType（命中字典内类型错误
+        // 不跨字典重试——数据损坏信号不掩盖）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "DesignCapacity")
+            props["BatteryData"] = ["CellVoltage": [4072], "FccComp1": 7616, "DesignCapacity": "bad"] as [String: Any]
+            expectThrows(
+                try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                as: BatteryMonitorError.invalidFieldType("DesignCapacity"),
+                "用例122", "BatteryData 内类型不符 → .invalidFieldType（不跨字典）"
+            )
+        }
+
+        // 用例 123：顶层与 BatteryData 双缺 → .missingRequiredField 原文（错误语义
+        // 与 v0.19.8 前一致）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "DesignCapacity")
+            props["BatteryData"] = ["CellVoltage": [4072], "FccComp1": 7616] as [String: Any]
+            expectThrows(
+                try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                as: BatteryMonitorError.missingRequiredField("DesignCapacity"),
+                "用例123", "双缺 → .missingRequiredField(\"DesignCapacity\") 原文"
+            )
+        }
+
         // MARK: - 场景（WP4 规格 §3 用例 47–59）
         // 纯逻辑决策：不经 SMC/IOKit 传输，全部经文件作用域 MockChargingBackend 内存态。
 
