@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # snapshot-regen job 专用的手动触发器（该 job 自身以 event_name == workflow_dispatch
+  # 门控）——0.19.10 起补挂：job 落地时漏配本触发器，gh workflow run 恒 422。
+  workflow_dispatch:
 
 jobs:
   verify:
