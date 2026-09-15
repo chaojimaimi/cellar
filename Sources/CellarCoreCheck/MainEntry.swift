@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）+ v0.19.8 macOS 27 温度回退域（113–118 于本文件 + 119 于 DoctorExtendedDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -208,6 +208,14 @@ private final class KRTransport: SMCTransport, @unchecked Sendable {
 private struct ThrowingPropertySource: BatteryPropertySource {
     let error: BatteryMonitorError
     func properties() throws -> [String: Any] { throw error }
+}
+
+/// 用例 117/118 的注入式静态数据源（fixture 字典原样直返；ThrowingPropertySource
+/// 同款注入缝）。`[String: Any]` 非 Sendable → `@unchecked`（场景栈内构造即用，
+/// `batteryProps()` 工厂函数豁免先例同评审 C-2）。
+private struct StaticPropertySource: BatteryPropertySource, @unchecked Sendable {
+    let props: [String: Any]
+    func properties() throws -> [String: Any] { props }
 }
 
 // MARK: - WP4 mock（用例 47–59）
@@ -1056,6 +1064,84 @@ struct Main {
             expectThrows(try monitor.snapshot(),
                          as: BatteryMonitorError.serviceNotFound,
                          "用例46", "source 的 .serviceNotFound 原样传播")
+        }
+
+        // MARK: - 场景（v0.19.8 macOS 27 兼容，方案 §3.1/§4 用例 113–118）
+        // 温度源重定位：解析器回退三分支（113–116）+ Monitor SMC 回退注入缝两臂
+        //（117–118）。fixture 同 batteryProps()；macOS 26 主路（Temperature 在位、
+        // fallback 不生效）由用例 114 钉死，26 既有行为由用例 36 零改动覆盖。
+        // SMC 真机读取（TB1T/TB2T 均值舍入、10...90 域门）与生产接线无自动化覆盖
+        // → code-review 走查 + 真机走查兜底（方案 §4 盲区声明）。
+
+        // 用例 113：props 无 Temperature + fallback=2950 → temperatureCentiC=2950
+        //（macOS 27 回退路，G1）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "Temperature")
+            let s = try BatterySnapshotParser.parse(
+                props, timestamp: timeZero, temperatureFallbackCentiC: 2950
+            )
+            expectEqual(s.temperatureCentiC, 2950, "用例113", "Temperature 缺失 + fallback=2950 → 2950")
+            expectEqual(s.percent, 86, "用例113", "其余必需字段不受影响（抽查 percent）")
+        }
+
+        // 用例 114：ioreg 有 Temperature（3030）+ fallback 同时给 → ioreg 优先
+        //（macOS 26 主路，G2 钉死）。
+        do {
+            let s = try BatterySnapshotParser.parse(
+                batteryProps(), timestamp: timeZero, temperatureFallbackCentiC: 2950
+            )
+            expectEqual(s.temperatureCentiC, 3030, "用例114", "Temperature 在位 → fallback 不生效（3030）")
+        }
+
+        // 用例 115：键缺失且 fallback 缺省（nil）→ .missingRequiredField——G3 错误
+        // 原文不变（既有场景从未覆盖 Temperature 缺失臂，R1 P2-A 新覆盖）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "Temperature")
+            expectThrows(try BatterySnapshotParser.parse(props, timestamp: timeZero),
+                         as: BatteryMonitorError.missingRequiredField("Temperature"),
+                         "用例115", "双缺（fallback nil 默认参）报 .missingRequiredField(\"Temperature\") 原文")
+        }
+
+        // 用例 116：键在位但类型不符（"hot"）→ .invalidFieldType——回退不吞类型错误
+        //（R2 P3 钉死；fallback 在位也照抛）。
+        do {
+            var props = batteryProps()
+            props["Temperature"] = "hot"
+            expectThrows(
+                try BatterySnapshotParser.parse(props, timestamp: timeZero, temperatureFallbackCentiC: 2950),
+                as: BatteryMonitorError.invalidFieldType("Temperature"),
+                "用例116", "Temperature 类型不符 → .invalidFieldType（fallback 在位也不吞类型错误）"
+            )
+        }
+
+        // 用例 117：Monitor 回退注入缝——ioreg 缺 Temperature + 假 SMC reader 命中
+        // 2950 → 快照成功且含温度（catch-specific 重试路径，方案 §3.1.2）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "Temperature")
+            let monitor = BatteryMonitor(
+                source: StaticPropertySource(props: props),
+                smcTemperatureFallbackCentiC: { 2950 }
+            )
+            let s = try monitor.snapshot()
+            expectEqual(s.temperatureCentiC, 2950, "用例117", "ioreg 缺失 + 假 reader 命中 → 快照成功含温度 2950")
+            expectEqual(s.percent, 86, "用例117", "其余字段不受影响（抽查 percent）")
+        }
+
+        // 用例 118：假 reader nil + ioreg 缺失 → 原错误原样上抛（回退未命中不吞错，
+        // G3；经注入缝构造 monitor——生产接线走查兜底见域头注记）。
+        do {
+            var props = batteryProps()
+            props.removeValue(forKey: "Temperature")
+            let monitor = BatteryMonitor(
+                source: StaticPropertySource(props: props),
+                smcTemperatureFallbackCentiC: { nil }
+            )
+            expectThrows(try monitor.snapshot(),
+                         as: BatteryMonitorError.missingRequiredField("Temperature"),
+                         "用例118", "回退 nil → .missingRequiredField(\"Temperature\") 原文上抛")
         }
 
         // MARK: - 场景（WP4 规格 §3 用例 47–59）

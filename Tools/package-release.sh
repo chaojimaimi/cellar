@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 版本号单变量：zip/dmg 文件名由此派生；发布时与 App/CLI/daemon 版本串保持一致。
-VERSION=0.19.7-alpha
+VERSION=0.19.8-alpha
 
 PROJECT="App/CellarApp.xcodeproj"
 SCHEME="CellarApp"
@@ -35,6 +35,14 @@ for product in cellar cellar-daemon; do
 done
 
 echo "==> 2/7 Release 构建（xcodebuild）"
+# CFBundleVersion 派生（0.19.8 起）：数值 = major×10000 + minor×100 + patch
+# （0.19.8 → 1908，随发版自动递增）。背景：CFBundleVersion 恒 "2" 使 BTM 按
+# bundle id+version 无法区分新旧 bundle——macOS 27 升级回放了远古 App 托管注册
+# 抢占守护进程标签（幽灵 daemon 事故促成因子）。约束 minor<100（0.100.0 会与
+# 1.0.0 撞号——现实版本域内成立）。
+CF_BUNDLE_VERSION=$(echo "$VERSION" | sed 's/-.*//' | awk -F. '{ print $1*10000 + $2*100 + $3 }')
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CF_BUNDLE_VERSION" App/CellarApp/Info.plist
+echo "CFBundleVersion → $CF_BUNDLE_VERSION"
 xcodebuild -project "$PROJECT" -scheme "$SCHEME" \
     -configuration Release -derivedDataPath "$DERIVED_DATA" build
 
@@ -42,6 +50,12 @@ xcodebuild -project "$PROJECT" -scheme "$SCHEME" \
 APP_VERSION=$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")
 if [ "$APP_VERSION" != "$VERSION" ]; then
     echo "❌ App 版本 ${APP_VERSION} ≠ ${VERSION}——中止打包"
+    exit 1
+fi
+# CFBundleVersion 构建后断言（镜像 APP_VERSION 先例——只写不验等于没写）。
+APP_BUILD=$(plutil -extract CFBundleVersion raw "$APP_PATH/Contents/Info.plist")
+if [ "$APP_BUILD" != "$CF_BUNDLE_VERSION" ]; then
+    echo "❌ App CFBundleVersion ${APP_BUILD} ≠ ${CF_BUNDLE_VERSION}——中止打包"
     exit 1
 fi
 

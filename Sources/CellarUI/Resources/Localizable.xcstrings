@@ -1588,13 +1588,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Battery Pack · B0AT"
+            "value": "Battery Pack · SMC sensor"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "电池组 · B0AT"
+            "value": "电池组 · SMC 传感器"
           }
         }
       }

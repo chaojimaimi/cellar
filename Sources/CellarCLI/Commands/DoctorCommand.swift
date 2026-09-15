@@ -227,7 +227,10 @@ struct DoctorCommand: ParsableCommand {
             // Phase 5 v1.8 检查 16：MagSafe LED 状态（daemonStatus.magSafeLed 直通——
             // daemon 探测侧权威；daemon 未运行 → nil 走「未上报」INFO 行）。
             magSafeLed: daemonStatus?.magSafeLed,
-            magSafeLedProbeAttempted: true
+            magSafeLedProbeAttempted: true,
+            // v0.19.8 G5：macOS 27 感知附注开关（检查 3/4；DoctorInputs 纯函数消费，
+            // CLI 进程收集注入——B4：doctor 报告在 CLI 进程生成，无进程视角分叉）。
+            osMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         )
     }
 

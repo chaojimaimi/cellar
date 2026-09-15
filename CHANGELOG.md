@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.8-alpha] - 2026-09-15
+
+### Fixed
+
+- **macOS 27 兼容：电池遥测恢复**——macOS 27 移除了 AppleSmartBattery 顶层 `Temperature` 键，温度作为必填字段导致整个电池快照解析失败（面板/仪表板「遥测不可用」、统计停摆、风扇采样异常、doctor 读数 FAIL）。现温度源重定位：优先沿用 ioreg `Temperature`（macOS 26 及更早，行为零变化），缺失时回退 **SMC TB1T/TB2T 电池温度传感器**（均值，10–90 °C 合理域门照 CpuSkinSensor 纪律）；双源皆缺才报错（错误语义不变）。温度不再能让监控整体失效。
+- **doctor 对 macOS 27 无后端状态的诚实提示**：macOS 27 移除了 CHTE 系 SMC 控制键（第三方限充生态普遍受影响，见 AlDente Issue #1775），充电执法能力暂不可用——doctor 后端/控制键检查现会明示这一点（监控功能不受影响）。执法恢复（powerd 原生策略路线）在后续版本。
+
+### Changed
+
+- **CFBundleVersion 随发布自动递增**（数值 = major×10000+minor×100+patch）：此前恒为 "2"，导致 BTM 无法区分新旧 App bundle——macOS 27 升级回放远古守护进程注册抢占标签的事故促成因子。
+
+### 备注
+
+- 充电执法后端（SMC CHTE 系）在 macOS 27 上被系统移除，限充执法暂不可用——监控、健康度、统计、风扇观察正常；恢复路线见项目主页。
+- 仪表板温度卡副标更正为「电池组 · SMC 传感器」（原「B0AT」标注与实际数据源不符，v0.18 起登记）。
+
 ## [0.19.7-alpha] - 2026-09-14
 
 ### Fixed

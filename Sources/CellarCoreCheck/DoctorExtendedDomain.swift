@@ -1,4 +1,6 @@
 // CellarCoreCheck —— WP5 doctor 检查 9–11 + 检查 3/6 扩展场景域（方案 §2.1/§2.2）
+// + v0.19.8 macOS 27 感知附注两臂（用例 119，方案 §3.3：osMajorVersion=27 附注 /
+// =26 既有 detail 逐字零变化）
 //
 // 兼容性约束（评审 P0-3）：新输入字段全缺省值 + 条件渲染——用例 65（count==7）/
 // 69（count==8）已由 MainEntry.swift 既有断言钉死，本域只覆盖新字段非缺省形态。
@@ -421,5 +423,57 @@ func runDoctorExtendedDomainScenarios() {
         ))
         check(report.checks.count == 9, "医生-14", "本域输入形态 → 9 项（7 基础 + daemon + LED；15/16 类检查需各自探测输入）")
         check(report.checks[8].name == "MagSafe 指示灯", "医生-14", "检查 16 渲染在位")
+    }
+
+    // ---- 检查 3/4 macOS 27 感知附注（v0.19.8 G5，方案 §3.3；osMajorVersion 注入
+    // 两臂，B4——不直读 ProcessInfo，保纯函数可测性）----
+
+    /// 用例 119 fixture：macOS 27 现实形态（CHTE 系被移除 → 探测 noneAvailable →
+    /// chargingEnabled/chargingError 双 nil → 控制键走「输入域外」FAIL 臂）。
+    func readOnlyInputs(osMajorVersion: Int) -> DoctorInputs {
+        DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable,
+            chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            osMajorVersion: osMajorVersion
+        )
+    }
+
+    // 用例 119 臂一：osMajorVersion=27 → 后端 noneAvailable detail 与控制键 FAIL
+    // detail 均附附注（status 不变：info / fail）。
+    do {
+        let report = DoctorReportGenerator.generate(readOnlyInputs(osMajorVersion: 27))
+        let backend = report.checks[2]
+        check(backend.status == .info
+                && backend.detail.contains("macOS 27 移除了 CHTE 系 SMC 控制键")
+                && backend.detail.contains("监控功能不受影响"),
+              "用例119", "27：后端 noneAvailable detail 附 macOS 27 附注（status 仍 info）")
+        let charging = report.checks[3]
+        check(charging.status == .fail
+                && charging.detail.contains("macOS 27 移除了 CHTE 系 SMC 控制键"),
+              "用例119", "27：控制键 FAIL detail 附 macOS 27 附注")
+    }
+    // 用例 119 臂二：osMajorVersion=26 → 既有 detail 零变化（逐字断言，既有断言
+    // 语义可测化）；缺省构造（约 40 处既有构造点形态）同样零附注。
+    do {
+        let report = DoctorReportGenerator.generate(readOnlyInputs(osMajorVersion: 26))
+        check(report.checks[2].detail == "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）",
+              "用例119", "26：后端 noneAvailable detail 逐字不变")
+        check(report.checks[3].detail == "控制键状态未知（读取异常）",
+              "用例119", "26：控制键 FAIL detail 逐字不变")
+        // 缺省臂（R 复审 P3-1 加固）：与 readOnlyInputs 同形态（noneAvailable +
+        // chargingEnabled/chargingError 双 nil——附注的两个渲染臂）但省略
+        // osMajorVersion，逐字断言钉死 init 默认值 26（若有人改默认 27 此断言即红）。
+        let defaulted = DoctorReportGenerator.generate(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: [])
+        ))
+        check(defaulted.checks[2].detail == "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）"
+                && !defaulted.checks[2].detail.contains("macOS 27"),
+              "用例119", "osMajorVersion 缺省（默认 26）→ noneAvailable detail 逐字零附注（既有构造点零改动）")
     }
 }

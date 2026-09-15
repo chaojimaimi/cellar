@@ -131,6 +131,11 @@ public struct DoctorInputs: Sendable {
     public let magSafeLed: MagSafeLEDStatus?
     /// 检查 16 是否已探测（DoctorCommand 恒 true——未探测缺省形态零渲染）。
     public let magSafeLedProbeAttempted: Bool
+    /// macOS 大版本（v0.19.8 G5，方案 §3.3）：检查 3/4 的 macOS 27 感知附注开关。
+    /// 收集侧注入（DoctorCommand 读 `ProcessInfo`；CellarCoreCheck 场景注入 26/27
+    /// 两臂——不直读 ProcessInfo，保纯函数可测性）。默认 26 = 既有 detail 断言
+    /// 语义不变（既有约 40 处构造点零改动，新字段全缺省值纪律同 keyPresence）。
+    public let osMajorVersion: Int
 
     public init(
         isRoot: Bool,
@@ -157,7 +162,8 @@ public struct DoctorInputs: Sendable {
         nativeLimit: NativeLimitStatus? = nil,
         nativeLimitProbeAttempted: Bool = false,
         magSafeLed: MagSafeLEDStatus? = nil,
-        magSafeLedProbeAttempted: Bool = false
+        magSafeLedProbeAttempted: Bool = false,
+        osMajorVersion: Int = 26
     ) {
         self.isRoot = isRoot
         self.smcConnected = smcConnected
@@ -184,6 +190,7 @@ public struct DoctorInputs: Sendable {
         self.nativeLimitProbeAttempted = nativeLimitProbeAttempted
         self.magSafeLed = magSafeLed
         self.magSafeLedProbeAttempted = magSafeLedProbeAttempted
+        self.osMajorVersion = osMajorVersion
     }
 }
 
@@ -303,6 +310,20 @@ public enum DoctorReportGenerator {
         return DoctorCheck(name: "SMC 服务", status: .fail, detail: "AppleSMC 连接失败（服务未找到或打开失败）")
     }
 
+    // MARK: - 检查 3/4：macOS 27 感知附注（v0.19.8 G5，方案 §3.3）
+
+    /// `osMajorVersion >= 27` → 附注（M0 spike 实证：macOS 27 移除 CHTE 系 SMC
+    /// 控制键，AlDente #1775 同坑生态级事件）：诚实标注执法停摆现状与监控无恙。
+    /// 26 及更早 → 空串（既有 detail 零变化，照 keyPresence 缺省无标注条件渲染
+    /// 先例）。挂载点 = 后端 noneAvailable 臂与控制键 FAIL 臂——macOS 27 现实
+    /// 形态（探测 noBackendAvailable → chargingEnabled/chargingError 双 nil）
+    /// 恰好落在两臂；其余臂 detail 语义（含 detected 键矩阵标注）零变化。
+    private static func macOS27Note(_ inputs: DoctorInputs) -> String {
+        guard inputs.osMajorVersion >= 27 else { return "" }
+        return "（macOS 27 移除了 CHTE 系 SMC 控制键——第三方限充生态普遍受影响；"
+            + "执法能力恢复进展见项目主页，监控功能不受影响）"
+    }
+
     // MARK: - 检查 3：后端探测
 
     private static func backendProbe(_ inputs: DoctorInputs) -> DoctorCheck {
@@ -324,6 +345,7 @@ public enum DoctorReportGenerator {
             return DoctorCheck(
                 name: "后端探测", status: .info,
                 detail: "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）"
+                    + macOS27Note(inputs)
             )
         case .serviceUnavailable:
             return DoctorCheck(
@@ -347,8 +369,12 @@ public enum DoctorReportGenerator {
                 detail: enabled ? "充电使能" : "已停充"
             )
         }
-        // 输入域外（错误与值皆缺）：按失败呈现，不静默。
-        return DoctorCheck(name: "控制键状态", status: .fail, detail: "控制键状态未知（读取异常）")
+        // 输入域外（错误与值皆缺）：按失败呈现，不静默。macOS 27 现实形态
+        // （CHTE 系被移除 → 探测 noneAvailable → 错误与值双 nil）落在本臂。
+        return DoctorCheck(
+            name: "控制键状态", status: .fail,
+            detail: "控制键状态未知（读取异常）" + macOS27Note(inputs)
+        )
     }
 
     // MARK: - 检查 5：电池读数（检查 5 定版为 FAIL：电池工具无电池读数即失败，评审 P0-3）

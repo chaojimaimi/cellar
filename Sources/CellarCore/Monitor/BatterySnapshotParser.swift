@@ -16,7 +16,15 @@ import Foundation
 /// - Amperage 符号语义未定（实测互相矛盾）：原值保留，方向判定一律以 IsCharging 为准。
 public enum BatterySnapshotParser {
     /// 纯函数解析。`timestamp` 由调用方注入（评审 D-1），保持无外部状态的纯函数语义。
-    public static func parse(_ props: [String: Any], timestamp: Date) throws -> BatterySnapshot {
+    ///
+    /// `temperatureFallbackCentiC`（v0.19.8 macOS 27 兼容，方案 §3.1.1）：ioreg 顶层
+    /// `Temperature` 键缺失时的回退值（调用方经 SMC TB1T/TB2T 供给）；缺省 nil →
+    /// 既有行为零变化（键缺失 → `.missingRequiredField`，既有调用/场景零改动）。
+    public static func parse(
+        _ props: [String: Any],
+        timestamp: Date,
+        temperatureFallbackCentiC: Int? = nil
+    ) throws -> BatterySnapshot {
         let batteryData = props["BatteryData"] as? [String: Any]
         // ChargerData 子字典（v1.7 原生限充运行态签名 NotChargingReason 的来源；
         // 提取模式照 BatteryData 先例——缺席/类型不符 → 整字段 nil 容错）。
@@ -27,7 +35,7 @@ public enum BatterySnapshotParser {
             externalConnected: try requiredBool(props, "ExternalConnected"),
             voltageMV: try requiredInt(props, "Voltage"),
             amperageMA: try requiredInt(props, "Amperage"),
-            temperatureCentiC: try requiredInt(props, "Temperature"),
+            temperatureCentiC: try temperature(props, fallback: temperatureFallbackCentiC),
             cycleCount: try requiredInt(props, "CycleCount"),
             designCapacityMAh: try requiredInt(props, "DesignCapacity"),
             maxCapacityPercent: intValue(props["MaxCapacity"]),
@@ -55,6 +63,23 @@ public enum BatterySnapshotParser {
     private static func requiredInt(_ props: [String: Any], _ key: String) throws -> Int {
         guard let raw = props[key] else { throw BatteryMonitorError.missingRequiredField(key) }
         guard let value = intValue(raw) else { throw BatteryMonitorError.invalidFieldType(key) }
+        return value
+    }
+
+    /// 温度取值三分支（v0.19.8 macOS 27 兼容，方案 §3.1.1——Temperature 是唯一
+    /// 带回退面的必需字段，故不走 requiredInt 通径）：
+    /// - 键在位（经既有 `intValue` 助手）→ 用之（macOS 26 主路，G2）；
+    /// - 键缺失且 fallback 非 nil → 用 fallback（macOS 27 回退，G1——顶层
+    ///   `Temperature` 键消失，SMC TB1T/TB2T 承接）；
+    /// - 键缺失且 fallback nil → `.missingRequiredField`（G3 错误原文不变）。
+    /// ⚠️ 键在位但类型不符保持既有 `.invalidFieldType` 抛出——回退仅覆盖
+    /// 「键缺失」，不吞类型错误（R2 P3）。
+    private static func temperature(_ props: [String: Any], fallback: Int?) throws -> Int {
+        guard let raw = props["Temperature"] else {
+            guard let fallback else { throw BatteryMonitorError.missingRequiredField("Temperature") }
+            return fallback
+        }
+        guard let value = intValue(raw) else { throw BatteryMonitorError.invalidFieldType("Temperature") }
         return value
     }
 
