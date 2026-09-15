@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.10-alpha] - 2026-09-15
+
+### Fixed
+
+- **macOS 27 能力诚实化**：Apple 在 macOS 27 移除了 SMC 充电控制键族，守护进程降级只读时曾把能力清单停在「未上报」态，面板永久显示「正在探测放电支持」、通用页自动放电误显「需升级守护进程」。现平台无后端属稳定终态：能力如实上报为空清单，相关界面如实显示「不支持」；同时不再丢弃 SMC 连接——风扇监控、MagSafe LED 检测、温度源探测恢复可用前提，且不随 tick 重复重探（进程内终态短路，client 异常丢失时自愈重建）。
+- **只读模式监测恢复**：后端缺席曾让 tick 第一步即早退，电量采样与状态上报整条停摆——菜单栏电量数字因此永不显示。现后端缺席时保留采样观测段（电量变化事件、状态供给照常），仅停用执法段；菜单栏数字恢复。
+- **风扇温度源选择解锁**：CPU 表面温度源不可用的机型上（macOS 27 对 Ts 键族的访问受限）温度源选择器曾被整体禁用，无法切回电池温度源。现仅「未探测」态保持禁用；「本机不支持」态解锁选择器——可切换电池源（经 TB1T/TB2T 链）恢复风扇策略，误选不可用源时守护进程拒绝并透出原因。
+- **菜单栏图标声明形态**：改用 `MenuBarExtra(isInserted:)` 形态（macOS 27 SDK 下自定义 label 的既定形态，spike 实证五形态即时渲染），改善图标默认不渲染、首次点击才出现的求值延迟症状；真机表现为最终裁决。
+
+### Changed
+
+- SMC 键位探针（Tools/m0-smc-probe.swift）：后端判定行按实际命中的控制键输出，修正健康 Tahoe 机型（CHTE+CHIE 双命中）的误报条件。
+
 ## [0.19.9-alpha] - 2026-09-15
 
 ### Fixed
