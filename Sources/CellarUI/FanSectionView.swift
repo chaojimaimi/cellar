@@ -320,7 +320,9 @@ public struct FanSectionView: View {
     }
 
     /// 温度源区（v1.11 T3 D-3f）：源 Picker + 门控注记 + 当前源温度行。
-    /// 门控三态：cpuSkinSupported == true → 可切；false → disabled +「本机不支持」
+    /// 门控三态（0.19.10 WP-C 收敛）：cpuSkinSupported == true → 可切；false →
+    /// **Picker 可用**（menu picker 选项级 disabled 不可靠——社区共识，R1 P1；改
+    /// 「接受误选 + daemon setFan 前置拒绝上屏」fail-visible 形态）+「本机不支持」
     /// 注记；nil（旧 daemon 温度源键缺席）→ disabled + 升级提示（照 staleDaemon
     /// disabled+hint 形态——旧 daemon 静默忽略 fanSource 回成功包，不禁用即静默错配）。
     private var sourceSection: some View {
@@ -330,7 +332,10 @@ public struct FanSectionView: View {
                 Text(CellarL10n.s("fan.source.cpuSkin")).tag(FanTemperatureSource.cpuSkin)
             }
             .pickerStyle(.menu)
-            .disabled(pendingField == .source || sourceGateNote != nil)
+            // 仅升级提示（nil）态整体禁用；false（本机不支持）态解锁——用户可切
+            // 电池源自救，误选 cpuSkin 由 daemon setFan 前置拒绝（FanSetError.
+            // cpuSkinUnsupported）错误原文经 XPC errorReply 上屏：不静默、不回弹造假。
+            .disabled(pendingField == .source || sourceGateIsUpgradeHint)
             .onChange(of: temperatureSource) { newSource in
                 // 源切换重播种（新逻辑）：滑杆值域/阈值随源切换；回写经 FanWire
                 // source 键（阈值键由 applyThreshold 随源分流）。

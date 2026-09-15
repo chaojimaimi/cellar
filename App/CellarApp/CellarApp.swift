@@ -61,7 +61,12 @@ struct CellarApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
+        // 0.19.10 WP-D：isInserted 形态对齐——27 SDK 下 label 尾闭包形态要求
+        // isInserted 参数（spike 编译期实证）；五变体 spike（27 SDK 独立进程）以
+        // 本形态实证五形态即时渲染。生产原形态在 27 运行时表现为 label 求值延迟
+        //（默认空白、首次点击后才渲染；AX 实测项 33×24pt）。isInserted=true 与
+        // 现状「常驻菜单栏」语义等价。
+        MenuBarExtra(isInserted: .constant(true)) {
             // WP3 §3.3：面板内容经 ThemeProvider 包裹——View 上下文取 colorScheme
             // 解析注入 cellarTheme（spike S2/S3 验证点 = 使用点）。
             ThemeProvider(style: styleController.style) {

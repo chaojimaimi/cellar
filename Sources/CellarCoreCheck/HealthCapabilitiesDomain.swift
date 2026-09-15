@@ -57,6 +57,36 @@ func runHealthCapabilitiesDomainScenarios() throws {
               "能力-3", "Legacy 后端（CH0B 代）→ false（CHIE 为 Tahoe 代键）")
     }
 
+    // 能力-4：RuntimeProbe 契约（0.19.10 WP-A 场景①）：CHTE/CH0B 双 132（macOS 27
+    // 键族删除的 root 实测形态）→ noBackendAvailable——探测终态非传输故障，调用方
+    // （daemon establishBackendLocked）据此走平台终态处置而非重试。
+    do {
+        let bothMissing = CheckTransport()
+        bothMissing.enqueue(reply(result: 132), for: Spec.keyInfo)   // CHTE keyNotFound
+        bothMissing.enqueue(reply(result: 132), for: Spec.keyInfo)   // CH0B keyNotFound
+        expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: bothMissing)),
+                     as: .noBackendAvailable, "能力-4", "CHTE/CH0B 双 132 → noBackendAvailable（平台终态）")
+    }
+
+    // 能力-5：传输错误原样上抛不降级（RuntimeProbe.swift P1-7 纪律的探测面钉死：
+    // bf 键族 255 传输错误形态——kr≠0 绝不折叠为 noBackendAvailable 只读降级）。
+    do {
+        let transportFailure = CheckTransport()
+        transportFailure.enqueue(reply(), kr: 1, for: Spec.keyInfo)   // CHTE keyInfo IOKit 调用失败
+        expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: transportFailure)),
+                     as: .transportFailure(kr: 1), "能力-5", "传输错误（kr≠0）原样上抛，绝不降级为 noBackendAvailable")
+    }
+
+    // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②）——常量元组钉语义：
+    // client 保留（风扇/LED/Ts 观察面不陪葬）/ capabilities 上报 []（非 nil——App
+    // 三态消费面自动降「不支持」）/ 进程内不重试（sticky 终态，重启即唯一清除路径）。
+    // daemon establishBackendLocked catch 分支只消费本函数、不内联字面量。
+    do {
+        let disposition = RuntimeProbe.noBackendTerminalDisposition()
+        check(disposition == (retainClient: true, reportedCapabilities: [], retryWithinProcess: false),
+              "能力-6", "终态处置常量：(retainClient: true, reportedCapabilities: [], retryWithinProcess: false)")
+    }
+
     // ---- ⑦ capabilities decode 双向 ----
 
     // 能力-1：合成 Codable round-trip（["discharge"] / [] 两形态）。

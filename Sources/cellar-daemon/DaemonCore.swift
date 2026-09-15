@@ -57,9 +57,15 @@ final class DaemonCore: @unchecked Sendable {
     var magSafeLedState = MagSafeLedRuntimeState()
     /// 探测得到的后端；nil = 尚未探测成功（心跳驱动重试/自愈）。
     var backend: (any ChargingBackend)?
+    /// 后端平台终态（0.19.10 WP-A）：noBackendAvailable 是稳定结论（27 键族删除），
+    /// 进程内 sticky——不再每 tick 重探（消除 makeDefault+日志+clientGeneration 抖动
+    /// 循环）。进程重启是唯一清除路径（键族恢复伴随系统更新/重装，必然重启 daemon）。
+    private var backendUnavailableTerminal = false
     /// daemon 能力清单（WP2' §2.1）：启动探测通过（tahoe ∧ CHIE 在位，评审 P1-1
     /// fail-closed）→ ["discharge"]；否则 []。置值挂 establishBackendLocked 成功
     /// 路径（含自愈重建——评审轮 2 注记 1）；自愈重建后能力随探测结果刷新。
+    /// 0.19.10 WP-A：noBackendAvailable 平台终态同样置值（[] 非 nil）——App 侧
+    /// 三态消费面（nil=未上报瞬态 / []=无能力 / 含值=可用）自动降「不支持」。
     private(set) var capabilities: [String]?
     /// 最近一次成功采样的状态快照（tick 失败保留上次）。
     var lastStatus: DaemonStatus?
@@ -618,10 +624,16 @@ final class DaemonCore: @unchecked Sendable {
     /// fullOnce 启动后调用；WP2' 放电维护分支在 DaemonCore+Discharge.swift）：
     /// backend 保证 → 采样 → 控制键读取 → 电量变化事件 → active 模式 enforce → lastStatus。
     func performTickLocked(events: inout [LogEvent]) {
-        // 1) 控制后端（探测失败 → 计数自愈；无后端不能构建上下文，保留上次状态）。
-        guard let backend = ensureBackendLocked(events: &events) else {
+        // 1) 控制后端（探测失败 → 计数自愈；实施注记：同一 ensure 只调一次，
+        // guard 解包后执法段继续用同一 backend——不重复调用）。
+        let backend = ensureBackendLocked(events: &events)
+        guard let backend else {
             // WP2' 评审 P1-5：放电动作活跃期的早退 = 监护缺失（计数 ≥3 tick 终止）。
             noteDischargeMonitoringLossLocked(events: &events)
+            // 0.19.10 WP-B：后端缺席（平台终态/瞬态）不再中断监测——采样 + 电量
+            // 事件 + lastStatus/wire 供给照走；执法段（步骤 3 起）跳过（只读模式
+            // = 监测照走、执法停用，RuntimeProbe.swift 契约）。
+            sampleAndPublishLocked(events: &events)
             return
         }
 
@@ -879,10 +891,66 @@ final class DaemonCore: @unchecked Sendable {
         )
     }
 
+    /// 观测段（0.19.10 WP-B）：后端缺席分支的采样 + 电量变化事件 + lastStatus 供给
+    /// ——「只读模式 = 监测照走、执法停用」（RuntimeProbe.swift 契约注释）的 tick
+    /// 落点，菜单栏数字/面板 lastPercent 数据链的 daemon 源头（全库唯一写入点之外
+    /// 的补充路径，执法段步骤 2/4 保留原实现不动）。
+    /// ⚠️ 刻意**不调 buildStatusLocked**（R2 P2）：它从 lastStatus ?? 兜底起步只读
+    /// 旧值、不注入新 percent（兜底构造无 lastPercent）——照下方执法段尾部同款形态
+    /// 直接构造 DaemonStatus 才能携带新采样。
+    private func sampleAndPublishLocked(events: inout [LogEvent]) {
+        // 采样（失败日志与「保留上次状态」语义照执法段既有路径；监护缺失计数由
+        // 调用方在分支入口统一承担——本函数不重复计数，防一 tick 双计缩短终止窗）。
+        let snapshot: BatterySnapshot
+        do {
+            snapshot = try monitor.snapshot()
+        } catch {
+            events.append(LogEvent(
+                category: .control, level: .error,
+                message: "电池采样失败：\(error)（保留上次状态）"
+            ))
+            return
+        }
+        // 电量整数百分点变化事件（评审 A-1：batteryLevelChanged；执法段同款逻辑）。
+        if lastPercent != snapshot.percent {
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "电量变化：\(lastPercent.map(String.init) ?? "未知") → \(snapshot.percent)%"
+            ))
+            lastPercent = snapshot.percent
+        }
+        // lastStatus 供给（lastPercent 注入**新采样**）。lastChargingEnabled 透传
+        // ——无后端即无执法态读数，诚实（App 消费面 `== true` 判定不受 nil 影响）；
+        // lastAction 透传——观测 tick 无控制动作，最近动作描述保持既有值（wire
+        // 组装时 buildStatusLocked 仍按终态锁存生效值覆写，锁存语义不丢）。
+        lastStatus = DaemonStatus(
+            version: DaemonXPC.daemonVersion,
+            mode: policy.mode,
+            upperLimit: policy.upperLimit,
+            hysteresis: policy.hysteresis,
+            lastAction: lastStatus?.lastAction,
+            lastPercent: snapshot.percent,
+            lastExternalConnected: snapshot.externalConnected,
+            lastChargingEnabled: lastStatus?.lastChargingEnabled,
+            action: actionTrack.action,
+            timestamp: snapshot.timestamp
+        )
+    }
+
     /// 锁内建立/复用控制后端。返回 nil = 探测失败（已计数，≥3 触发重建）。
     private func ensureBackendLocked(events: inout [LogEvent]) -> (any ChargingBackend)? {
         if let backend { return backend }
+        if backendUnavailableTerminal {
+            // R2 P1：noteControlFailureLocked 重建分支与风扇 tick 传输失败可把
+            // smcClient 置 nil——sticky 若无条件短路，client 丢失后将永不重建
+            //（观察面永久失明，根因一变体复发）。client 在位才短路；client 丢失
+            // → 清 sticky 重新走 establish（重获新 client + capabilities 刷新）。
+            if smcClient != nil { return nil }
+            backendUnavailableTerminal = false
+        }
         // 自愈：连续失败 ≥3 次 → 先重建 SMCClient（IOKit 连接可能失效）再探测。
+        // ⚠️ sticky 在位期间（client 恒持有）上方短路使计数冻结在 1，本分支不可达；
+        // 「不可达」论证随 R2 P1 收窄为「client 在位期间不可达」。
         if consecutiveControlFailures >= 3 {
             events.append(LogEvent(
                 category: .control, level: .warn,
@@ -908,20 +976,47 @@ final class DaemonCore: @unchecked Sendable {
     /// 锁内探测：新建 SMCClient + RuntimeProbe（成功即持有；失败上抛并记探测日志）。
     /// WP2'：capabilities 置值挂本成功路径（含自愈重建——ensureBackendLocked 的
     /// 重建亦经本方法，能力随探测结果刷新，评审轮 2 注记 1）。
+    /// 0.19.10 WP-A：noBackendAvailable 是平台终态（27 删除 CHTE/CH0B 键族，进程内
+    /// 重试无意义）——只捕获本错误做终态处置（决策函数 RuntimeProbe.
+    /// noBackendTerminalDisposition 钉语义），其余错误（传输类，可能坏连接）原样
+    /// 上抛、不保留 client——RuntimeProbe.swift P1-7 纪律，行为与既往一致。
     private func establishBackendLocked(events: inout [LogEvent]) throws -> any ChargingBackend {
-        let client = try SMCClient.makeDefault()
-        let detected = try RuntimeProbe.probe(client: client)
-        smcClient = client
-        fanState.clientGeneration += 1   // Phase 5 v1.1：SMCClient 重建代际——风扇 facts 缓存失效信号
-        backend = detected
-        capabilities = RuntimeProbe.supportsDischarge(backend: detected, client: client)
-            ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge, DaemonXPC.capabilityCalibration]
-            : []
-        events.append(LogEvent(
-            category: .control, level: .info,
-            message: "后端探测成功：\(detected.name)（\(detected.keyNames.joined(separator: ", "))）能力=\(capabilities?.joined(separator: ",") ?? "[]")"
-        ))
-        return detected
+        let client = try SMCClient.makeDefault()   // 传输失败 → 上抛重试（原语义不变）
+        do {
+            let detected = try RuntimeProbe.probe(client: client)
+            smcClient = client
+            fanState.clientGeneration += 1   // Phase 5 v1.1：SMCClient 重建代际——风扇 facts 缓存失效信号
+            backend = detected
+            capabilities = RuntimeProbe.supportsDischarge(backend: detected, client: client)
+                ? [DaemonXPC.capabilityDischarge, DaemonXPC.capabilityAutoDischarge, DaemonXPC.capabilityCalibration]
+                : []
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "后端探测成功：\(detected.name)（\(detected.keyNames.joined(separator: ", "))）能力=\(capabilities?.joined(separator: ",") ?? "[]")"
+            ))
+            return detected
+        } catch BackendError.noBackendAvailable {
+            // 平台终态处置（决策函数钉语义，daemon 只消费不内联；0.20 CHIE-only
+            // 批在此长出真分支）：① client 保留——风扇/LED/Ts 探测等观察面与充电
+            // 后端无关，不应陪葬；② capabilities 上报 []（非 nil）——App 侧三态
+            // 消费面自动降「不支持」；③ backend 保持 nil + 终态 sticky（进程内
+            // 不再重探，ensureBackendLocked 头部短路）——限充只读降级语义不变。
+            let disposition = RuntimeProbe.noBackendTerminalDisposition()
+            backendUnavailableTerminal = !disposition.retryWithinProcess
+            // client 缺席即换代（新 client → 风扇 facts 缓存失效信号）；sticky
+            // 在位期间本 catch 不可达（短路先于 establish），无重复换代抖动。
+            if disposition.retainClient, smcClient == nil {
+                smcClient = client
+                fanState.clientGeneration += 1
+            }
+            backend = nil
+            capabilities = disposition.reportedCapabilities
+            events.append(LogEvent(
+                category: .control, level: .warn,
+                message: "后端不可用：SMC 充电控制键族不存在（平台限制，进程内不再重试）——降级只读；观察面（风扇/LED/温度探测）保留，能力上报 []"
+            ))
+            throw BackendError.noBackendAvailable   // 上层 ensure 计数一次后由 sticky 短路
+        }
     }
 
     /// 控制路径失败计数（评审 C-3 统一口径：探测失败/控制键读取失败/enforce 传输类失败；

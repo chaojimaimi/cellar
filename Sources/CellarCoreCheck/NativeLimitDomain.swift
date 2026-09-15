@@ -19,6 +19,7 @@
 // ⑧ 位常量钉死（2^24 / 2^59 防回归；D5 hint-only）
 // ⑨ BatterySnapshot.notChargingReason：缺席 nil / 有值提取 / 类型不符容错
 // ⑩ powerd 路径常量钉死（D4：daemon 只读 /Library 域）
+// ⑪ macOS 27 真实样本 fixture（0.19.10 WP-E 固化，原生-29/30）
 
 import CellarCore
 import Foundation
@@ -409,4 +410,47 @@ func runNativeLimitDomainScenarios() throws {
     // 与 doctor 检查共同依赖此路径，漂移即越域）。
     check(NativeChargeLimit.powerdPoliciesURL.path == "/Library/Preferences/com.apple.powerd.charging.plist",
           "原生-22", "powerdPoliciesURL 钉死 /Library 域（daemon 只读惯例，D4）")
+
+    // ---- ⑪ macOS 27 真实样本 fixture（0.19.10 WP-E 固化）----
+    //
+    // 样本来源：macOS 27.0（Golden Gate 26A428）真机 /Library/Preferences/
+    // com.apple.powerd.charging.plist 的 policies Data 原文（用户 Shortcuts 设
+    // 80% 后的注册态，非 root 可读 644 实测捕获）。**已脱敏**（方案 §7.5）：token
+    // NSUUID 字节 → 固定常量 00..0F、owner 常量归零——真实值不入公开仓库；其余
+    // 归档字节形态原样保留。真实增量 = 字节形态（CF$UID 包装值、isEndOfCharge/
+    // noChargeToFull/drain/owner 键混布、NSUUID token 节点与 ChargeCtrlPolicy/
+    // NSMutableArray 类元数据同池）——「多余键忽略」路径已兼容语义，本 fixture
+    // 钉的是真实字节形态回归（程序化 makePackage 造不出 UID 包装 + NSUUID 节点
+    // 的同构形态）。嵌入形态：内层归档 base64 直嵌（Data 注入缝照既有全场景）。
+    let macOS27PoliciesArchiveB64 = [
+        "YnBsaXN0MDDUAQIDBAUGMDNZJGFyY2hpdmVyWCRvYmplY3RzVCR0b3BYJHZlcnNpb25fEA9OU0tleWVkQXJjaGl2ZXKoBwgOHh8jKSxVJG51bGzSCQoLDFYkY2xhc3NaTlMub2JqZWN0c4AHoQ2AAtkJDxAREhMUFRYXGBgZGhscGR1VZHJh",
+        "aW5daXNFbmRPZkNoYXJnZV5ub0NoYXJnZVRvRnVsbFVvd25lclZyZWFzb25Yc29jbGltaXRadGVybWluYXRlZFV0b2tlboAGCQgQAIADEFCABF8QEW1hbnVhbENoYXJnZUxpbWl00gkgISJcTlMudXVpZGJ5dGVzgAVPEBAAAQIDBAUGBwgJ",
+        "CgsMDQ4P0iQlJidYJGNsYXNzZXNaJGNsYXNzbmFtZaInKFZOU1VVSURYTlNPYmplY3TSJCUqK6IrKF8QEENoYXJnZUN0cmxQb2xpY3nSJCUtLqMuLyheTlNNdXRhYmxlQXJyYXlXTlNBcnJhedExMlRyb290gAESAAGGoAAIABEAGwAkACkA",
+        "MgBEAE0AUwBYAF8AagBsAG4AcACDAIkAlwCmAKwAswC8AMcAzQDPANAA0QDTANUA1wDZAO0A8gD/AQEBFAEZASIBLQEwATcBQAFFAUgBWwFgAWQBcwF7AX4BgwGFAAAAAAAAAgEAAAAAAAAANAAAAAAAAAAAAAAAAAAAAYo=",
+    ].joined()
+    guard let macOS27Inner = Data(base64Encoded: macOS27PoliciesArchiveB64) else {
+        check(false, "原生-29", "27 fixture base64 解码失败——嵌入串损坏（测试栈缺陷，非被测行为）")
+        return
+    }
+
+    // 原生-29：27 真实归档字节解析（脱敏 fixture）——单策略 soclimit=80（用户
+    // Shortcuts 设 80% 的实测注册态）/reason=manualChargeLimit（UID 包装解引用）/
+    // 未终止；NSUUID token 节点、类元数据节点（无 soclimit 键）静默跳过；
+    // isEndOfCharge/noChargeToFull/drain/owner 多余键忽略。
+    do {
+        let policies = NativeChargeLimit.parsePolicyArchive(makeOuterPlist(macOS27Inner))
+        check(policies == [NativeChargePolicy(socLimit: 80, reason: "manualChargeLimit", terminated: false)],
+              "原生-29", "macOS 27 真实样本解析：单策略 soclimit=80/manualChargeLimit/未终止（CF$UID 解引用 + 新旧键混布 + 非策略节点跳过）")
+    }
+
+    // 原生-30：27 样本消费链（load Data 注入 + 展示过滤）——detectorError=false ∧
+    // isEmpty=false；blocking=[80] ∧ manualSocLimit=80——doctor 检查 15「原生限充
+    // 80% 注册，等效 80%」实测判定的字节级回归锚点。
+    do {
+        let reading = NativeChargeLimit.load(rooted: makeOuterPlist(macOS27Inner))
+        check(!reading.detectorError && !reading.isEmpty && reading.policies.count == 1,
+              "原生-30", "load 27 fixture → 解析成功非空（detectorError=false ∧ isEmpty=false ∧ policies=1）")
+        check(reading.blockingPolicies.map(\.socLimit) == [80] && reading.manualSocLimit == 80,
+              "原生-30", "27 样本消费链：blocking=[80] ∧ manualSocLimit=80（展示过滤链钉死）")
+    }
 }

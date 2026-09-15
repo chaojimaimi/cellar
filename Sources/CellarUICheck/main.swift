@@ -67,7 +67,10 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 渲染形态不变 → golden 零 diff））
 // v0.19.7 自 330 扩 336——通用页风扇节细粒度 pending 态 6 新增
 // （FanSection_pending_*：仅阈值滑杆禁用的单控件形态钉死，既有 FanSection
-// 构造 busy 删参 + pendingField 默认 nil → 渲染零 diff））
+// 构造 busy 删参 + pendingField 默认 nil → 渲染零 diff）；
+// v0.19.10 自 336 扩 342——风扇节温度源不支持态 6 新增（FanSection_sourceUnsupported_*：
+// cpuSkinSupported=false 态「源 Picker 可用 + fan.sourceUnsupported 注记」新形态
+// 钉死，既有 FanSection 构造零改动））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -189,7 +192,8 @@ private func wrap(
 // 状态行 assist 态 6 新增（StatusLine_assist_*，真机现场复刻）；
 // v0.19.5 自 318 扩 330——状态行/功率流三角图未确认窗口态各 6 新增
 // （StatusLine_unconfirmed_* / PowerFlowDiagram_unconfirmed_*）；
-// v0.19.7 自 330 扩 336——风扇节细粒度 pending 态 6 新增（FanSection_pending_*））
+// v0.19.7 自 330 扩 336——风扇节细粒度 pending 态 6 新增（FanSection_pending_*）；
+// v0.19.10 自 336 扩 342——风扇节温度源不支持态 6 新增（FanSection_sourceUnsupported_*））
 
 @MainActor
 private func buildCases() -> [SnapshotCase] {
@@ -563,6 +567,22 @@ private func buildCases() -> [SnapshotCase] {
                         cpuSkinHysteresisCentiC: 400
                     ),
                     pendingField: .threshold, onApply: { _, _ in }, currentTempC: 31.0)),
+                // v0.19.10 WP-C：cpuSkinSupported=false 态 1 case ×3 风格 ×2 外观 =
+                // 6 张（336 → 342，全部全新文件——新增非扰动）：钉「源 Picker 可用
+                // （false 态解锁——menu picker 选项级 disabled 不可靠，R1 P1；误选
+                // cpuSkin 由 daemon setFan 前置拒绝经 XPC errorReply 上屏兜底，
+                // fail-visible 零新机制）+ fan.sourceUnsupported 注记（secondaryText
+                // 色，非阻断）」新形态。照 on 态夹具仅 cpuSkinSupported 改 false。
+                ("sourceUnsupported", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .twoStage, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: false, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
+                    ),
+                    onApply: { _, _ in }, currentTempC: 31.0)),
             ]
             for (stateName, section) in fanSections {
                 cases.append(SnapshotCase(

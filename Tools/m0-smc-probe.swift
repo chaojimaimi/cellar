@@ -251,6 +251,9 @@ for probe in probeKeys {
 }
 print("----------------------------------------------------------------")
 print("后端判定：Tahoe 控制键 = [\(tahoeControl.joined(separator: ", "))]；旧代控制键 = [\(legacyControl.joined(separator: ", "))]")
-print(tahoeControl.count == 1
-      ? "结论：✅ Tahoe 控制通路可用（CHTE）→ 读取/写入验证继续"
+// 0.19.10 P3 修正：按实际命中键名输出 + 判定条件改「CHTE 在列」——健康 Tahoe 机
+// CHTE+CHIE 双命中（count=2），原 `count == 1` 会误报 ⚠️；末行文案原硬编码「CHTE」
+// 与实际命中键（CHIE 亦在列）不符。
+print(tahoeControl.contains("CHTE")
+      ? "结论：✅ Tahoe 控制通路可用（\(tahoeControl.joined(separator: "+"))）→ 读取/写入验证继续"
       : "结论：⚠️ 见上方逐键 result 码（132=对当前身份隐藏或不存在；root 下仍 132 则键名需继续考证）")
