@@ -61,12 +61,15 @@ struct CellarApp: App {
     }
 
     var body: some Scene {
-        // 0.19.10 WP-D：isInserted 形态对齐——27 SDK 下 label 尾闭包形态要求
-        // isInserted 参数（spike 编译期实证）；五变体 spike（27 SDK 独立进程）以
-        // 本形态实证五形态即时渲染。生产原形态在 27 运行时表现为 label 求值延迟
-        //（默认空白、首次点击后才渲染；AX 实测项 33×24pt）。isInserted=true 与
-        // 现状「常驻菜单栏」语义等价。
-        MenuBarExtra(isInserted: .constant(true)) {
+        // ⚠️ 0.19.11 回退 0.19.10 WP-D 的 isInserted 形态（真机走查裁决）：
+        // `MenuBarExtra(isInserted: .constant(true))` + `.window` 样式在 macOS 27
+        // 运行时上「点击菜单栏项 → 系统开合面板写 isInserted → 常量 binding 不
+        // 吸收写入 → 系统侧认定插入被撤销 → 唯一场景移除 → App 干净退出」（无崩
+        // 溃报告，用户点击一次即退出实证）。spike 独立进程未点开面板故未暴露。
+        // 图标默认不渲染（首次点击才出现）的求值延迟症状随之回归——非致命，登记
+        // 待 CI macos-27 构建环境迁移后随 27 SDK 产物重验；勿在无状态 binding 下
+        // 重试 isInserted。
+        MenuBarExtra {
             // WP3 §3.3：面板内容经 ThemeProvider 包裹——View 上下文取 colorScheme
             // 解析注入 cellarTheme（spike S2/S3 验证点 = 使用点）。
             ThemeProvider(style: styleController.style) {

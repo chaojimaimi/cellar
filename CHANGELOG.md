@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.11-alpha] - 2026-09-16
+
+### Fixed
+
+- **热修：点击菜单栏图标导致 App 退出**（0.19.10 回归）：0.19.10 将菜单栏场景改为 `MenuBarExtra(isInserted:)` 形态（为修图标默认不渲染），真机走查发现 macOS 27 运行时上点击图标拉起面板时系统写入 `isInserted`，常量 binding 不吸收写入，系统侧认定插入被撤销，唯一场景移除后 App 干净退出（无崩溃报告）。本版回退该形态；「图标默认不渲染、首次点击后出现」的求值延迟症状随之回归（非致命），待 CI macos-27 构建环境就绪后以 27 SDK 产物重验。0.19.10 的其余修复（能力诚实化、只读监测、菜单栏数字、风扇源解锁）不受影响。
+
 ## [0.19.10-alpha] - 2026-09-15
 
 ### Fixed
