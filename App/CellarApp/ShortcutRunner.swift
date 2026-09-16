@@ -5,8 +5,9 @@ import Foundation
 // 快捷指令执行环境，方案 §0 S1/S2：用户会话 `shortcuts run -i` 可用、root 恒失败）
 
 /// Shortcuts 执行抽象（注入缝——StatusController 消费面与 Process 实现解耦；
-/// 照 ShortcutsRunning 协议先例命名，方案 §3）。
-protocol ShortcutsRunning {
+/// 照 ShortcutsRunning 协议先例命名，方案 §3）。Sendable：实现为无状态结构体，
+/// detached 闭包捕获存在类型需此约束（CI macos-26 Swift 6 严格并发实证）。
+protocol ShortcutsRunning: Sendable {
     /// 执行快捷指令：`/usr/bin/shortcuts run -i <百分数临时文件> <name>`。
     /// 抛错 = 执行失败（超时 / 非零退出——stderr 并入错误详情）。
     func run(name: String, percent: Int) async throws
