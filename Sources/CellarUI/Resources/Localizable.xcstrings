@@ -7463,6 +7463,244 @@
           }
         }
       }
+    },
+    "settings.section.orchestration": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charging Orchestration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电编排"
+          }
+        }
+      }
+    },
+    "settings.orchestration.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enforce the charging limit via the Shortcuts app (macOS 27 native channel; Cellar must stay running — quitting Cellar stops orchestration)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过「快捷指令」App 设置系统充电上限（macOS 27 原生执法通道；需 Cellar 保持运行——退出 Cellar 即停止编排）"
+          }
+        }
+      }
+    },
+    "settings.orchestration.toggle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charging orchestration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电编排"
+          }
+        }
+      }
+    },
+    "settings.orchestration.shortcutName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shortcut name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快捷指令名称"
+          }
+        }
+      }
+    },
+    "settings.orchestration.statusReady": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "就绪"
+          }
+        }
+      }
+    },
+    "settings.orchestration.lastFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last run failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次失败：%@"
+          }
+        }
+      }
+    },
+    "settings.orchestration.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orchestration failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编排执行失败：%@"
+          }
+        }
+      }
+    },
+    "settings.orchestration.setup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setup (once): in the Shortcuts app, create a new shortcut → add the action “Set Charge Limit” → for its parameter choose “Receive input from Shortcuts” → name it exactly as above."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置（一次性）：在「快捷指令」App 新建快捷指令 → 添加动作「设定电池充电上限」→ 参数选「输入快捷指令的信息」→ 以上方名称命名。"
+          }
+        }
+      }
+    },
+    "status.summary.orchestration": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set charging orchestration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置充电编排"
+          }
+        }
+      }
+    },
+    "status.orchestrationOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charging orchestration enabled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电编排已开启"
+          }
+        }
+      }
+    },
+    "status.orchestrationOff": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charging orchestration disabled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充电编排已关闭"
+          }
+        }
+      }
+    },
+    "panel.orchestration.minNative": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native minimum is 80%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生最低 80%"
+          }
+        }
+      }
+    },
+    "schedule.nativeFloor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native minimum 80%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原生最低 80%"
+          }
+        }
+      }
+    },
+    "dashboard.nativeLimit.residualNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registered residual %lld%% (not the active limit)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "注册残留 %lld%%（非现行上限）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -2,7 +2,8 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十六项只读诊断（不写任何 SMC 键）。
+/// cellar doctor —— 十七项只读诊断（不写任何 SMC 键；第 17 项编排通道在用户
+/// 会话探测，v0.19.20）。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -12,7 +13,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十六项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：十七项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。
@@ -192,6 +193,11 @@ struct DoctorCommand: ParsableCommand {
             appVersion: Self.readAppVersion()
         )
 
+        // 检查 17：编排通道（v0.19.20 WP-3）。**必须在用户上下文执行**——doctor
+        // CLI 由用户运行即用户会话 ✓（S2 实证：sudo shortcuts run 恒失败，本探测
+        // 禁止移入 daemon 侧组装）；`shortcuts list` 只读列举，零写入面。
+        let orchestrationProbe = probeOrchestration()
+
         return DoctorInputs(
             isRoot: RuntimeProbe.isRunningAsRoot,
             smcConnected: smcConnected,
@@ -228,9 +234,38 @@ struct DoctorCommand: ParsableCommand {
             // daemon 探测侧权威；daemon 未运行 → nil 走「未上报」INFO 行）。
             magSafeLed: daemonStatus?.magSafeLed,
             magSafeLedProbeAttempted: true,
+            // v0.19.20 检查 17：编排通道探测（用户会话组装，见上方注记）。
+            orchestrationProbe: orchestrationProbe,
+            orchestrationProbeAttempted: true,
             // v0.19.8 G5：macOS 27 感知附注开关（检查 3/4；DoctorInputs 纯函数消费，
             // CLI 进程收集注入——B4：doctor 报告在 CLI 进程生成，无进程视角分叉）。
+            // v0.19.20 WP-6：检查 15 的 27「注册残留」语义同走本开关。
             osMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        )
+    }
+
+    /// 检查 17 探测（用户会话 `shortcuts list`；只读）。列表按行切分去空白行；
+    /// 失败详情取合并输出前 120 字符（诊断可见性，不吐全量）。
+    private func probeOrchestration() -> OrchestrationDoctorProbe {
+        let (output, exitCode) = runProcessCapture("/usr/bin/shortcuts", ["list"])
+        guard exitCode == 0 else {
+            let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let truncated = detail.count > 120 ? String(detail.prefix(120)) + "…" : detail
+            return OrchestrationDoctorProbe(
+                listSucceeded: false, shortcutCount: nil,
+                defaultShortcutPresent: nil,
+                failureDetail: truncated.isEmpty ? "exit \(exitCode)" : truncated
+            )
+        }
+        let names = output
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return OrchestrationDoctorProbe(
+            listSucceeded: true,
+            shortcutCount: names.count,
+            defaultShortcutPresent: names.contains(NativeOrchestration.defaultShortcutName),
+            failureDetail: nil
         )
     }
 

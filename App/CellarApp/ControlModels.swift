@@ -45,6 +45,9 @@ enum ControlAttempt: Equatable {
     /// Phase 5 v1.6 充电日程（重试 = 重发上次整包配置 JSON——全键覆盖语义下幂等
     /// 无害，照 setThermal 形态；payload = 宿主页 encode 的紧凑 JSON）。
     case setChargeSchedule(String)
+    /// v0.19.20 充电编排开关（重试 = 重发同值 setOrchestration——幂等，照开关类
+    /// 形态）。
+    case setOrchestration(Bool)
     // .setMagSafeLed case 已退役（v1.10 M2：LED 切换外迁独立轻路径，不写
     // lastAttempt——失败重试 = 用户重选 Picker，构造点随 runControl 迁出消失）。
 
@@ -77,6 +80,8 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.setThermal")
         case .setChargeSchedule:
             return CellarL10n.s("status.summary.setChargeSchedule")
+        case .setOrchestration:
+            return CellarL10n.s("status.summary.orchestration")
         }
     }
 }

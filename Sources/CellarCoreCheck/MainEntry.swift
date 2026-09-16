@@ -373,6 +373,12 @@ struct Main {
         // 缺席保持/校准与 fullOnce 守卫拒绝文案双口径/doctor 第 15 项分支——纯函数
         // 面，不触碰真实 plist）。
         try runNativeLimitWireDomainScenarios()
+        // v0.19.20 M1：Shortcuts 编排场景域（方案 §2 清单：nativeTarget 三分支/
+        // assertionRequest 真值表全分支（R2 复审定版次序）/WP-5 fullOnce 两测试钉
+        // （26 legacy [] / 26 瞬态 nil 可启动）/F-1 三处透传钉/wire 编解码往返+
+        // 旧 JSON 缺字段容忍/chargingDisabled 在窗 desired=100 真值表路径/doctor
+        // 检查 17 + 检查 15 的 27 注册残留语义——纯函数面，OrchestrationDomain）。
+        try runOrchestrationDomainScenarios()
         // Phase 5 v1.8 M1：MagSafe LED 模型层场景域（方案 §2 清单：validating/
         // interpreting 白名单穷举/correctionDecision 矩阵穷举（门槛三行/计费
         // gating/锁存自动解除防卡死）/wire 三态/policy 仅丢字段分层——纯函数面，

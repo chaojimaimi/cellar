@@ -24,6 +24,11 @@ struct CellarApp: App {
     // StyleController 同款）；MenuBarExtra label 闭包 + 面板页脚 Toggle + 主窗口
     // 通用页 Toggle 多消费源。
     @StateObject private var displaySettings = DisplaySettingsController(store: CellarApp.sharedConfigStore)
+    // v0.19.20：编排偏好控制器（WP-2/WP-3——快捷指令名输入框宿主；值存
+    // UserDefaults 而非共享 app-config（R1 P0-2：daemon 只发 target 数字，名字仅
+    // App 执行时消费；执行侧经 OrchestrationSettings.currentShortcutName() static
+    // 直读同键，不经实例——App.init 早期访问 @StateObject 临时实例陷阱规避）。
+    @StateObject private var orchestrationSettings = OrchestrationSettings()
     /// 0.18 T5 D-5a：CPU 表面温度/双风扇采样器（panelVisible 门控经
     /// StatusController.setPanelVisible 转发——弱引用回填点在 PanelView.panelAppeared；
     /// @Published 直注 PanelView，不经 statusController 传播的 MenuBarIconLabel 教训）。
@@ -113,6 +118,9 @@ struct CellarApp: App {
                     // v1.11 T2：显示设置控制器注入主窗口链（通用页电池图标 Toggle
                     // 的唯一数据源——缺注入运行时 crash，照五对象既有纪律）。
                     .environmentObject(displaySettings)
+                    // v0.19.20：编排偏好注入主窗口链（通用页编排节快捷指令名输入框
+                    // 的唯一数据源——同上纪律；面板不消费，MenuBarExtra 链不注入）。
+                    .environmentObject(orchestrationSettings)
                     // v1.3 统计采样器注入：统计页查询经 StatsSampler actor 后台
                     // 执行（主线程零 SQLite，红线 4）——注入幸存实例，临时实例
                     // 靠采样循环 weak-self 复查自熄（StatsSampler 注记）。

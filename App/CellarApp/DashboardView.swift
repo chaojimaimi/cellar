@@ -147,16 +147,20 @@ struct DashboardView: View {
     /// 区域整体隐藏；known=false（检测未知）→ 不渲染（fail-open 对齐）；
     /// known=true 才进入呈现判定（方案 §4.1 消费口径分工）。横幅在前（照
     /// PanelView AlertBanner 置顶先例——警示级先行，注记行随后）。
+    /// v0.19.20 WP-6：27 上 plist = 「任务注册残留」非「现行上限」（S4 实证）
+    /// → 冲突横幅不触发（编排即执法者），注记行切「注册残留 N%」INFO 形态；
+    /// 26 及以下检测语义零变化。
     @ViewBuilder
     private var nativeLimitRegion: some View {
         if let native = statusController.nativeLimitStatus, native.known {
             // 冲突横幅（口径 = manualSocLimit > L_c）：Cellar 执法在位（mode !=
             // disabled）才成立——停用态原生值本就生效，无冲突可言（照 doctor
-            // 检查 15 的执法/未执法分支语义）。
+            // 检查 15 的执法/未执法分支语义）；27 终态不触发（残留形态）。
             if let status = statusController.daemonStatus,
                status.mode != "disabled",
                let manual = native.manualSocLimit,
-               manual > status.upperLimit {
+               manual > status.upperLimit,
+               Self.osMajorVersion < 27 {
                 NativeLimitConflictBanner(
                     nativeSocLimit: manual,
                     cellarLimit: status.upperLimit,
@@ -165,9 +169,14 @@ struct DashboardView: View {
             }
             // 注记行（口径 = manualSocLimit，仅手动策略；nil 不显示）。
             if native.active, let manual = native.manualSocLimit {
-                NativeLimitNoteRow(socLimit: manual)
+                NativeLimitNoteRow(socLimit: manual, residual: Self.osMajorVersion >= 27)
             }
         }
+    }
+
+    /// macOS 大版本（WP-6 27 语义开关；static——渲染期纯值，无状态面）。
+    private static var osMajorVersion: Int {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion
     }
 
     /// 深链「打开系统电池设置」（force unwrap 规避：锚构造失败 → 通用系统设置

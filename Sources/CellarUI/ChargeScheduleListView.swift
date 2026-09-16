@@ -89,6 +89,10 @@ public struct ChargeScheduleListView: View {
     /// 首行标题开关（照 ScheduleSectionView showsTitle 先例）：自动化页由卡片头
     /// 承担标题时传 false，防同文重复；默认 true——快照矩阵不传此参。
     public let showsTitle: Bool
+    /// 「原生最低 80%」行内标注开关（v0.19.20 WP-4 §5；编排生效中——enabled ∧
+    /// 27 终态——由宿主页传入；上限 < 80 的条目行内加注，列表展示层零行为影响。
+    /// 默认 false = 26- 既有渲染零回归）。
+    public let nativeFloorAnnotation: Bool
     /// 总开关变更回调（宿主页改 config.enabled 后全量下发）。
     public let onToggleEnabled: (Bool) -> Void
     /// 添加回调（宿主页展开新建编辑器）。
@@ -105,6 +109,7 @@ public struct ChargeScheduleListView: View {
         activeEntryId: String? = nil,
         busy: Bool,
         showsTitle: Bool = true,
+        nativeFloorAnnotation: Bool = false,
         onToggleEnabled: @escaping (Bool) -> Void,
         onAdd: @escaping () -> Void,
         onEdit: @escaping (ChargeScheduleEntry) -> Void,
@@ -114,6 +119,7 @@ public struct ChargeScheduleListView: View {
         self.activeEntryId = activeEntryId
         self.busy = busy
         self.showsTitle = showsTitle
+        self.nativeFloorAnnotation = nativeFloorAnnotation
         self.onToggleEnabled = onToggleEnabled
         self.onAdd = onAdd
         self.onEdit = onEdit
@@ -181,6 +187,16 @@ public struct ChargeScheduleListView: View {
             Text(ChargeScheduleSummary.line(entry))
                 .font(.caption)
                 .multilineTextAlignment(.leading)
+            // v0.19.20 WP-4：编排生效中的 <80 条目「原生最低 80%」行内标注（S6：
+            // 27 原生范围硬限 80-100，<80 由 nativeTarget 钳到 80——列表层诚实展示）。
+            if nativeFloorAnnotation, let limit = entry.upperLimit, limit < 80 {
+                Text(CellarL10n.s("schedule.nativeFloor"))
+                    .font(.caption2)
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.track))
+            }
             if config?.enabled == true {
                 if entry.id == activeEntryId {
                     // 生效中徽章（accent 12% 底——照 MainWindowView 选中行同族语汇）。

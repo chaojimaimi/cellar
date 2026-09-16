@@ -65,6 +65,10 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 组装零读盘，v1.7 P1 教训：全回包携带；可选字段 + 合成 Codable
     /// decodeIfPresent——旧 daemon 回包缺席 → nil，App 提示升级，照 fan 先例）。
     public var magSafeLed: MagSafeLEDStatus?
+    /// v0.19.20 编排状态载荷（buildStatusLocked **恒填**——内存组装零读盘，照
+    /// magSafeLed 先例，UD-7：全回包携带防 ingest 覆盖触发「旧 daemon」闪断；
+    /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容）。
+    public var orchestration: OrchestrationStatus?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -92,6 +96,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         scheduleJson: String? = nil,
         scheduleActiveId: String? = nil,
         nativeLimit: NativeLimitStatus? = nil,
+        orchestration: OrchestrationStatus? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -117,6 +122,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.scheduleJson = scheduleJson
         self.scheduleActiveId = scheduleActiveId
         self.nativeLimit = nativeLimit
+        self.orchestration = orchestration
         self.timestamp = timestamp
     }
 }
@@ -199,7 +205,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.19.11-alpha"
+    public static let daemonVersion = "0.19.20-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -211,6 +217,10 @@ public enum DaemonXPC {
     /// WP3 校准能力字面量（与 discharge 同批上报——校准为纯软件能力，强度依赖
     /// 放电能力探测（tahoe ∧ CHIE 在位）；App 按能力显隐校准区，XPC 侧纵深防御）。
     public static let capabilityCalibration = "calibration"
+    /// v0.19.20 编排能力字面量（0.19.10 WP-A 的 27 终态上报从 [] 扩展而来——
+    /// noBackendTerminalDisposition 置值）：编排是 27 唯一执法路径；App 按能力
+    /// 显隐通用页编排节 + fullOnce 按钮连带禁用（WP-5）。
+    public static let capabilityOrchestration = "orchestration"
 
     // MARK: - 线格式键与常量
 
@@ -243,7 +253,8 @@ public enum DaemonXPC {
         cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64? = nil,
         fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
         thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
-        magSafeLedMode: UInt64? = nil
+        magSafeLedMode: UInt64? = nil, orchestrationEnabled: UInt64? = nil,
+        orchestrationReport: OrchestrationReportWire? = nil
     ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
@@ -280,6 +291,22 @@ public enum DaemonXPC {
         if let json = schedule?.scheduleJson {
             xpc_dictionary_set_string(message, ChargeScheduleWireKeys.scheduleJson, json)
         }
+        // v0.19.20 编排键组：开关单 UINT64 键 + 回报三键（detail 仅非 nil 时发——
+        // ok=true 缺席即「无详情」语义）。
+        if let orchestrationEnabled {
+            xpc_dictionary_set_uint64(message, OrchestrationWireKeys.enabled, orchestrationEnabled)
+        }
+        if let report = orchestrationReport {
+            if let token = report.token {
+                xpc_dictionary_set_string(message, OrchestrationWireKeys.token, token)
+            }
+            if let ok = report.ok {
+                xpc_dictionary_set_uint64(message, OrchestrationWireKeys.ok, ok)
+            }
+            if let detail = report.detail {
+                xpc_dictionary_set_string(message, OrchestrationWireKeys.detail, detail)
+            }
+        }
         return message
     }
 
@@ -307,7 +334,8 @@ public enum DaemonXPC {
         _ msg: xpc_object_t
     ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?,
           calSched: CalibrationScheduleWire?, thermal: ThermalWire?,
-          schedule: ChargeScheduleWire?, magSafeLedMode: UInt64?)? {
+          schedule: ChargeScheduleWire?, magSafeLedMode: UInt64?,
+          orchestrationEnabled: UInt64?, orchestrationReport: OrchestrationReportWire?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -398,12 +426,42 @@ public enum DaemonXPC {
             guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
             magSafeLedMode = xpc_dictionary_get_uint64(msg, magSafeLedModeKey)
         }
+        // v0.19.20 编排开关单键：出现即必须 UINT64（值域 0/1 白名单由 XPCServer
+        // 臂复核——照 auto 同纪律）。
+        var orchestrationEnabled: UInt64?
+        if let value = xpc_dictionary_get_value(msg, OrchestrationWireKeys.enabled) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            orchestrationEnabled = xpc_dictionary_get_uint64(msg, OrchestrationWireKeys.enabled)
+        }
+        // v0.19.20 回报三键：token/detail 出现即必须 STRING 且 ≤64/≤8192 字节、
+        // ok 出现即必须 UINT64（类型混淆/超长 → 整包拒绝，照 scheduleJson 同纪律）；
+        // 全部缺席 → nil（既有命令天然兼容）。
+        var report = OrchestrationReportWire()
+        if let value = xpc_dictionary_get_value(msg, OrchestrationWireKeys.token) {
+            guard xpc_get_type(value) == XPC_TYPE_STRING else { return nil }
+            guard xpc_string_get_length(value) <= OrchestrationWireKeys.maxTokenLength else { return nil }
+            guard let pointer = xpc_dictionary_get_string(msg, OrchestrationWireKeys.token) else { return nil }
+            report.token = String(cString: pointer)
+        }
+        if let value = xpc_dictionary_get_value(msg, OrchestrationWireKeys.ok) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            report.ok = xpc_dictionary_get_uint64(msg, OrchestrationWireKeys.ok)
+        }
+        if let value = xpc_dictionary_get_value(msg, OrchestrationWireKeys.detail) {
+            guard xpc_get_type(value) == XPC_TYPE_STRING else { return nil }
+            guard xpc_string_get_length(value) <= OrchestrationWireKeys.maxDetailLength else { return nil }
+            guard let pointer = xpc_dictionary_get_string(msg, OrchestrationWireKeys.detail) else { return nil }
+            report.detail = String(cString: pointer)
+        }
+        let anyOrchestrationKeyPresent = report.token != nil || report.ok != nil || report.detail != nil
         return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis,
                 auto: auto, fan: anyFanKeyPresent ? fan : nil,
                 calSched: anyCalSchedKeyPresent ? calSched : nil,
                 thermal: anyThermalKeyPresent ? thermal : nil,
                 schedule: anyScheduleKeyPresent ? ChargeScheduleWire(scheduleJson: scheduleJson) : nil,
-                magSafeLedMode: magSafeLedMode)
+                magSafeLedMode: magSafeLedMode,
+                orchestrationEnabled: orchestrationEnabled,
+                orchestrationReport: anyOrchestrationKeyPresent ? report : nil)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -554,6 +612,26 @@ public struct DaemonXPCClient: Sendable {
         )
     }
 
+    /// v0.19.20：设置充电编排开关（UINT64 0/1 键型照既有开关统一，R2 P3；**不改
+    /// mode**）。旧 daemon → 「未知命令」daemonError（App detectStaleBeforeReject
+    /// 升级提示既有闭环）。
+    public func setOrchestration(_ enabled: Bool) throws -> DaemonStatus {
+        try exchange(
+            cmd: OrchestrationWireKeys.command, upper: 0, hysteresis: 0,
+            orchestrationEnabled: enabled ? 1 : 0
+        )
+    }
+
+    /// v0.19.20：编排执行回报（App ShortcutRunner 消费 pending 后调用；token 幂等
+    /// ——不匹配静默丢弃；detail 仅失败时携带）。鉴权同变更类命令门（R1 P1-4）：
+    /// 非管理员回报被拒 → pending 未清 → TTL 过期后 daemon 重发（R2 P1 降级链）。
+    public func reportOrchestration(token: String, ok: Bool, detail: String?) throws -> DaemonStatus {
+        try exchange(
+            cmd: OrchestrationWireKeys.reportCommand, upper: 0, hysteresis: 0,
+            orchestrationReport: OrchestrationReportWire(token: token, ok: ok ? 1 : 0, detail: detail)
+        )
+    }
+
     // MARK: - 内部
 
     /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
@@ -564,7 +642,8 @@ public struct DaemonXPCClient: Sendable {
         cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil,
         fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
         thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
-        magSafeLedMode: UInt64? = nil
+        magSafeLedMode: UInt64? = nil, orchestrationEnabled: UInt64? = nil,
+        orchestrationReport: OrchestrationReportWire? = nil
     ) throws -> DaemonStatus {
         // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
         // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
@@ -572,7 +651,8 @@ public struct DaemonXPCClient: Sendable {
         let message = DaemonXPC.makeMessage(
             cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto,
             fan: fan, calSched: calSched, thermal: thermal, schedule: schedule,
-            magSafeLedMode: magSafeLedMode
+            magSafeLedMode: magSafeLedMode, orchestrationEnabled: orchestrationEnabled,
+            orchestrationReport: orchestrationReport
         )
         let waiter = ReplyWaiter()
 

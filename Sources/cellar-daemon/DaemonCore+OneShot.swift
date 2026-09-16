@@ -51,8 +51,11 @@ extension DaemonCore {
         let nativeReading = NativeChargeLimit.load(
             rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
         )
+        // v0.19.20 WP-5：capabilities 注入（27 终态标记 = 含 orchestration → 拒绝
+        // 启动；判定输入钉死在纯函数——26 瞬态（nil）/26 legacy（[]）照常放行）。
         if let rejection = fullOnceStartPrecondition(
-            mode: policy.mode, externalConnected: external, nativeLimit: nativeReading
+            mode: policy.mode, externalConnected: external, nativeLimit: nativeReading,
+            capabilities: capabilities
         ) {
             throw rejection
         }

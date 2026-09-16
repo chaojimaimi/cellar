@@ -93,6 +93,15 @@ final class StatusController: ObservableObject {
 
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
+    // MARK: v0.19.20 编排执行通道（WP-2）
+    /// Shortcuts 执行器（Process 实现；协议缝为注入预留）。
+    private let shortcutRunner: ShortcutsRunning = ShortcutProcessRunner()
+    /// 已处理的 pending token 集（幂等——daemon 单 pending 槽 → 容量 8 绰绰有余，
+    /// FIFO 驱逐防无界增长）。
+    private var processedOrchestrationTokens: [String] = []
+    /// 在途编排执行任务（单飞——同一时刻至多一条 `shortcuts run`；在途期间新
+    /// token 不插入处理集，下轮轮询重试）。
+    private nonisolated(unsafe) var orchestrationTask: Task<Void, Never>?
 
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
     /// WP5 §2.4：IOPS 实时电源态 override 参与规则 4/5——图标随插拔电即时翻转。
@@ -154,6 +163,7 @@ final class StatusController: ObservableObject {
     deinit {
         pollTask?.cancel()        // MenuBarExtra 视图重建后防多实例轮询泄漏（规格 §2.6）
         telemetryTask?.cancel()
+        orchestrationTask?.cancel()
     }
 
     // MARK: - 轮询调度（规格 §2.2 + Phase 5 v1.2 §2.3 多表面仲裁）
@@ -298,6 +308,11 @@ final class StatusController: ObservableObject {
             : .connected
         statusFailure = status.flatMap(StatusFailureKind.init)
         action = status?.action
+        // v0.19.20 编排 pending 消费（WP-2）：ingest 后见 pendingToken 未处理 →
+        // detached Task 执行 → reportOrchestration 回报。同 token 幂等（处理集）。
+        if let orchestration = status?.orchestration {
+            consumeOrchestrationPending(orchestration)
+        }
     }
 
     /// success 反馈设置 + 5s 自动消退（真机验收修正 2026-09-02：成功类横幅
@@ -683,6 +698,8 @@ final class StatusController: ObservableObject {
             setThermal(wire)
         case .setChargeSchedule(let json):
             applyChargeSchedule(json)
+        case .setOrchestration(let enabled):
+            setOrchestration(enabled)
         }
     }
 
@@ -690,6 +707,92 @@ final class StatusController: ObservableObject {
     func refreshNow() {
         guard !busy else { return }
         Task { await refreshOnce() }
+    }
+
+    // MARK: - v0.19.20 充电编排（WP-2 执行通道 + WP-4 标注门）
+
+    /// 编排状态（nil = 旧 daemon 未上报；通用页节 capabilities 门控显隐，不渲染
+    /// 升级提示——§1「26 及以下 UI 隐藏」）。
+    var orchestrationStatus: OrchestrationStatus? {
+        daemonStatus?.orchestration
+    }
+
+    /// 编排开关（daemon 回读单一真相）。
+    var orchestrationEnabled: Bool {
+        orchestrationStatus?.enabled == true
+    }
+
+    /// 27 编排终态（capabilities 含 orchestration）：fullOnce 按钮连带禁用（WP-5，
+    /// nativeLimitActive 门一致）+ 滑杆/日程「原生最低 80」标注的终态半边门。
+    var orchestrationTerminal: Bool {
+        capabilities?.contains(DaemonXPC.capabilityOrchestration) == true
+    }
+
+    /// 编排生效中（enabled ∧ 27 终态）——滑杆/日程标注门（§5「orchestrationEnabled
+    /// ∧ 无后端」的 App 侧等价判定：capabilities 含 orchestration 即无后端终态）。
+    var orchestrationActive: Bool {
+        orchestrationEnabled && orchestrationTerminal
+    }
+
+    /// 编排开关设置（XPC setOrchestration；旧 daemon 回「未知命令」→
+    /// detectStaleBeforeReject 升级提示既有闭环）。
+    func setOrchestration(_ enabled: Bool) {
+        runControl(
+            attempt: .setOrchestration(enabled),
+            operation: { try DaemonXPCClient().setOrchestration(enabled) },
+            successFeedback: CellarL10n.s(enabled
+                ? "status.orchestrationOn"
+                : "status.orchestrationOff")
+        )
+    }
+
+    /// pending 消费入口（ingest 单一入口内调用；全部前置门不过即静默——轮询驱动
+    /// 下拍重评，绝不猜测重试）。
+    private func consumeOrchestrationPending(_ orchestration: OrchestrationStatus) {
+        guard orchestrationTerminal,
+              orchestration.enabled,   // 评审 P3-2：关编排后悬挂 pending 不尾随执行
+              let token = orchestration.pendingToken,
+              let percent = orchestration.pendingTarget else { return }
+        guard !processedOrchestrationTokens.contains(token) else { return }
+        guard orchestrationTask == nil else { return }   // 单飞：在途时下轮轮询重试
+        processedOrchestrationTokens.append(token)
+        if processedOrchestrationTokens.count > 8 {
+            processedOrchestrationTokens.removeFirst(processedOrchestrationTokens.count - 8)
+        }
+        // 名字执行时读 UserDefaults（static 读取——规避 @StateObject 临时实例接线
+        // 陷阱；OrchestrationSettings 输入框与执行侧同键）。
+        let name = OrchestrationSettings.currentShortcutName()
+        let runner = shortcutRunner   // 评审 P3-3：注入缝真实接线（协议缝可 mock）
+        orchestrationTask = Task.detached { [weak self] in
+            // 执行（内部再 detached——runner 阻塞语义，主 actor 永不等待）。
+            let detail: String?
+            do {
+                try await runner.run(name: name, percent: percent)
+                detail = nil
+            } catch {
+                detail = String(describing: error)
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.orchestrationTask = nil
+                if let detail {
+                    // 失败上屏（WP-2：controlFeedback + daemon 侧 lastError 经回报
+                    // 落 orchestration.lastError → 通用页状态行）。
+                    self.controlFeedback = .daemonRejected(
+                        CellarL10n.s("settings.orchestration.failed", detail)
+                    )
+                }
+                // 回报确认链（XPC 后台；鉴权拒/超时不重试——daemon TTL 过期重发收敛，
+                // R2 P1 降级链）。回包不 ingest——下一轮轮询统一收敛，避免回报-消费
+                // 再入路径。
+                let ok = detail == nil
+                Task.detached {
+                    _ = try? DaemonXPCClient().reportOrchestration(
+                        token: token, ok: ok, detail: detail
+                    )
+                }
+            }
+        }
     }
 
     /// 统一控制执行器：busy 防重入（非静默）+ XPC 后台 + 结果回主 actor。

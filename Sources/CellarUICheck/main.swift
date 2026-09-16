@@ -70,7 +70,10 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 构造 busy 删参 + pendingField 默认 nil → 渲染零 diff）；
 // v0.19.10 自 336 扩 342——风扇节温度源不支持态 6 新增（FanSection_sourceUnsupported_*：
 // cpuSkinSupported=false 态「源 Picker 可用 + fan.sourceUnsupported 注记」新形态
-// 钉死，既有 FanSection 构造零改动））
+// 钉死，既有 FanSection 构造零改动）；
+// v0.19.20 自 342 扩 354——充电编排节 2 态 12 新增（Orchestration_ready/failed：
+// 就绪态 + 上次失败详情态（失败详情 = daemon 回报 lastError 样例串）新组件
+// OrchestrationSectionView 形态钉死，回调控件空闭包——渲染无副作用））
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -885,6 +888,33 @@ private func buildCases() -> [SnapshotCase] {
                     .frame(width: 304, alignment: .leading)
                 })
             })
+
+            // v0.19.20 充电编排节 2 态（ready/failed）×6（342 → 354，新增 12 张，
+            // 全部全新文件——新增非扰动）：参数驱动组件直接构造（onToggleEnabled/
+            // onShortcutNameChange 空闭包——渲染无副作用）。ready 态钉死「开关开 +
+            // 就绪 + 输入框缺省动作名」；failed 态钉死「上次失败：详情」行（失败
+            // 详情 = daemon 回报 lastError 样例串——ShortcutProcessRunner.RunError
+            // description 同形文案）。--regen --only=Orchestration 只跑本组。
+            let orchestrationSections: [(String, OrchestrationSectionView)] = [
+                ("ready", OrchestrationSectionView(
+                    enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                    lastError: nil, busy: false,
+                    onToggleEnabled: { _ in }, onShortcutNameChange: { _ in })),
+                ("failed", OrchestrationSectionView(
+                    enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                    lastError: "快捷指令执行失败（exit 1）：域内未找到「设定电池充电上限」", busy: false,
+                    onToggleEnabled: { _ in }, onShortcutNameChange: { _ in })),
+            ]
+            for (stateName, section) in orchestrationSections {
+                cases.append(SnapshotCase(
+                    name: "Orchestration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
         }
     }
     return cases

@@ -36,21 +36,24 @@ public enum RuntimeProbe {
         return (try? client.keyExists("CHIE")) == true
     }
 
-    /// 后端平台终态处置（0.19.10 WP-A）：`.noBackendAvailable` 命中后的固定决策，
-    /// 纯函数钉语义——daemon 的 establishBackendLocked catch 分支只消费本函数、
-    /// 不内联字面量（0.20 CHIE-only 批会让它长出真分支）。
+    /// 后端平台终态处置（0.19.10 WP-A；v0.19.20 编排批扩展）：`.noBackendAvailable`
+    /// 命中后的固定决策，纯函数钉语义——daemon 的 establishBackendLocked catch
+    /// 分支只消费本函数、不内联字面量。
     ///
     /// 三元语义（macOS 27 实证：CHTE/CH0B 键族被系统删除，进程内重试无意义）：
     /// - `retainClient: true`——新建的 SMCClient 必须保留：风扇/LED/Ts 探测等
     ///   观察面与充电后端无关，不应陪葬（只读模式收窄为「限充执法停用」）。
-    /// - `reportedCapabilities: []`——能力上报空数组**非 nil**：App 侧三态消费面
-    ///   （nil=未上报瞬态/旧 daemon / []=已上报无能力 / 含值=可用）据此自动降
-    ///   「不支持」，终结「正在探测放电支持」永久态。
+    /// - `reportedCapabilities: ["orchestration"]`——能力上报**非 nil**：App 侧
+    ///   三态消费面（nil=未上报瞬态/旧 daemon / []/含值=已上报）据此分流；27 终态
+    ///   不再上报空数组——编排（Shortcuts 通道）是 27 唯一执法路径，上报编排能力
+    ///   即「27 终态」标记本体：App 据此显隐通用页编排节 + fullOnce 拒绝启动
+    ///   （WP-5），daemon 据此在观测段驱动编排链（R2 P2 门控钉死）。
     /// - `retryWithinProcess: false`——进程内不再重探（sticky 终态）：消除每 tick
     ///   makeDefault+日志+clientGeneration 换代抖动；键族恢复伴随系统更新/重装
     ///   （必然重启 daemon），进程重启即唯一清除路径。
     public static func noBackendTerminalDisposition(
     ) -> (retainClient: Bool, reportedCapabilities: [String], retryWithinProcess: Bool) {
-        (retainClient: true, reportedCapabilities: [], retryWithinProcess: false)
+        (retainClient: true, reportedCapabilities: [DaemonXPC.capabilityOrchestration],
+         retryWithinProcess: false)
     }
 }

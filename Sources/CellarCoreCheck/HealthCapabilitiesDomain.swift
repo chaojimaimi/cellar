@@ -77,14 +77,18 @@ func runHealthCapabilitiesDomainScenarios() throws {
                      as: .transportFailure(kr: 1), "能力-5", "传输错误（kr≠0）原样上抛，绝不降级为 noBackendAvailable")
     }
 
-    // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②）——常量元组钉语义：
-    // client 保留（风扇/LED/Ts 观察面不陪葬）/ capabilities 上报 []（非 nil——App
-    // 三态消费面自动降「不支持」）/ 进程内不重试（sticky 终态，重启即唯一清除路径）。
+    // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②；v0.19.20 编排批扩展）
+    // ——常量元组钉语义：client 保留（风扇/LED/Ts 观察面不陪葬）/ capabilities
+    // 上报 ["orchestration"]（非 nil——27 终态不再报空数组：编排是 27 唯一执法
+    // 路径，该能力即「27 终态」标记本体，App 显隐编排节 + fullOnce 拒绝启动
+    // WP-5）/ 进程内不重试（sticky 终态，重启即唯一清除路径）。
     // daemon establishBackendLocked catch 分支只消费本函数、不内联字面量。
     do {
         let disposition = RuntimeProbe.noBackendTerminalDisposition()
-        check(disposition == (retainClient: true, reportedCapabilities: [], retryWithinProcess: false),
-              "能力-6", "终态处置常量：(retainClient: true, reportedCapabilities: [], retryWithinProcess: false)")
+        check(disposition == (retainClient: true,
+                              reportedCapabilities: [DaemonXPC.capabilityOrchestration],
+                              retryWithinProcess: false),
+              "能力-6", "终态处置常量：(retainClient: true, reportedCapabilities: [\"orchestration\"], retryWithinProcess: false)——27 终态编排执法通道（v0.19.20 扩展）")
     }
 
     // ---- ⑦ capabilities decode 双向 ----

@@ -7,11 +7,13 @@ import CellarCore
 ///
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
-///   setCalibrationSchedule/setThermal/setChargeSchedule/setMagSafeLed` 仅
+///   setCalibrationSchedule/setThermal/setChargeSchedule/setMagSafeLed/
+///   setOrchestration/reportOrchestration` 仅
 ///   **euid==0 或 admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，
 ///   UI 控制需要 admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/
-///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流），否则错误回包
-///   （ok=false + 原文）。
+///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流；v0.19.20 编排回报
+///   同门（R1 P1-4）——非管理员回报被拒 → pending 未清 → TTL 过期重发降级链），
+///   否则错误回包（ok=false + 原文）。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
 /// - 消息校验经 `DaemonXPC.validateRequest`（xpc_get_type 白名单）；非法回错误包，不崩溃。
@@ -300,6 +302,49 @@ final class XPCServer: @unchecked Sendable {
                 // MagSafeSetError（越域防御面）→ 原文回传（App 上屏）。
                 send(errorReply(String(describing: error)), to: peer.connection)
             }
+
+        case OrchestrationWireKeys.command:
+            // v0.19.20：setOrchestration（鉴权门同变更命令；单 UINT64 键——类型
+            // 白名单已在 validateRequest，此处只查值域 0/1（R2 P3：键型照既有开关
+            // 统一）；语义决策在 core.setOrchestrationEnabled——persist/即时 tick
+            // 全在 DaemonCore+Orchestration.swift）。
+            guard authorize(peer, operation: "setOrchestration") else { return }
+            guard let rawEnabled = request.orchestrationEnabled else {
+                send(errorReply("setOrchestration 缺少开关参数"), to: peer.connection)
+                return
+            }
+            guard OrchestrationWireKeys.validEnabled(rawEnabled) else {
+                send(errorReply("充电编排开关参数越界（0/1）"), to: peer.connection)
+                return
+            }
+            sendStatus(core.setOrchestrationEnabled(rawEnabled == 1), to: peer)
+
+        case OrchestrationWireKeys.reportCommand:
+            // v0.19.20：reportOrchestration（鉴权门同变更命令——R1 P1-4；非管理员
+            // 回报被拒 = 降级链起点：pending 未清 → TTL 过期重发。token/detail 长度
+            // 白名单已在 validateRequest，此处复核 + 缺键拒绝；token 幂等消费在
+            // core.reportOrchestration——不匹配静默丢弃）。
+            guard authorize(peer, operation: "reportOrchestration") else { return }
+            guard let report = request.orchestrationReport else {
+                send(errorReply("reportOrchestration 缺少回报参数"), to: peer.connection)
+                return
+            }
+            guard let token = report.token, OrchestrationWireKeys.validToken(token) else {
+                send(errorReply("编排回报 token 非法（1-\(OrchestrationWireKeys.maxTokenLength) 字节）"), to: peer.connection)
+                return
+            }
+            guard let okRaw = report.ok, OrchestrationWireKeys.validEnabled(okRaw) else {
+                send(errorReply("编排回报 ok 参数非法（0/1）"), to: peer.connection)
+                return
+            }
+            if let detail = report.detail, !OrchestrationWireKeys.validDetail(detail) {
+                send(errorReply("编排回报详情超长（≤\(OrchestrationWireKeys.maxDetailLength) 字节）"), to: peer.connection)
+                return
+            }
+            sendStatus(
+                core.reportOrchestration(token: token, ok: okRaw == 1, detail: report.detail),
+                to: peer
+            )
 
         default:
             send(errorReply("未知命令：\(request.cmd)"), to: peer.connection)

@@ -131,8 +131,15 @@ public struct DoctorInputs: Sendable {
     public let magSafeLed: MagSafeLEDStatus?
     /// 检查 16 是否已探测（DoctorCommand 恒 true——未探测缺省形态零渲染）。
     public let magSafeLedProbeAttempted: Bool
-    /// macOS 大版本（v0.19.8 G5，方案 §3.3）：检查 3/4 的 macOS 27 感知附注开关。
-    /// 收集侧注入（DoctorCommand 读 `ProcessInfo`；CellarCoreCheck 场景注入 26/27
+    /// 检查 17（v0.19.20 WP-3）：编排通道探测（用户上下文 `shortcuts list`——S2
+    /// 实证 root 恒失败，**禁止移入 daemon（root）侧组装**；doctor CLI 由用户运行
+    /// 即用户会话）。nil = 未探测不渲染（检查 15/16 同款条件渲染兼容约束）。
+    public let orchestrationProbe: OrchestrationDoctorProbe?
+    /// 检查 17 是否已探测（attempted 缺省零渲染——既有 count 断言零回归）。
+    public let orchestrationProbeAttempted: Bool
+    /// macOS 大版本（v0.19.8 G5，方案 §3.3）：检查 3/4 的 macOS 27 感知附注开关；
+    /// v0.19.20 WP-6 扩面——检查 15 的 27「注册残留」语义开关。收集侧注入
+    /// （DoctorCommand 读 `ProcessInfo`；CellarCoreCheck 场景注入 26/27
     /// 两臂——不直读 ProcessInfo，保纯函数可测性）。默认 26 = 既有 detail 断言
     /// 语义不变（既有约 40 处构造点零改动，新字段全缺省值纪律同 keyPresence）。
     public let osMajorVersion: Int
@@ -163,6 +170,8 @@ public struct DoctorInputs: Sendable {
         nativeLimitProbeAttempted: Bool = false,
         magSafeLed: MagSafeLEDStatus? = nil,
         magSafeLedProbeAttempted: Bool = false,
+        orchestrationProbe: OrchestrationDoctorProbe? = nil,
+        orchestrationProbeAttempted: Bool = false,
         osMajorVersion: Int = 26
     ) {
         self.isRoot = isRoot
@@ -190,6 +199,8 @@ public struct DoctorInputs: Sendable {
         self.nativeLimitProbeAttempted = nativeLimitProbeAttempted
         self.magSafeLed = magSafeLed
         self.magSafeLedProbeAttempted = magSafeLedProbeAttempted
+        self.orchestrationProbe = orchestrationProbe
+        self.orchestrationProbeAttempted = orchestrationProbeAttempted
         self.osMajorVersion = osMajorVersion
     }
 }
@@ -288,6 +299,10 @@ public enum DoctorReportGenerator {
         // Phase 5 v1.8 检查 16：MagSafe 指示灯（条件渲染同 9-15——attempted 缺省零渲染）。
         if let ledCheck = magSafeLedControl(inputs) {
             checks.append(ledCheck)
+        }
+        // v0.19.20 检查 17：编排通道（条件渲染同 9-16——attempted 缺省零渲染）。
+        if let orchestrationCheck = orchestrationChannel(inputs) {
+            checks.append(orchestrationCheck)
         }
         return DoctorReport(checks: checks)
     }
@@ -647,6 +662,17 @@ public enum DoctorReportGenerator {
             return DoctorCheck(
                 name: "原生限充共存", status: .pass,
                 detail: "未检测到原生限充策略（注册态）"
+            )
+        }
+        // v0.19.20 WP-6：27 上 plist = 「任务注册残留」非「现行上限」（S4 实证：
+        // batteryui 镜像与 powerd plist 都不反映 shortcut 设定值）→ active 判定
+        // 失去物理意义，冲突/等效分流（26 语义）不再适用——一律 INFO 展示残留。
+        // 校准冲突 FAIL 分支在 27 不可达（daemon 侧编排终态已拒绝校准/fullOnce），
+        // 置于其前即 27 单一语义；冲突横幅 27 不触发（编排即执法者）。
+        if inputs.osMajorVersion >= 27 {
+            return DoctorCheck(
+                name: "原生限充共存", status: .info,
+                detail: "原生限充注册残留 \(nativeLimit)%（非现行上限——macOS 27 执法由编排接管，可忽略；如需彻底清理可在系统设置移除后重启）"
             )
         }
         if inputs.daemonStatus?.isCalibrationAction == true {

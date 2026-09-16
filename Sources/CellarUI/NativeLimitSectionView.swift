@@ -17,22 +17,33 @@ import SwiftUI
 /// N 串经词汇表格式占位填充：theme.word(.nativeLimitNote) 值含 `%lld%%` 占位
 /// （catalog 与 nativeConstant 兜底同形），消费侧 String(format:) 填充——动态 N
 /// 不进 LocalizationValue 插值（先取词再格式化，bb6eb0d 同类陷阱规避）。
+/// residual（v0.19.20 WP-6）：27 上 plist = 「任务注册残留」非「现行上限」（S4
+/// 实证）→ 渲染「注册残留 N%（非现行上限）」INFO 形态（l10n 承载——不走风格
+/// 词汇表，避免三风格词条表扩面）。
 public struct NativeLimitNoteRow: View {
     /// 手动策略限充值（daemon 注册态 manualSocLimit；仅作展示参数，判定在调用方）。
     public let socLimit: Int
+    /// 27 残留形态（osMajorVersion >= 27 时由调用方传入；默认 false = 26- 现行
+    /// 语义零变化）。
+    public let residual: Bool
 
     @Environment(\.cellarTheme) private var theme
 
-    public init(socLimit: Int) {
+    public init(socLimit: Int, residual: Bool = false) {
         self.socLimit = socLimit
+        self.residual = residual
     }
 
     public var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "bolt.circle")
+            Image(systemName: residual ? "clock.arrow.circlepath" : "bolt.circle")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.accent)
-            Text(String(format: theme.word(.nativeLimitNote), socLimit))
+            // 残留形态走 l10n 单源（%lld 占位与词汇表同形消费）；现行形态保持
+            // 词汇表通路（三风格差异化语汇保留）。
+            Text(residual
+                 ? CellarL10n.s("dashboard.nativeLimit.residualNote", socLimit)
+                 : String(format: theme.word(.nativeLimitNote), socLimit))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         }

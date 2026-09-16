@@ -22,6 +22,7 @@ struct GeneralSections: View {
     @EnvironmentObject private var loginItems: LoginItemController
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var displaySettings: DisplaySettingsController
+    @EnvironmentObject private var orchestrationSettings: OrchestrationSettings
     @Environment(\.cellarTheme) private var theme
     /// 通知授权态（nil = 查询中；getNotificationSettings 异步回主线程刷新）。
     @State private var notificationAuthorized: Bool?
@@ -32,6 +33,12 @@ struct GeneralSections: View {
         VStack(alignment: .leading, spacing: 16) {
             generalSection
             autoDischargeSection
+            // v0.19.20 编排节（WP-3）：capabilities 含 orchestration（27 终态）才
+            // 显示——26 及以下 UI 隐藏（§1；nil = 旧 daemon 同样隐藏，不渲染升级
+            // 提示）。置于自动放电节后（方案 §4）。
+            if orchestrationCapabilityAvailable {
+                orchestrationSection
+            }
             fanSection
             thermalSection
             magSafeLedSection
@@ -243,6 +250,33 @@ struct GeneralSections: View {
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
             }
+        }
+    }
+
+    // MARK: - v0.19.20 充电编排
+
+    /// 能力门控：capabilities 含 orchestration（27 终态标记——RuntimeProbe
+    /// noBackendTerminalDisposition 上报；nil/缺能力 → 节整体隐藏）。
+    private var orchestrationCapabilityAvailable: Bool {
+        statusController.capabilities?.contains(DaemonXPC.capabilityOrchestration) == true
+    }
+
+    /// 编排节（照自动放电节形态：开关 + 说明 + 状态行 + setup 指引；组件参数驱动
+    /// ——CellarUICheck 可独立渲染）。开关绑定 daemonStatus 单一真相（daemon 确认
+    /// 后回传翻转，照自动放电开关同构）；输入框走 OrchestrationSettings
+    /// （UserDefaults——daemon 只发 target 数字，名字仅 App 消费，R1 P0-2）。
+    private var orchestrationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("settings.section.orchestration")
+            OrchestrationSectionView(
+                enabled: statusController.orchestrationEnabled,
+                shortcutName: orchestrationSettings.shortcutName,
+                lastError: statusController.orchestrationStatus?.lastError,
+                busy: statusController.busy,
+                showsTitle: false,
+                onToggleEnabled: { statusController.setOrchestration($0) },
+                onShortcutNameChange: { orchestrationSettings.updateShortcutName($0) }
+            )
         }
     }
 

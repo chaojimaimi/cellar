@@ -61,6 +61,14 @@ final class DaemonCore: @unchecked Sendable {
     /// 进程内 sticky——不再每 tick 重探（消除 makeDefault+日志+clientGeneration 抖动
     /// 循环）。进程重启是唯一清除路径（键族恢复伴随系统更新/重装，必然重启 daemon）。
     private var backendUnavailableTerminal = false
+    /// 编排链门控（0.19.20 R2 P2 钉死）：仅 27 终态驱动——平台终态 sticky（本进程
+    /// 内不再重探）或 capabilities 已含 orchestration。26 瞬态后端缺席窗口恒 false
+    /// （观测段保持 sample+publish 原样——落地 limit 转移 = 26 行为增量，违反 §8
+    /// 不做清单）。
+    var orchestrationTerminalLocked: Bool {
+        backendUnavailableTerminal
+            || capabilities?.contains(DaemonXPC.capabilityOrchestration) == true
+    }
     /// daemon 能力清单（WP2' §2.1）：启动探测通过（tahoe ∧ CHIE 在位，评审 P1-1
     /// fail-closed）→ ["discharge"]；否则 []。置值挂 establishBackendLocked 成功
     /// 路径（含自愈重建——评审轮 2 注记 1）；自愈重建后能力随探测结果刷新。
@@ -103,6 +111,11 @@ final class DaemonCore: @unchecked Sendable {
     /// v0.19.6 意图降限观察（applyPolicyLocked 挂点）：上次观察到的有效上限。
     /// 锁内普通变量不持久化（与冷却/翻转门同款纪律——重启即清，重启本就重置门）。
     var lastObservedAutoDischargeLimit: Int?
+    /// v0.19.20 编排运行时状态（结构体定义在 CellarCore NativeOrchestration.swift
+    /// ——存储属性主体声明惯例；决策/回报逻辑全在 DaemonCore+Orchestration.swift）。
+    /// **不持久化（R1 P2 取舍）**：重启后 lastApplied 丢失 → 首 tick valueChange
+    /// 幂等误发一次（S3 已证同值重设无痕）+ 冷却窗重置——换零新增落盘面。
+    var orchestrationState = OrchestrationState()
 
     // MARK: - 生命周期
 
@@ -401,7 +414,8 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "active", upperLimit: upper, hysteresis: hys,
                 autoDischargeEnabled: autoFlag, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
+                orchestrationEnabled: policy.orchestrationEnabled
             ),
             events: &events
         )
@@ -458,7 +472,8 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "disabled", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
+                orchestrationEnabled: policy.orchestrationEnabled
             ),
             events: &events
         )
@@ -492,7 +507,8 @@ final class DaemonCore: @unchecked Sendable {
                 mode: "active", upperLimit: policy.upperLimit, hysteresis: policy.hysteresis,
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
-                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode
+                schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
+                orchestrationEnabled: policy.orchestrationEnabled
             ),
             events: &events
         )
@@ -633,7 +649,13 @@ final class DaemonCore: @unchecked Sendable {
             // 0.19.10 WP-B：后端缺席（平台终态/瞬态）不再中断监测——采样 + 电量
             // 事件 + lastStatus/wire 供给照走；执法段（步骤 3 起）跳过（只读模式
             // = 监测照走、执法停用，RuntimeProbe.swift 契约）。
-            sampleAndPublishLocked(events: &events)
+            let snapshot = sampleAndPublishLocked(events: &events)
+            // v0.19.20 编排链（R2 P2 门控钉死：仅 27 终态驱动——26 瞬态窗口保持
+            // sample+publish 原样，不落地 limit 转移）。前置日程转移 + assertionRequest
+            // + 发布 pending，逻辑全在 DaemonCore+Orchestration.swift。
+            if orchestrationTerminalLocked, let snapshot {
+                orchestrationTickLocked(now: Date(), snapshot: snapshot, events: &events)
+            }
             return
         }
 
@@ -895,10 +917,14 @@ final class DaemonCore: @unchecked Sendable {
     /// ——「只读模式 = 监测照走、执法停用」（RuntimeProbe.swift 契约注释）的 tick
     /// 落点，菜单栏数字/面板 lastPercent 数据链的 daemon 源头（全库唯一写入点之外
     /// 的补充路径，执法段步骤 2/4 保留原实现不动）。
+    /// 返回本次成功采样的快照（0.19.20 R2 P3 观测段管道：orchestrationTickLocked
+    /// 的 assertionRequest 输入 external/isCharging/percent 由此供给）；nil = 采样
+    /// 失败（编排链无新鲜输入可评估，本拍跳过）。
     /// ⚠️ 刻意**不调 buildStatusLocked**（R2 P2）：它从 lastStatus ?? 兜底起步只读
     /// 旧值、不注入新 percent（兜底构造无 lastPercent）——照下方执法段尾部同款形态
     /// 直接构造 DaemonStatus 才能携带新采样。
-    private func sampleAndPublishLocked(events: inout [LogEvent]) {
+    @discardableResult
+    private func sampleAndPublishLocked(events: inout [LogEvent]) -> BatterySnapshot? {
         // 采样（失败日志与「保留上次状态」语义照执法段既有路径；监护缺失计数由
         // 调用方在分支入口统一承担——本函数不重复计数，防一 tick 双计缩短终止窗）。
         let snapshot: BatterySnapshot
@@ -909,7 +935,7 @@ final class DaemonCore: @unchecked Sendable {
                 category: .control, level: .error,
                 message: "电池采样失败：\(error)（保留上次状态）"
             ))
-            return
+            return nil
         }
         // 电量整数百分点变化事件（评审 A-1：batteryLevelChanged；执法段同款逻辑）。
         if lastPercent != snapshot.percent {
@@ -935,6 +961,7 @@ final class DaemonCore: @unchecked Sendable {
             action: actionTrack.action,
             timestamp: snapshot.timestamp
         )
+        return snapshot
     }
 
     /// 锁内建立/复用控制后端。返回 nil = 探测失败（已计数，≥3 触发重建）。
@@ -1013,7 +1040,7 @@ final class DaemonCore: @unchecked Sendable {
             capabilities = disposition.reportedCapabilities
             events.append(LogEvent(
                 category: .control, level: .warn,
-                message: "后端不可用：SMC 充电控制键族不存在（平台限制，进程内不再重试）——降级只读；观察面（风扇/LED/温度探测）保留，能力上报 []"
+                message: "后端不可用：SMC 充电控制键族不存在（平台限制，进程内不再重试）——降级只读；观察面（风扇/LED/温度探测）保留，能力上报 \(capabilities?.joined(separator: ",") ?? "[]")（编排执法通道）"
             ))
             throw BackendError.noBackendAvailable   // 上层 ensure 计数一次后由 sticky 短路
         }
@@ -1139,6 +1166,10 @@ final class DaemonCore: @unchecked Sendable {
             status.lastCalEnd = last.endedAt
             status.lastCalOutcome = last.outcome
         }
+        // v0.19.20：编排状态**恒填**（orchestrationStatusLocked 内存组装零读盘
+        // ——照 magSafeLed 先例，UD-7：全回包携带防 ingest 覆盖触发「旧 daemon」
+        // 闪断；26- 机器 enabled=false 空态照填，UI 侧 capabilities 门控不渲染）。
+        status.orchestration = orchestrationStatusLocked()
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

@@ -38,7 +38,10 @@ struct ActionSectionView: View {
                 .controlSize(.small)
                 // Phase 5 v1.7 M3：原生限充激活 → 禁用（守卫口径 active，与 daemon
                 // fullOnceStartPrecondition 拒绝行为一致；unknown 态放行 = fail-open）。
-                .disabled(statusController.busy || statusController.nativeLimitActive)
+                // v0.19.20 WP-5：27 编排终态连带禁用（daemon 侧前置拒绝同语义——
+                // 27 上维护分支永不推进，允许启动 = 永久在轨 = 编排无限期暂停）。
+                .disabled(statusController.busy || statusController.nativeLimitActive
+                    || statusController.orchestrationTerminal)
                 if let hintWord = statusController.nativeLimitFullOnceHintWord {
                     Text(theme.word(hintWord))
                         .font(.caption2)

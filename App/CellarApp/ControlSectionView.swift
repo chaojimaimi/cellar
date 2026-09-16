@@ -80,6 +80,15 @@ struct ControlSectionView: View {
                 }
             )
             .disabled(isModeDisabled || isActionActive)
+            // v0.19.20 WP-4 §5：编排生效中（enabled ∧ 27 终态）的 <80 行内标注
+            // ——S6 原生范围硬限 80-100，<80 由 daemon nativeTarget 钳到 80 应用
+            //（policy 仍存用户意图值——日程恢复/退出边沿语义不受影响）。
+            if statusController.orchestrationActive, Int(upperLimit) < 80 {
+                Text(CellarL10n.s("panel.orchestration.minNative"))
+                    .font(.caption)
+                    .foregroundStyle(theme.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             HStack {
                 Text(CellarL10n.s("panel.hysteresis"))
