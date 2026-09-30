@@ -2,8 +2,8 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十七项只读诊断（不写任何 SMC 键；第 17 项编排通道在用户
-/// 会话探测，v0.19.20）。
+/// cellar doctor —— 十八项只读诊断（不写任何 SMC 键；第 17 项编排通道在用户
+/// 会话探测，v0.19.20；第 18 项 topoff 域状态 root 只读展示，0.20 M1a）。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -13,7 +13,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十七项只读检查（退出码 0 健康 / 1 警告 / 2 失败）"
+        abstract: "诊断报告：十八项只读检查（退出码 0 健康 / 1 警告 / 2 失败）。全只读契约：不写任何 SMC 键——CHIE 可写性写探针仅在 daemon 侧执行"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。
@@ -107,7 +107,21 @@ struct DoctorCommand: ParsableCommand {
                 )
             } catch BackendError.noBackendAvailable {
                 probe = .noneAvailable
-                dischargeProbe = DischargeProbe(supported: false, chieState: nil, readFailed: false)
+                // 0.20 M1a：CHIE 放电控制面探测（27 第三级——检查 4 的 27 分支与
+                // 检查 11 控制面臂数据源）。**P2 评审修法：writeProbe: false——doctor
+                // 「不写任何 SMC 键」只读契约**（同值写探针仅 daemon establish 路径
+                // 执行），在位可读 → .writabilityUnknown 如实上报（可写性裁定归
+                // daemon 启动探测）；传输故障 → try? 折叠为不可用，检查 2 已呈现
+                // 传输层事实。
+                let plane = (try? RuntimeProbe.dischargeControlPlane(
+                    client: client, writeProbe: false
+                )) ?? .unavailable
+                let chieState = try? DischargeAdapterControl.adapterState(client: client)
+                dischargeProbe = DischargeProbe(
+                    supported: false, chieState: chieState,
+                    readFailed: plane == .writable && chieState == nil,
+                    controlPlane: plane
+                )
             } catch let error as SMCError {
                 probe = mapProbeError(error)
                 dischargeProbe = DischargeProbe(supported: false, chieState: nil, readFailed: false)
@@ -198,6 +212,13 @@ struct DoctorCommand: ParsableCommand {
         // 禁止移入 daemon 侧组装）；`shortcuts list` 只读列举，零写入面。
         let orchestrationProbe = probeOrchestration()
 
+        // 检查 18：topoffprotection 域状态（0.20 M1a——root 只读展示，仅诊断用
+        // 不抬退出码；非 root → 受限形态诚实呈现）。
+        let topoffDomain = TopoffDomainDoctorProbe.collect(
+            isRoot: RuntimeProbe.isRunningAsRoot,
+            run: runProcessCapture
+        )
+
         return DoctorInputs(
             isRoot: RuntimeProbe.isRunningAsRoot,
             smcConnected: smcConnected,
@@ -237,6 +258,9 @@ struct DoctorCommand: ParsableCommand {
             // v0.19.20 检查 17：编排通道探测（用户会话组装，见上方注记）。
             orchestrationProbe: orchestrationProbe,
             orchestrationProbeAttempted: true,
+            // 0.20 M1a 检查 18：topoffprotection 域状态（root 只读展示）。
+            topoffDomain: topoffDomain,
+            topoffDomainProbeAttempted: true,
             // v0.19.8 G5：macOS 27 感知附注开关（检查 3/4；DoctorInputs 纯函数消费，
             // CLI 进程收集注入——B4：doctor 报告在 CLI 进程生成，无进程视角分叉）。
             // v0.19.20 WP-6：检查 15 的 27「注册残留」语义同走本开关。

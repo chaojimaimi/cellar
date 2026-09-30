@@ -28,8 +28,10 @@ extension DaemonCore {
     ///    纯时间判定 + policy/state 写 + applied 门控」的自洽状态机，锚点幂等、
     ///    不依赖 snapshot、调用点无关——27 终态下执法段不可达，本处是唯一驱动点；
     ///    额外收益 = setChargeSchedule 即时 tick 语义在 27 保留）；
-    /// ② desired 推导（编排关/mode 门 → chargingDisabled 在窗强制 100（R2 P1：
-    ///    等价「完全放开」，退出边沿恢复 base）→ nativeTarget 钳制映射）；
+    /// ② 汇聚点双通道路由（0.20 M1b §3.1——desired 推导链整体迁入
+    ///    Topoff.convergenceRoute 纯函数（CellarCoreCheck 场景域钉死），topoff 分流
+    ///    独立于编排开关门派生（R1-P3 位置约束）；topoff 副作用（域写/验证/重申/
+    ///    降级/自愈/§3.6 卫生/§3.7 关断清理）在 DaemonCore+Topoff.swift 消费）；
     /// ③ assertionRequest 真值表 → 命中即签发 pendingToken（发布走 buildStatusLocked
     ///    恒填——App 轮询消费）。
     func orchestrationTickLocked(
@@ -46,20 +48,12 @@ extension DaemonCore {
         )
         lastStatus?.lastAction = actionName
 
-        // ② desired 推导。chargingDisabled 在窗判定 = state 锚点条目仍是配置成员
-        // 且 chargingDisabled == true（配置被删/校验丢弃 → 条目查不到 → desired 回
-        // 常规映射，恢复路径由日程臂 restoreBase 兜底）。
-        let chargingDisabledWindowActive = scheduleState.lastAppliedEntryId != nil
-            && policy.schedule?.entries.first(where: { $0.id == scheduleState.lastAppliedEntryId })?
-                .chargingDisabled == true
-        let desired: Int?
-        if policy.mode != "active" || policy.orchestrationEnabled != true {
-            desired = nil
-        } else if chargingDisabledWindowActive {
-            desired = 100
-        } else {
-            desired = NativeOrchestration.nativeTarget(effectiveLimit: policy.upperLimit).target
-        }
+        // ② 汇聚点双通道路由（0.20 M1b §3.1）。chargingDisabled 在窗判定 = state
+        // 锚点条目仍是配置成员且 chargingDisabled == true（配置被删/校验丢弃 →
+        // 条目查不到 → 汇聚目标回常规映射，恢复路径由日程臂 restoreBase 兜底）。
+        let desired = topoffConvergenceRouteLocked(
+            now: now, snapshot: snapshot, events: &events
+        )
 
         // ③ 断言决策（真值表全在 CellarCore 纯函数——本处只消费）。
         let decision = NativeOrchestration.assertionRequest(
@@ -89,7 +83,10 @@ extension DaemonCore {
 
     /// setOrchestration（R1 P0-2：编排开关唯一写入通道；照 setChargeScheduleConfig
     /// 形态——policy 单字段直写（F-1 禁令仅 upperLimit，schedule 直写先例）+ persist
-    /// + 即时 performTickLocked（开关生效 ≤1 tick；27 终态下 tick 走观测段编排链））。
+    /// + 即时 performTickLocked（开关生效 ≤1 tick；27 终态下 tick 走观测段编排链）。
+    /// 0.20 M1b §3.7：**关断时 sub80 能力机随写清理**——目标 ≥80（topoff 不承载域）
+    /// → 域随写 100 + off（R3-P3 off 语义第二路径；目标 <80 时 topoff 不受编排开关
+    /// 门、继续承载，无清理）。
     func setOrchestrationEnabled(_ enabled: Bool) -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
@@ -98,6 +95,11 @@ extension DaemonCore {
             emit(events)
         }
         policy.orchestrationEnabled = enabled
+        if !enabled,
+           capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+           policy.upperLimit >= Topoff.degradedLimit {
+            topoffShutdownCleanupLocked(now: Date(), events: &events)
+        }
         persistPolicyLocked(events: &events)
         events.append(LogEvent(
             category: .lifecycle, level: .info,

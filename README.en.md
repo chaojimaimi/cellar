@@ -8,11 +8,11 @@
 
 **An open-source battery management tool for Apple Silicon Macs**: keeps your battery within a range you define, avoiding long-term degradation from sitting at full charge on the adapter. Menu-bar resident + CLI control. Free, open source, no telemetry, no network dependency.
 
-> Status: **0.19.9-alpha** (maintenance batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch completes monitoring restoration on macOS 27: the parser now falls back across dictionaries (macOS 27 moved DesignCapacity/NominalChargeCapacity and the gauge field family into the BatteryData sub-dictionary), on top of the SMC temperature relocation and honest doctor messaging from 0.19.8; CFBundleVersion now increments with every release. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall. Feedback and trial are welcome; interfaces and behavior may change.
+> Status: **0.20.0-alpha** (macOS 27 capability restore batch) — all Phase 5 capabilities in place: any-limit charge capping (60–100%) with hysteresis hold, charge-side thermal pause (configurable thresholds), smart fan cooling (synchronized left/right takeover on dual-fan machines), optional auto-discharge, one-click battery calibration with scheduled calibration, charge schedules, “Charge Once to Full” / “Discharge to Limit”, native charge-limit coordination (macOS 26.4+), and MagSafe LED control — plus three UI themes, a statistics dashboard, the menu-bar battery glyph (fill level / percentage / low-battery red), and zh/en bilingual UI. This batch restores capabilities on macOS 27: the discharge control plane is back (CHIE backend with a clamshell rejection gate), sub-80% limiting is genuinely enforced via the system-native charge-limit channel (experimental badge; automatic fallback to 80% plus hourly self-healing if the channel breaks), orchestration readback verification (immediate read-back confirmation after each run), and a “Stopped” rendering for 0 rpm panel fans. Core charge limiting and the menu-bar GUI completed end-to-end acceptance on real hardware (macOS 26 / Apple Silicon): install → limit → discharge recovery → sleep/wake → uninstall; macOS 27 capabilities were validated on GA hardware (see CHANGELOG and docs/SMC-NOTES.md §11). Feedback and trial are welcome; interfaces and behavior may change.
 
 ## Features
 
-- **Any charge limit (60–100%)**: including the sub-80% range not natively supported by the system
+- **Any charge limit (60–100%)**: on macOS 26 via the control backend; on macOS 27, ≥80% via the system Shortcuts orchestration channel and sub-80% (experimental) genuinely enforced via the system-native charge-limit channel (relies on a system private preferences domain and may break with a macOS update — automatic fallback to 80% with a banner, plus hourly self-healing probes)
 - **Hysteresis**: charging stops at the limit and only resumes after self-discharge down to the recovery threshold (default: limit −2%), avoiding frequent on/off cycling
 - **Charge-side thermal pause**: by default charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce), with thresholds configurable on the General page; no hot restart of charging after a thermally terminated discharge
 - **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies; since v1.12 both left and right fans are taken over in sync on dual-fan machines, single-fan machines unchanged); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
@@ -59,8 +59,8 @@ A menu-bar icon resident GUI (App/CellarApp.xcodeproj), sharing the same core an
 
 ### Discharge to Limit (support conditions and safety notes)
 
-- **Support conditions**: macOS 26+ (Tahoe control backend) and firmware with a discharge-control key (`cellar doctor` item 11); the panel hides the feature otherwise.
-- **Behavior**: temporarily disconnects adapter supply (the system switches to battery power) and automatically restores the adapter and charge limit once the level drops to the limit target. During discharge, a 60% charge-level hard floor and a 40 °C auto-abort apply; a daemon crash automatically restores charging.
+- **Support conditions**: macOS 26+ (Tahoe control backend; macOS 27 uses the CHIE discharge control plane, restored in 0.20.0) and firmware with a discharge-control key (`cellar doctor` item 11); the panel hides the feature otherwise.
+- **Behavior**: temporarily disconnects adapter supply (the system switches to battery power) and automatically restores the adapter and charge limit once the level drops to the limit target. During discharge, a 60% charge-level hard floor and a 40 °C auto-abort apply; a daemon crash automatically restores charging; discharge is refused while the lid is closed and auto-aborted (with restore) if the lid closes mid-run.
 - **Warning**: during discharge, **all USB / external devices lose power momentarily** (external drives being written to can lose data — remove them first); an external display with the lid closed may fall asleep.
 
 ### Install requirements (must)
@@ -98,7 +98,7 @@ Cellar must be used exclusively with other charge-management tools/daemons: both
 | Component   | Requirement                                                                                                                                   |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Machine     | Apple Silicon MacBook                                                                                                                         |
-| OS          | macOS 26+ (Tahoe control backend, validated on real hardware); earlier systems use the experimental Legacy backend (unvalidated)              |
+| OS          | macOS 26+ (26 validated on real hardware; 27 GA validated on real hardware — discharge via CHIE, sub-80% via the native charge-limit channel, power-telemetry fields honestly absent); earlier systems use the experimental Legacy backend (unvalidated) |
 | GUI (App)   | macOS 26+ (hard requirement)                                                                                                                  |
 | Permissions | Reads need no privileges; writes go through the root daemon (CLI needs `sudo`; App is authorized via System Settings, admin account required) |
 
@@ -146,14 +146,15 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 611 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 671 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
-                            # localization completeness
+                            # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 90.76%)
-swift run CellarUICheck     # 336 UI snapshot comparisons (three-style matrix) + localization completeness gate
+                            # pure logic, ≥80% · currently 91.25%)
+swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 354
+                            # authoritative + 36 new 0.20 forms) + localization gate (465 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -186,6 +187,8 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Maintenance batch (0.19.7-alpha)**: General-page fan section polish — controls re-seed when daemon status arrives (fixes the stale 37 °C battery-source display after cold launches), parameter commits switch to fine-grained pending (only the touched control dims; the whole section no longer flickers), and mid-flight commits are queued in a single slot and re-sent automatically (released)
 - ✅ **Maintenance batch (0.19.8-alpha)**: macOS 27 compatibility — battery temperature source moved to SMC sensors (macOS 27 removed the ioreg Temperature key; telemetry/statistics no longer fail wholesale), doctor states honestly that charge enforcement is unavailable on macOS 27, CFBundleVersion increments with every release (released)
 - ✅ **Hotfix (0.19.9-alpha)**: macOS 27 compatibility completion — parser cross-dictionary fallback (DesignCapacity/NominalChargeCapacity and the gauge field family moved into the BatteryData sub-dictionary on macOS 27); monitoring fully restored on macOS 27 (released)
+- ✅ **Maintenance batches (0.19.10–0.19.20-alpha)**: macOS 27 capability honesty + the charge orchestration channel (Shortcuts enforcement for ≥80%) + a series of menu-bar and power-flow polish rounds (released)
+- ✅ **Phase 5 · macOS 27 capability restore (0.20.0-alpha)**: discharge control plane revived (CHIE backend + clamshell rejection gate), sub-80% limiting genuinely enforced via the system-native charge-limit channel (experimental; automatic fallback to 80% + hourly self-healing), orchestration readback verification (immediate read-back confirmation + mismatch backoff), and “Stopped” rendering for 0 rpm panel fans (released)
 
 The full roadmap and design documents are published in the release notes.
 

@@ -16,6 +16,12 @@ public enum RuntimeProbe {
 
     /// 探测顺序：CHTE → CH0B（以 CH0B 为 Legacy 代表键，CH0C 不单独判定——评审 P2-8）。
     ///
+    /// 0.20 M1a 探测序修订（方案 §2.1）：CHTE（26 完整）→ CH0B（Legacy 完整，27 恒
+    /// 缺席自然落空）→ **CHIE（27 放电面，`dischargeControlPlane` 第三级）** → 无。
+    /// 本函数仍只负责充电执法后端选定：CHIE 控制面不构成 ChargingBackend（无充电
+    /// 执法键），由调用方在 `.noBackendAvailable` 命中后另测（establishBackendLocked
+    /// 终态臂）。
+    ///
     /// - 两者皆 132（键不存在）→ `.noBackendAvailable`（调用方据此降级为只读模式，监测仍可用）。
     /// - 传输故障（kr≠0 等非 132 错误）原样上抛，绝不降级为 `.noBackendAvailable`（评审 P1-7）。
     public static func probe(client: SMCClient) throws -> any ChargingBackend {
@@ -28,6 +34,49 @@ public enum RuntimeProbe {
         throw BackendError.noBackendAvailable
     }
 
+    // MARK: - CHIE 放电控制面探测（0.20 M1a §2.1）
+
+    /// CHIE 放电控制面探测结论（探测序第三级：CHTE/CH0B 落空后的 27 放电面）。
+    public enum DischargeControlPlane: Equatable, Sendable {
+        /// keyInfo 在位 + 读成功 + 同值写探针通过（0x00→0x00 回读一致，S1 E1 实证
+        /// 幂等安全）——放电控制面可用。
+        case writable
+        /// keyInfo 在位 + 读成功，写探针未执行（非 root——写需 root；可写性未知，
+        /// 如实上报，fail-closed 消费方按不可用处理）。
+        case writabilityUnknown
+        /// 键缺席 / 读失败 / 写探针失败——放电控制面不可用。
+        case unavailable
+    }
+
+    /// CHIE 探测（0.20 M1a）：keyInfo 在位 + 读成功 + 同值写探针（0x00→0x00，幂等
+    /// 安全——写探针需 root，探测运行于 daemon root 上下文；非 root 按在位但可写性
+    /// 未知处理并如实上报）。探测只读读路径 + 单次同值写（0x00 = 适配器使能 resting
+    /// 态，探测点无在轨放电——establishBackendLocked 先于崩溃恢复执行）。
+    ///
+    /// **`writeProbe: false`（0.20 P2 评审修法）：跳过同值写探针**——只读契约面
+    /// （doctor 检查 4/11 采集专用：doctor「不写任何 SMC 键」契约，P0-3），在位可读
+    /// 即返回 `.writabilityUnknown`（如实「可写性未探测」）；daemon establish 路径
+    /// 保持缺省 true（写探针裁定可写性）不变。
+    ///
+    /// - `keyNotFound`（132）→ `.unavailable`（键缺席，非故障）。
+    /// - 读失败（键在位但读取异常）→ `.unavailable`（fail-closed：读不通即不可用）。
+    /// - 写探针失败（root 写/回读不一致）→ `.unavailable`（fail-closed；写探针失败
+    ///   折叠为不可用而非上抛——探测点每 30s 重探会造成 CHIE 写抖动，sticky 终态
+    ///   吞掉重试，残留交巡检兜底）。
+    /// - 传输故障（keyInfo kr≠0）原样上抛，绝不折叠为 `.unavailable`（P1-7 纪律
+    ///   同款——坏连接 ≠ 平台结论）。
+    public static func dischargeControlPlane(
+        client: SMCClient, isRoot: Bool = isRunningAsRoot, writeProbe: Bool = true
+    ) throws -> DischargeControlPlane {
+        guard try client.keyExists("CHIE") else { return .unavailable }
+        guard (try? DischargeAdapterControl.adapterState(client: client)) != nil else {
+            return .unavailable
+        }
+        guard writeProbe else { return .writabilityUnknown }
+        guard isRoot else { return .writabilityUnknown }
+        return DischargeAdapterControl.sameValueWriteProbe(client: client) ? .writable : .unavailable
+    }
+
     /// discharge 能力探测（WP2' §2.1，评审 P1-1 fail-closed）：backend == "tahoe"
     /// **且** CHIE getKeyInfo 在位 → true。Legacy 后端 / CHIE 缺席机器 / CHIE 探测
     /// 失败（传输错误经 try? 折叠为 false）→ false——能力恒不出现在不满足条件处。
@@ -36,24 +85,41 @@ public enum RuntimeProbe {
         return (try? client.keyExists("CHIE")) == true
     }
 
-    /// 后端平台终态处置（0.19.10 WP-A；v0.19.20 编排批扩展）：`.noBackendAvailable`
-    /// 命中后的固定决策，纯函数钉语义——daemon 的 establishBackendLocked catch
-    /// 分支只消费本函数、不内联字面量。
+    /// 后端平台终态处置（0.19.10 WP-A；v0.19.20 编排批扩展；0.20 M1a capabilities
+    /// 矩阵扩展）：`.noBackendAvailable` 命中后的固定决策，纯函数钉语义——daemon
+    /// 的 establishBackendLocked catch 分支只消费本函数、不内联字面量。
     ///
     /// 三元语义（macOS 27 实证：CHTE/CH0B 键族被系统删除，进程内重试无意义）：
     /// - `retainClient: true`——新建的 SMCClient 必须保留：风扇/LED/Ts 探测等
     ///   观察面与充电后端无关，不应陪葬（只读模式收窄为「限充执法停用」）。
-    /// - `reportedCapabilities: ["orchestration"]`——能力上报**非 nil**：App 侧
-    ///   三态消费面（nil=未上报瞬态/旧 daemon / []/含值=已上报）据此分流；27 终态
-    ///   不再上报空数组——编排（Shortcuts 通道）是 27 唯一执法路径，上报编排能力
-    ///   即「27 终态」标记本体：App 据此显隐通用页编排节 + fullOnce 拒绝启动
-    ///   （WP-5），daemon 据此在观测段驱动编排链（R2 P2 门控钉死）。
+    /// - `reportedCapabilities`——能力上报**非 nil**：App 侧三态消费面（nil=未上报
+    ///   瞬态/旧 daemon / []/含值=已上报）据此分流。0.20 M1a 矩阵（方案 §2.1，
+    ///   R1-P1 处置）：
+    ///   - CHIE 可写 → `[orchestration, discharge, autoDischarge, sub80]`——必含
+    ///     orchestration（编排链/fullOnce 拒绝判定/App 编排节显隐依赖）；含
+    ///     autoDischarge 使 daemon 自动触发门与 App 开关门对称；含 sub80（27 终态
+    ///     即报无条件——域存在性不作上报条件，防干净机器假阴性隐藏功能，R2-P2）。
+    ///   - 无 CHIE → `[orchestration, sub80]`。
+    ///   "sub80" 上报先行于 topoff 通道落地（M1b）——能力表达域存在性，执法由
+    ///   M1b 补齐；26 及更早平台清单不变（两参都不触及成功路径）。
     /// - `retryWithinProcess: false`——进程内不再重探（sticky 终态）：消除每 tick
     ///   makeDefault+日志+clientGeneration 换代抖动；键族恢复伴随系统更新/重装
-    ///   （必然重启 daemon），进程重启即唯一清除路径。
+    ///   （必然重启 daemon），进程重启即唯一清除路径。**27（含 CHIE 在位）仍进
+    ///   终态 sticky（R1-P1）**——仅 reportedCapabilities 按 CHIE 探测结果扩展。
     public static func noBackendTerminalDisposition(
+        chieWritable: Bool
     ) -> (retainClient: Bool, reportedCapabilities: [String], retryWithinProcess: Bool) {
-        (retainClient: true, reportedCapabilities: [DaemonXPC.capabilityOrchestration],
-         retryWithinProcess: false)
+        let capabilities: [String]
+        if chieWritable {
+            capabilities = [
+                DaemonXPC.capabilityOrchestration,
+                DaemonXPC.capabilityDischarge,
+                DaemonXPC.capabilityAutoDischarge,
+                DaemonXPC.capabilitySub80,
+            ]
+        } else {
+            capabilities = [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilitySub80]
+        }
+        return (retainClient: true, reportedCapabilities: capabilities, retryWithinProcess: false)
     }
 }

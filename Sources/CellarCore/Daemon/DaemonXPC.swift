@@ -69,6 +69,15 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// magSafeLed 先例，UD-7：全回包携带防 ingest 覆盖触发「旧 daemon」闪断；
     /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容）。
     public var orchestration: OrchestrationStatus?
+    /// 0.20 M1a 合盖状态（§2.2 合盖拒绝闸；追加式可选字段——合成 Codable
+    /// decodeIfPresent，旧 daemon 回包缺席 / 旧客户端解码 → nil 兼容，wire 零破坏）。
+    /// true = 合盖（放电启动拒绝/运行中止判据）；nil = 读取失败或未探测（诚实缺席，
+    /// 弱检查局限见 docs/DEVICES.md 键世代表）。
+    public var clamshellClosed: Bool?
+    /// 0.20 M1b sub80 通道态（WP2 §3.2 降级态传播；追加式可选字段——decodeIfPresent
+    /// 先例）。三态：active（topoff 承载）/ degraded（重申×3 降级，编排钳 80）/
+    /// off（关断清理后）；**26/无 sub80 能力机器不填**（缺席 = 无此特性，R3-P3）。
+    public var sub80State: Sub80State?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -97,6 +106,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         scheduleActiveId: String? = nil,
         nativeLimit: NativeLimitStatus? = nil,
         orchestration: OrchestrationStatus? = nil,
+        clamshellClosed: Bool? = nil,
+        sub80State: Sub80State? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -123,6 +134,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.scheduleActiveId = scheduleActiveId
         self.nativeLimit = nativeLimit
         self.orchestration = orchestration
+        self.clamshellClosed = clamshellClosed
+        self.sub80State = sub80State
         self.timestamp = timestamp
     }
 }
@@ -205,7 +218,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.19.20-alpha"
+    public static let daemonVersion = "0.20.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -221,6 +234,11 @@ public enum DaemonXPC {
     /// noBackendTerminalDisposition 置值）：编排是 27 唯一执法路径；App 按能力
     /// 显隐通用页编排节 + fullOnce 按钮连带禁用（WP-5）。
     public static let capabilityOrchestration = "orchestration"
+    /// 0.20 M1a sub80 能力字面量（WP2 <80% 限充通道；方案 §2.1 矩阵——27 终态即报
+    /// 无条件，域存在性不作上报条件（R2-P2：防干净机器域未创建的假阴性隐藏功能）；
+    /// 26 及更早平台不上报）。App 消费：滑杆下放 60–100 + 实验性徽章显隐；真实
+    /// 可用性由 M1b 行为验证/降级兜底。
+    public static let capabilitySub80 = "sub80"
 
     // MARK: - 线格式键与常量
 

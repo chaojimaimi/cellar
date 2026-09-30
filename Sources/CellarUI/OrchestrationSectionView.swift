@@ -20,6 +20,14 @@ public struct OrchestrationSectionView: View {
     public let shortcutName: String
     /// 上次执行失败详情（daemon 回报 lastError 回读；nil = 无失败 → 状态行走就绪）。
     public let lastError: String?
+    /// 0.20 M2 WP3 读回展示行（宿主页组装好的成品串——「当前生效上限（读回）：
+    /// 75%」/「读回不可用」/「读回校验已停用…」/「读回与目标不符…」；nil = 不渲染，
+    /// 既有构造零 diff——旧 daemon/26 无编排能力机器天然缺席）。数据源 = App 侧
+    /// MCLClient 采样 + WP3 执行后即时校验（App 本地 UI 态，wire 零变更）。
+    public let readbackLine: String?
+    /// 读回行告警色（读回失配/停用 → warning；nil 行不渲染本参数无效）。
+    /// 默认 false——既有构造零 diff。
+    public let readbackIsWarning: Bool
     /// 控制器 busy（开关禁用；输入框不禁用——输入不触发 XPC）。
     public let busy: Bool
     /// 首行标题开关（照 ScheduleSectionView showsTitle 先例）：通用页由节头承担
@@ -39,6 +47,8 @@ public struct OrchestrationSectionView: View {
         lastError: String?,
         busy: Bool,
         showsTitle: Bool = true,
+        readbackLine: String? = nil,
+        readbackIsWarning: Bool = false,
         onToggleEnabled: @escaping (Bool) -> Void,
         onShortcutNameChange: @escaping (String) -> Void
     ) {
@@ -47,6 +57,8 @@ public struct OrchestrationSectionView: View {
         self.lastError = lastError
         self.busy = busy
         self.showsTitle = showsTitle
+        self.readbackLine = readbackLine
+        self.readbackIsWarning = readbackIsWarning
         self.onToggleEnabled = onToggleEnabled
         self.onShortcutNameChange = onShortcutNameChange
     }
@@ -79,6 +91,14 @@ public struct OrchestrationSectionView: View {
                 .disabled(busy)
             }
             statusLine
+            // 0.20 M2 WP3 读回展示行（宿主页传 nil 即不渲染——既有 golden 零 diff；
+            // 失配/停用态 warning 色，常规值/不可用 info 级 secondary 色）。
+            if let readbackLine {
+                Text(readbackLine)
+                    .font(.caption)
+                    .foregroundStyle(readbackIsWarning ? theme.warning : theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(CellarL10n.s("settings.orchestration.setup"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)

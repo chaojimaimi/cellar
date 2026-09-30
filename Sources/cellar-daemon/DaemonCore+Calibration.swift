@@ -259,7 +259,7 @@ extension DaemonCore {
         case .restoreAndComplete:
             // RESTORE：CHIE 恢复（重试阶梯）→ enforce 恢复限充语义（审查 M2 同判
             // 例——通知说恢复即现状收敛）→ done 字面量锁存 + 删文件。
-            restoreCalibrationCHIELocked(backend: backend, terminal: "完成", events: &events)
+            restoreCalibrationCHIELocked(terminal: "完成", events: &events)
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             let literal = actionTrack.terminateCalibration(CalibrationLiteral.done())
             deleteActionFileLocked(events: &events)
@@ -270,7 +270,7 @@ extension DaemonCore {
             // enforce 恢复限充语义 → safety ? calibration:safety 锁存 : 按原因落
             // timeout/cancel 字面量 + 删文件。
             if phase == .discharge {
-                restoreCalibrationCHIELocked(backend: backend, terminal: "中止(\(reason))", events: &events)
+                restoreCalibrationCHIELocked(terminal: "中止(\(reason))", events: &events)
             }
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             let literal: String
@@ -377,12 +377,22 @@ extension DaemonCore {
 
     /// 校准终态/取消恢复 CHIE=0x0（写 + 回读校验重试阶梯——写失败 ≠ 恢复完成，
     /// 红线 5：失败告警后终态照常落盘，残留交 §2.4 CHIE 残留不变量兜底）。
+    /// 0.20 M1a：DischargeAdapterControl client 参数化随迁——控制面 client 经
+    /// dischargeControlClientLocked（26 tahoe 路径同一 client 同字节，行为不变；
+    /// 校准能力门控保证 27 不会出现在轨校准，client 缺席臂为防御）。
     /// internal：cancelActionLocked（DaemonCore+OneShot.swift）跨文件调用。
     func restoreCalibrationCHIELocked(
-        backend: any ChargingBackend, terminal: String, events: inout [LogEvent]
+        terminal: String, events: inout [LogEvent]
     ) {
+        guard let client = dischargeControlClientLocked else {
+            events.append(LogEvent(
+                category: .control, level: .error,
+                message: "校准 \(terminal)：无控制后端，CHIE 恢复不可执行（残留交 §2.4 残留不变量巡检）"
+            ))
+            return
+        }
         let restoreError = DischargeAdapterControl.restoreEnabled(
-            backend: backend, attempts: Discharge.terminalRestoreAttempts
+            client: client, attempts: Discharge.terminalRestoreAttempts
         )
         if let restoreError {
             events.append(LogEvent(
@@ -401,13 +411,15 @@ extension DaemonCore {
     /// 相（CHIE=0x8 可能在场）必须恢复；相位缺失/未知串 → **无条件恢复（fail-closed，
     /// 一次多余 SMC 写无害，R1 P2-3）**；chargeFull/hold 相无需恢复。通知经
     /// adoptForCrashRecovery 的 cancel(crash-recovery) 锁存字面量由 App 轮询转移补发。
+    /// 0.20 M1a：DischargeAdapterControl client 参数化随迁（控制面可写判据——26
+    /// tahoe 同一 client 同字节行为不变；27 终态机上残留经 CHIE 探测连接真实还原）。
     func restoreCalibrationAfterCrashLocked(_ pending: OneShotAction, events: inout [LogEvent]) {
         let phase = pending.phase.flatMap(Calibration.Phase.init(rawValue:))
-        guard (phase == .discharge || phase == nil), let backend, backend.adapterControlSupported else {
+        guard (phase == .discharge || phase == nil), let client = dischargeControlClientLocked else {
             return
         }
         let restoreError = DischargeAdapterControl.restoreEnabled(
-            backend: backend, attempts: Discharge.terminalRestoreAttempts
+            client: client, attempts: Discharge.terminalRestoreAttempts
         )
         if let restoreError {
             events.append(LogEvent(

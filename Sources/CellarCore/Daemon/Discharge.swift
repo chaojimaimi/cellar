@@ -138,18 +138,65 @@ public enum Discharge {
     ///   确认适配器在场，否则整机切电池）；
     /// - percent 缺席（快照失败且无上次已知值）或 ≤ 目标 → 拒绝（无放电空间，
     ///   60% 地板已由 LimitPolicy 保证目标 ≥60）。
+    /// `clamshellClosed` 缺省 nil（0.20 M1a 合盖闸挂入——nil = 未探测/既有构造点
+    /// 零改动；合盖拒绝由 daemon 侧 ClamshellGate.startRejected 独立判定后上抛
+    /// `.clamshellClosed`，本参数为纯函数面的一致性入口）。
     public static func startPrecondition(
         mode: String,
         externalConnected: Bool?,
         percent: Int?,
-        targetPercent: Int
+        targetPercent: Int,
+        clamshellClosed: Bool? = nil
     ) -> DischargeStartRejection? {
         guard mode == "active" else { return .modeNotActive }
         guard externalConnected == true else { return .noExternalPower }
         guard let percent, percent > targetPercent else {
             return .notAboveTarget(percent: percent ?? 0, target: targetPercent)
         }
+        if clamshellClosed == true { return .clamshellClosed }
         return nil
+    }
+
+    // MARK: - 0.20 M1a §2.1/§2.2 观测段路由（27 放电维护子路径）
+
+    /// 观测段早退分支路由（backend 缺席 tick 的放电利益相关分流；R2-P1 成因拆分
+    /// 的纯函数化——daemon 只消费不内联，CellarCoreCheck 场景域钉死真值表）。
+    ///
+    /// 成因语义（R2-P1 处置，方案 §2.2 #5）：monitoring-loss 计数覆盖 backend 缺席
+    /// 与采样失败两种成因，27 豁免**仅针对 backend 缺席成因**——放电活跃 ∧ 27 终态
+    /// ∧ 控制面可写 ∧ **本拍快照在位** → 豁免并路由维护子分支；快照缺席（采样失败）
+    /// 或控制面缺席 → 照常计数（90s 盲态止损保留）。26 瞬态窗口（非终态）恒计数
+    /// ——26 行为零变化（编排门 orchestrationTerminal 不含 26 瞬态）。
+    public enum ObservationRoute: Equatable, Sendable {
+        /// 经 DischargeAdapterControl 执行维护子分支（CHIE 保活/完成判定/合盖检查
+        /// ——豁免本拍监控缺失计数；维护链自身账本照常推进 keepAliveFailures）。
+        case maintainDischarge
+        /// 残留巡检兜底 + 自动触发插桩（§2.2 #7 落位观测段；无动作期）。
+        case patrolResidual
+        /// 照常推进监控缺失计数（noteDischargeMonitoringLossLocked——内部轨道
+        /// 门控谓词对非放电动作自然 no-op）。
+        case noteMonitoringLoss
+    }
+
+    /// 路由判定（纯函数，判定次序即契约勿重排）：
+    /// 1. 非 27 终态（26 瞬态/未探测）→ `.noteMonitoringLoss`（既有语义零变化）；
+    /// 2. 放电动作活跃：控制面可写 ∧ 快照在位 → `.maintainDischarge`；否则
+    ///    `.noteMonitoringLoss`（快照缺席拍不推进完成判定——R2-P3 时序用例锚）；
+    /// 3. 其他动作活跃（27 上校准/fullOnce 均不可达——防御计数）→ `.noteMonitoringLoss`；
+    /// 4. 空轨 → `.patrolResidual`（巡检兜底 + 自动触发）。
+    public static func observationRoute(
+        orchestrationTerminal: Bool,
+        isDischargeAction: Bool,
+        actionActive: Bool,
+        controlWritable: Bool,
+        snapshotAvailable: Bool
+    ) -> ObservationRoute {
+        guard orchestrationTerminal else { return .noteMonitoringLoss }
+        if isDischargeAction {
+            return controlWritable && snapshotAvailable ? .maintainDischarge : .noteMonitoringLoss
+        }
+        if actionActive { return .noteMonitoringLoss }
+        return .patrolResidual
     }
 }
 
@@ -166,6 +213,9 @@ public enum DischargeStartRejection: Error, Equatable, Sendable, CustomStringCon
     /// 能力不可用（Legacy 后端 / CHIE 缺席 / 探测失败——App 按钮已按 capabilities
     /// 隐藏，本 case 为 XPC 纵深防御）。
     case capabilityUnavailable
+    /// 合盖拒绝（0.20 M1a 合盖拒绝闸，§2.2：防合盖放电黑屏与不可见耗电——
+    /// ClamshellGate.startRejected 命中；诚实原因上屏）。
+    case clamshellClosed
 
     public var message: String {
         switch self {
@@ -180,6 +230,7 @@ public enum DischargeStartRejection: Error, Equatable, Sendable, CustomStringCon
             return "「放电到上限」需要当前电量高于目标上限（当前 \(percent)%，目标 \(target)%）"
         case .persistenceFailed: return "「放电到上限」启动失败：无法写入动作文件"
         case .capabilityUnavailable: return "当前机型不支持放电功能"
+        case .clamshellClosed: return "「放电到上限」需要开盖运行（合盖状态无法放电——防黑屏与不可见耗电）"
         }
     }
 
@@ -359,25 +410,49 @@ extension OneShotTrack {
     }
 }
 
-// MARK: - CHIE 恢复与残留巡检（daemon/检查侧共用的 IO 帮助——后端注入）
+// MARK: - CHIE 恢复与残留巡检（daemon/检查侧共用的 IO 帮助——0.20 M1a 原位重构：
+// backend 参数化 → SMCClient 直挂）
 
-/// CHIE 适配器控制帮助（写后回读校验 + 重试阶梯；供 daemon 终态/取消/睡眠/启动
-/// 恢复与 CellarCoreCheck 故障注入验证共用——与 LimitController.perform 同分层）。
+/// CHIE 适配器控制帮助（0.20 M1a §2.1 原位重构——**backend: → client: 参数化**，
+/// 禁止另起同名新类型；7+ 消费点随迁）。职责 = CHIE 0x8/0x00 读写 + 同值写探针 +
+/// 状态查询。
+///
+/// 行为不变量（方案 §2.2）：26 上 CHTE 在位时行为不变——TahoeBackend 的 CHIE 读写
+/// 即本类型 client 直挂路径的薄封装（同一 SMCClient、同字节封包），daemon 消费点
+/// 的可写性判定仍「原 backend 路径优先」（`backend.adapterControlSupported` 先于
+/// 27 探测结论，见 DaemonCore.dischargeControlWritableLocked）。供 daemon 终态/
+/// 取消/睡眠/启动恢复/巡检与 CellarCoreCheck 故障注入验证共用——与
+/// LimitController.perform 同分层。
 public enum DischargeAdapterControl {
+    /// CHIE 写（0x00 = 适配器使能 · 0x08 = 禁用；SMC-NOTES §7.5/§11.4 实证值）。
+    /// 不含回读校验（写后校验由调用层负责）。1B hex_ 载荷。
+    public static func setAdapterEnabled(_ enabled: Bool, client: SMCClient) throws {
+        try client.write(
+            "CHIE",
+            bytes: enabled ? Discharge.chieEnabledBytes : Discharge.chieDisabledBytes
+        )
+    }
+
+    /// CHIE 状态查询：0x00 → true（使能）、0x08 → false（禁用）、其余值/长度不符
+    /// → nil（未知——调用方按需恢复 fail-closed）。传输错误原样上抛（不吞）。
+    public static func adapterState(client: SMCClient) throws -> Bool? {
+        Discharge.adapterState(from: try client.read("CHIE"))
+    }
+
     /// 恢复适配器使能（CHIE=0x00）：写 + 回读校验，失败**立即**重试至多
     /// `attempts` 次（总尝试数，含首次；本函数内部无 sleep——睡眠路径约束见
     /// `Discharge.sleepNowRestoreAttempts`）。彻底失败 → 返回最后一次错误
     /// （调用方负责告警；残留交 §2.4 巡检兜底）；成功 → nil。
     ///
-    /// 回读语义：`adapterEnabled()` 返回 true（0x00）即恢复成功；false/nil（未知）
+    /// 回读语义：`adapterState` 返回 true（0x00）即恢复成功；false/nil（未知）
     /// → 本次尝试失败（保持 verifyFailed 显式化风格）。
-    public static func restoreEnabled(backend: any ChargingBackend, attempts: Int) -> Error? {
+    public static func restoreEnabled(client: SMCClient, attempts: Int) -> Error? {
         guard attempts >= 1 else { return nil }
-        var lastError: Error = BackendError.adapterControlUnsupported
+        var lastError: Error = SMCError.keyNotFound("CHIE")
         for attempt in 1...attempts {
             do {
-                try backend.setAdapterEnabled(true)
-                let state = try backend.adapterEnabled()
+                try setAdapterEnabled(true, client: client)
+                let state = try adapterState(client: client)
                 if state == true { return nil }
                 throw BackendError.verifyFailed(key: "CHIE", desired: true, actual: state ?? false)
             } catch {
@@ -386,5 +461,18 @@ public enum DischargeAdapterControl {
             }
         }
         return lastError
+    }
+
+    /// 同值写探针（0x00→0x00，幂等安全——S1 E1 实证 forceWrite 00→00 回读一致）：
+    /// 写 0x00 + 回读校验一致 → true（可写）；任一步失败 → false（fail-closed，
+    /// 不上抛——探测点结论面，传输细节由调用方日志承载）。探测点无在轨放电，
+    /// 写 0x00 = 适配器使能 resting 态（兼带崩溃残留清理方向）。
+    public static func sameValueWriteProbe(client: SMCClient) -> Bool {
+        do {
+            try setAdapterEnabled(true, client: client)
+            return try adapterState(client: client) == true
+        } catch {
+            return false
+        }
     }
 }

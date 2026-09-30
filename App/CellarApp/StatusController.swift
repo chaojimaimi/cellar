@@ -103,6 +103,28 @@ final class StatusController: ObservableObject {
     /// token 不插入处理集，下轮轮询重试）。
     private nonisolated(unsafe) var orchestrationTask: Task<Void, Never>?
 
+    // MARK: 0.20 M2 WP3 编排读回（MCLClient 产品化；App 本地 UI 态——wire 零变更）
+    /// 原生限充 GET 读回客户端（只读；类缺席 sticky + 实例自愈——类型头注记）。
+    /// ⚠️ 仅后台线程调用（Task.detached 包裹——dlopen/ObjC 消息派发同步调用，
+    /// 主线程永不阻塞；CpuFanMonitor 先例）。
+    private let mclClient = MCLClient()
+    /// WP3 失配退避（评审 R0-P2）：会话累计失配 ≥3 → 停用读回重跑（转纯行为
+    /// 验证）+ 通用页如实展示。会话级（App 进程生命周期）。
+    private var readbackMismatchCount = 0
+    private var readbackRerunDisabled = false
+    /// 校验进度代际（WP3 校验中/重跑中进度上屏的陈旧防护——新执行起算、终态落地
+    /// applyReadbackOutcome 再 +1，使在途进度行全部失效，不覆盖最终态）。
+    private var readbackProgressGeneration = 0
+    /// 读回展示行（通用页编排节；nil = 不渲染——26/旧 daemon/无编排节机器天然
+    /// 缺席）。warning 色 = 失配/停用态。采样门控照 CpuFanMonitor 先例（通用页
+    /// 可见时 30s 循环，避免常驻轮询）。
+    @Published private(set) var orchestrationReadbackLine: String?
+    @Published private(set) var orchestrationReadbackWarning = false
+    /// 读回采样循环（nil = 停止）。⚠️ nonisolated(unsafe)：deinit（非隔离）需取消；
+    /// 属性仅在主 actor 方法或 deinit 中访问（Task.cancel() 本身线程安全——既有
+    /// pollTask 同款注记）。
+    private nonisolated(unsafe) var mclSampleTask: Task<Void, Never>?
+
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
     /// WP5 §2.4：IOPS 实时电源态 override 参与规则 4/5——图标随插拔电即时翻转。
     var iconState: MenuBarIconState {
@@ -164,6 +186,7 @@ final class StatusController: ObservableObject {
         pollTask?.cancel()        // MenuBarExtra 视图重建后防多实例轮询泄漏（规格 §2.6）
         telemetryTask?.cancel()
         orchestrationTask?.cancel()
+        mclSampleTask?.cancel()
     }
 
     // MARK: - 轮询调度（规格 §2.2 + Phase 5 v1.2 §2.3 多表面仲裁）
@@ -763,6 +786,12 @@ final class StatusController: ObservableObject {
         // 陷阱；OrchestrationSettings 输入框与执行侧同键）。
         let name = OrchestrationSettings.currentShortcutName()
         let runner = shortcutRunner   // 评审 P3-3：注入缝真实接线（协议缝可 mock）
+        // WP3 读回校验输入（MainActor 门态捕获——detached 闭包不得触碰主 actor 态）。
+        let client = mclClient
+        let rerunAllowed = !readbackRerunDisabled
+        // 校验进度代际（本拍起算——终态落地时再 +1 作废在途进度）。
+        readbackProgressGeneration += 1
+        let progressGeneration = readbackProgressGeneration
         orchestrationTask = Task.detached { [weak self] in
             // 执行（内部再 detached——runner 阻塞语义，主 actor 永不等待）。
             let detail: String?
@@ -771,6 +800,27 @@ final class StatusController: ObservableObject {
                 detail = nil
             } catch {
                 detail = String(describing: error)
+            }
+            // 0.20 WP3 读回校验（§4）：执行成功才校验——== target 即时确认；
+            // 失配有界重跑（2 次，间隔 5s）；App 本地 UI 态（wire 零变更——daemon
+            // 行为验证回路不变，回报语义照旧）。后台执行（MCL/runner 全阻塞调用）。
+            var readback: MCLReadbackResult = .skipped
+            if detail == nil {
+                readback = await StatusController.performReadbackVerification(
+                    target: percent, name: name, runner: runner, client: client,
+                    rerunAllowed: rerunAllowed,
+                    onProgress: { [weak self] line, warning in
+                        // 进度上屏（校验中/重跑中——最长 2×5s 重跑窗的可观察性）；
+                        // 代际不符即丢弃（终态落地后陈旧进度不覆盖）。
+                        Task { @MainActor [weak self] in
+                            guard let self,
+                                  progressGeneration == self.readbackProgressGeneration
+                            else { return }
+                            self.orchestrationReadbackLine = line
+                            self.orchestrationReadbackWarning = warning
+                        }
+                    }
+                )
             }
             await MainActor.run {
                 guard let self else { return }
@@ -782,9 +832,12 @@ final class StatusController: ObservableObject {
                         CellarL10n.s("settings.orchestration.failed", detail)
                     )
                 }
+                // 读回校验态落地（App 本地 UI 态；失配退避计数在此推进）。
+                self.applyReadbackOutcome(readback, target: percent)
                 // 回报确认链（XPC 后台；鉴权拒/超时不重试——daemon TTL 过期重发收敛，
                 // R2 P1 降级链）。回包不 ingest——下一轮轮询统一收敛，避免回报-消费
-                // 再入路径。
+                // 再入路径。读回失配不改回报语义（执行成功 = ok；行为验证是 daemon
+                // 权威回路）。
                 let ok = detail == nil
                 Task.detached {
                     _ = try? DaemonXPCClient().reportOrchestration(
@@ -793,6 +846,136 @@ final class StatusController: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: 0.20 M2 WP3 读回校验（MCLClient 产品化）
+
+    /// 读回校验结果（App 本地 UI 态输入；skipped = 退避停用/执行失败不校验）。
+    enum MCLReadbackResult {
+        case skipped
+        case unavailable
+        case confirmed(limit: Int)
+        case mismatched(lastValue: Int)
+    }
+
+    /// 校验流（nonisolated 静态——detached 上下文调用；全部阻塞调用经内层
+    /// Task.detached 承载）：读回 == target → 即时确认；失配 → 有界重跑（2 次，
+    /// 间隔 5s——重跑 = 重发快捷指令）；仍不符 → 如实失配。读回通道 sticky 停用
+    /// （类缺席）→ .unavailable；退避停用（调用方已捕获 rerunAllowed=false）→
+    /// .skipped（转纯行为验证——daemon 行为验证回路不变）。
+    /// onProgress：校验中/重跑中进度行即时上屏（重跑窗可观察性；主 actor 侧
+    /// 代际防护，陈旧进度不覆盖终态）。
+    nonisolated private static func performReadbackVerification(
+        target: Int, name: String, runner: ShortcutsRunning, client: MCLClient,
+        rerunAllowed: Bool,
+        onProgress: @escaping @Sendable (_ line: String, _ warning: Bool) -> Void
+    ) async -> MCLReadbackResult {
+        guard client.readbackAvailable else { return .unavailable }
+        guard rerunAllowed else { return .skipped }
+        onProgress(CellarL10n.s("settings.orchestration.readback.verifying"), false)
+        // ⚠️ Task.detached 闭包用带标签参数形态（confusable trailing closure 警告
+        // ——guard/for 体内尾随闭包与语句体混淆，编译器提示）。
+        guard let first = await Task.detached(operation: { client.readLimit() }).value else {
+            return .unavailable
+        }
+        if first == target { return .confirmed(limit: first) }
+        var lastValue = first
+        for attempt in 1...2 {
+            // 重跑进度上屏（mismatch 已发生 → warning 色标）。
+            onProgress(
+                CellarL10n.s("settings.orchestration.readback.rerunning", UInt(attempt)), true)
+            try? await Task.sleep(for: .seconds(5))
+            do {
+                try await runner.run(name: name, percent: target)
+            } catch {
+                continue   // 重跑失败计一次，重试窗继续（有界 2 次封顶）
+            }
+            guard let value = await Task.detached(operation: { client.readLimit() }).value else {
+                return .unavailable
+            }
+            lastValue = value
+            if value == target { return .confirmed(limit: value) }
+        }
+        return .mismatched(lastValue: lastValue)
+    }
+
+    /// 校验态落地（主 actor）：即时确认 → 读回行刷新（提速通用页执行状态呈现）；
+    /// 失配 → 会话计数 +1，≥3 停用重跑（R0-P2 churn 防护）+ 如实告警行。
+    private func applyReadbackOutcome(_ outcome: MCLReadbackResult, target: Int) {
+        readbackProgressGeneration += 1   // 终态落地——本代在途进度行全部失效
+        switch outcome {
+        case .skipped:
+            guard readbackRerunDisabled else { return }
+            orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.disabled")
+            orchestrationReadbackWarning = true
+        case .unavailable:
+            orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.unavailable")
+            orchestrationReadbackWarning = false
+        case .confirmed(let limit):
+            orchestrationReadbackLine = CellarL10n.s(
+                "settings.orchestration.readback.current", "\(limit)")
+            orchestrationReadbackWarning = false
+        case .mismatched(let lastValue):
+            readbackMismatchCount += 1
+            if readbackMismatchCount >= 3 {
+                readbackRerunDisabled = true
+                orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.disabled")
+                orchestrationReadbackWarning = true
+            } else {
+                orchestrationReadbackLine = CellarL10n.s(
+                    "settings.orchestration.readback.mismatch", "\(target)", "\(lastValue)")
+                orchestrationReadbackWarning = true
+            }
+        }
+    }
+
+    /// 读回行格式（采样/确认共用）：值在 → 「当前生效上限（读回）：N%」；缺席 →
+    /// 「读回不可用」（诚实信息态，非告警）。
+    private func formatReadbackLine(limit: Int?) -> String {
+        guard let limit else {
+            return CellarL10n.s("settings.orchestration.readback.unavailable")
+        }
+        return CellarL10n.s("settings.orchestration.readback.current", "\(limit)")
+    }
+
+    /// 通用页可见性换档（GeneralSections onAppear/onDisappear 转发——编排节所在
+    /// 表面私有态，转发点唯一；照 setPanelVisible 先例）。读回采样门控：通用页
+    /// 可见才轮询（避免常驻采样——CpuFanMonitor panelVisible 先例）。
+    func setGeneralPageVisible(_ visible: Bool) {
+        let running = mclSampleTask != nil
+        guard visible != running else { return }
+        if visible {
+            Task { await sampleMCLOnce() }   // 翻档可见即补一跳（CpuFanMonitor 先例）
+            mclSampleTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(30))
+                    guard let self, !Task.isCancelled else { return }
+                    await self.sampleMCLOnce()
+                }
+            }
+        } else {
+            mclSampleTask?.cancel()
+            mclSampleTask = nil
+        }
+    }
+
+    /// 读回采样单跳（编排终态机才采样；退避停用态展示停用行；失配告警展示期间
+    /// 周期采样不覆盖——WP3 校验态优先，30s 后自然刷新）。
+    private func sampleMCLOnce() async {
+        guard orchestrationTerminal else {
+            orchestrationReadbackLine = nil
+            orchestrationReadbackWarning = false
+            return
+        }
+        if readbackRerunDisabled {
+            orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.disabled")
+            orchestrationReadbackWarning = true
+            return
+        }
+        let client = mclClient
+        let limit = await Task.detached { client.readLimit() }.value
+        guard !Task.isCancelled, !orchestrationReadbackWarning else { return }
+        orchestrationReadbackLine = formatReadbackLine(limit: limit)
     }
 
     /// 统一控制执行器：busy 防重入（非静默）+ XPC 后台 + 结果回主 actor。

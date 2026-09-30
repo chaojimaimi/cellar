@@ -53,6 +53,12 @@ struct GeneralSections: View {
             loginItems.load()
             loginItems.refreshRegistration()
             queryNotificationAuthorization()
+            // 0.20 M2 WP3：通用页可见 → 读回采样开（编排节所在表面私有态；
+            // CpuFanMonitor panelVisible 门控先例——避免常驻轮询）。
+            statusController.setGeneralPageVisible(true)
+        }
+        .onDisappear {
+            statusController.setGeneralPageVisible(false)
         }
     }
 
@@ -274,6 +280,10 @@ struct GeneralSections: View {
                 lastError: statusController.orchestrationStatus?.lastError,
                 busy: statusController.busy,
                 showsTitle: false,
+                // 0.20 M2 WP3 读回展示行（MCLClient 采样 + 执行后即时校验；nil =
+                // 不渲染——sticky 停用前未采样的首帧自然缺席，不渲染占位）。
+                readbackLine: statusController.orchestrationReadbackLine,
+                readbackIsWarning: statusController.orchestrationReadbackWarning,
                 onToggleEnabled: { statusController.setOrchestration($0) },
                 onShortcutNameChange: { orchestrationSettings.updateShortcutName($0) }
             )

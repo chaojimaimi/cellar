@@ -379,6 +379,11 @@ struct Main {
         // 旧 JSON 缺字段容忍/chargingDisabled 在窗 desired=100 真值表路径/doctor
         // 检查 17 + 检查 15 的 27 注册残留语义——纯函数面，OrchestrationDomain）。
         try runOrchestrationDomainScenarios()
+        // 0.20 M1b：topoffprotection <80% 限充通道场景域（方案 §3 全部：写入器原子序/
+        // 违规与证据判定/channelTick 状态机（幂等写/验证窗/strike 重申/冷却/降级/24h
+        // 复位）/healTick 自愈/汇聚点路由真值表（单通道互斥/降级钳 80/编排开关门独立/
+        // 26 回归逐值）——纯函数面，TopoffDomain）。
+        runTopoffDomainScenarios()
         // Phase 5 v1.8 M1：MagSafe LED 模型层场景域（方案 §2 清单：validating/
         // interpreting 白名单穷举/correctionDecision 矩阵穷举（门槛三行/计费
         // gating/锁存自动解除防卡死）/wire 三态/policy 仅丢字段分层——纯函数面，
@@ -2790,7 +2795,17 @@ struct Main {
                 let backend = try RuntimeProbe.probe(client: client)
                 print("后端 = \(backend.name)，控制键 = \(backend.keyNames)")
             } catch BackendError.noBackendAvailable {
-                print("后端不可用：CHTE 与 CH0B 均无（只读模式，监测仍可用；控制功能不可用）")
+                print("后端不可用：CHTE 与 CH0B 均无（只读模式，监测仍可用；充电执法停用）")
+                // 0.20 M1a：探测序第三级——CHIE 放电控制面（27 放电面）。
+                let plane = try RuntimeProbe.dischargeControlPlane(client: client)
+                switch plane {
+                case .writable:
+                    print("CHIE 放电控制面 = 可写（同值写探针 0x00→0x00 回读一致）——放电可用，充电执法经编排/topoff 通道")
+                case .writabilityUnknown:
+                    print("CHIE 放电控制面 = 在位但可写性未知（非 root——sudo 复核）")
+                case .unavailable:
+                    print("CHIE 放电控制面 = 不可用（键缺席/读失败/写探针未过）")
+                }
             }
             // 探测成功（含"无后端"这一确定性结论）即 0；仅连接/传输故障为非零。
             exit(0)

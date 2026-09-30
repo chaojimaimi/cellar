@@ -19,6 +19,38 @@
 import CellarCore
 import Foundation
 
+/// 0.20 M1a：CHIE 控制面 mock 传输（DischargeAdapterControl backend→client 参数化
+/// 的场景域随迁——语义态 CHIE 值 + 写吞计数，照 MockChargingBackend.adapter* 契约
+/// 同构迁移：写不生效 = kr=0 但值不变 → 回读校验失败 → 重试阶梯）。纯内存，
+/// 不触碰任何 SMC/IOKit 传输。data8 判定用字面偏移（Spec，第二双眼睛纪律）。
+final class MockCHIETransport: SMCTransport, @unchecked Sendable {
+    /// 当前 CHIE 值（0x00 使能 / 0x08 禁用——1B hex_ 载荷，SMC-NOTES §7.5 实证）。
+    var chieValue: UInt8 = 0x00
+    /// 前 N 次写被吞（kr=0 但值不变）；N 耗尽后写入生效——重试阶梯验证。
+    var failWrites = 0
+    private(set) var writeCount = 0
+
+    func call(input: [UInt8]) -> (output: [UInt8], kr: Int32) {
+        let data8 = input.count > Spec.data8Offset ? input[Spec.data8Offset] : 0
+        switch data8 {
+        case Spec.write:   // 写：载荷 1B @bytesOffset
+            writeCount += 1
+            if failWrites > 0 {
+                failWrites -= 1
+                return (reply(), 0)
+            }
+            if input.count > Spec.bytesOffset { chieValue = input[Spec.bytesOffset] }
+            return (reply(), 0)
+        case Spec.keyInfo: // 键元数据：1B hex_
+            return (reply(dataSize: 1, type: "hex_"), 0)
+        case Spec.read:    // 读：当前值
+            return (reply(bytes: [chieValue]), 0)
+        default:
+            return ([UInt8](repeating: 0, count: 80), 0)
+        }
+    }
+}
+
 /// 放电场景域入口（Main.main 调用；断言经 main.swift 的 internal 助手）。
 /// throws：本域含 ActionStore 临时目录 IO（与用例 104 同款，失败上抛即场景失败）。
 func runDischargeDomainScenarios() throws {
@@ -336,55 +368,70 @@ func runDischargeDomainScenarios() throws {
               "放电-13", "判定常量钉死：地板 60 / 温度 40°C / ext 去抖 N=2 / 保活失败 3 / 监护缺失 3")
     }
 
-    // 放电-14：backend-nil×discharge（能力面 fail-closed：不支持后端 restoreEnabled 显式报错）。
+    // 放电-14：CHIE 键缺席（0.20 M1a client 参数化随迁——原「不支持后端显式报错」
+    // 的 fail-closed 不变量由键缺席错误面承接：Legacy 机/无 CHIE 机的 restore 路径
+    // 显式失败；能力门在 daemon capabilities，本层只保证错误显式化不静默）。
     do {
-        let unsupported = MockChargingBackend(enabled: true)
-        unsupported.adapterControlSupported = false
-        unsupported.adapterEnabledRaw = false
-        let error = DischargeAdapterControl.restoreEnabled(backend: unsupported, attempts: 3)
-        check(error as? BackendError == BackendError.adapterControlUnsupported,
-              "放电-14", "不支持适配器控制的后端：restoreEnabled → adapterControlUnsupported（fail-closed）")
+        let absent = CheckTransport()
+        // 每次尝试的回读各入队一条 132（重试阶梯全程 keyNotFound——队列耗尽后
+        // CheckTransport 默认回包会折算为 verifyFailed，语义漂移）。
+        absent.enqueue(reply(result: 132), for: Spec.keyInfo)
+        absent.enqueue(reply(result: 132), for: Spec.keyInfo)
+        absent.enqueue(reply(result: 132), for: Spec.keyInfo)
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: absent), attempts: 3
+        )
+        check(error as? SMCError == SMCError.keyNotFound("CHIE"),
+              "放电-14", "CHIE 键缺席：restoreEnabled → keyNotFound 显式失败（fail-closed，重试阶梯耗尽）")
     }
 
-    // ---- ② 终态 CHIE 恢复写失败 + 残留巡检组 ----
+    // ---- ② 终态 CHIE 恢复写失败 + 残留巡检组（0.20 M1a：MockCHIETransport 面）----
 
     // 放电-15：恢复成功（一次写入即回读确认；写调用计数 1）。
     do {
-        let backend = MockChargingBackend(enabled: true)
-        backend.adapterEnabledRaw = false      // CHIE=0x08（放电中残留）
-        let error = DischargeAdapterControl.restoreEnabled(backend: backend, attempts: Discharge.terminalRestoreAttempts)
-        check(error == nil && backend.adapterEnabledRaw == true && backend.adapterWriteCount == 1,
+        let transport = MockCHIETransport()
+        transport.chieValue = 0x08      // CHIE=0x08（放电中残留）
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: transport), attempts: Discharge.terminalRestoreAttempts
+        )
+        check(error == nil && transport.chieValue == 0x00 && transport.writeCount == 1,
               "放电-15", "恢复成功：写 0x00 + 回读确认 → nil，恰 1 次写调用")
     }
 
     // 放电-16：重试阶梯（前 2 次写被吞 → 第 3 次成功 → nil；共 3 次写调用）。
     do {
-        let backend = MockChargingBackend(enabled: true)
-        backend.adapterEnabledRaw = false
-        backend.adapterFailWrites = 2
-        let error = DischargeAdapterControl.restoreEnabled(backend: backend, attempts: 3)
-        check(error == nil && backend.adapterWriteCount == 3 && backend.adapterEnabledRaw == true,
+        let transport = MockCHIETransport()
+        transport.chieValue = 0x08
+        transport.failWrites = 2
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: transport), attempts: 3
+        )
+        check(error == nil && transport.writeCount == 3 && transport.chieValue == 0x00,
               "放电-16", "前 2 写不生效 → 第 3 写成功（重试阶梯 3 次耗尽前恢复）")
     }
 
     // 放电-17：重试阶梯耗尽（3 次全吞 → 返回最后一次 verifyFailed + 动作终态照常落盘由调用方保证）。
     do {
-        let backend = MockChargingBackend(enabled: true)
-        backend.adapterEnabledRaw = false
-        backend.adapterFailWrites = 3
-        let error = DischargeAdapterControl.restoreEnabled(backend: backend, attempts: 3)
+        let transport = MockCHIETransport()
+        transport.chieValue = 0x08
+        transport.failWrites = 3
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: transport), attempts: 3
+        )
         check(error as? BackendError == BackendError.verifyFailed(key: "CHIE", desired: true, actual: false)
-                && backend.adapterWriteCount == 3,
+                && transport.writeCount == 3,
               "放电-17", "重试耗尽 → 上抛 verifyFailed(CHIE)（调用方告警，残留交 §2.4 巡检兜底）")
     }
 
     // 放电-18：sleepNow 档恢复失败（attempts=1 单发失败 → 立即上抛，不拖长同步睡眠路径）。
     do {
-        let backend = MockChargingBackend(enabled: true)
-        backend.adapterEnabledRaw = false
-        backend.adapterFailWrites = 1
-        let error = DischargeAdapterControl.restoreEnabled(backend: backend, attempts: 1)
-        check(error != nil && backend.adapterWriteCount == 1,
+        let transport = MockCHIETransport()
+        transport.chieValue = 0x08
+        transport.failWrites = 1
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: transport), attempts: 1
+        )
+        check(error != nil && transport.writeCount == 1,
               "放电-18", "sleepNow 档（attempts=1）写失败 → 立即上抛（不阻塞 IOAllowPowerChange，§1.5）")
     }
 
@@ -397,10 +444,12 @@ func runDischargeDomainScenarios() throws {
         check(Discharge.residualPatrolNeeded(enabled: false) == true
                 && Discharge.residualPatrolNeeded(enabled: false) == true,
               "放电-19", "连续命中：恢复写失败后下一 tick 判定仍为需恢复（巡检无记忆，30s 节奏重试）")
-        let failing = MockChargingBackend(enabled: true)
-        failing.adapterEnabledRaw = false
-        failing.adapterFailWrites = 1
-        let error = DischargeAdapterControl.restoreEnabled(backend: failing, attempts: 1)
+        let failing = MockCHIETransport()
+        failing.chieValue = 0x08
+        failing.failWrites = 1
+        let error = DischargeAdapterControl.restoreEnabled(
+            client: SMCClient(transport: failing), attempts: 1
+        )
         check(error != nil, "放电-19", "巡检写失败路径：restoreEnabled 单发失败 → 告警由调用方发出，巡检继续")
     }
 
@@ -525,5 +574,185 @@ func runDischargeDomainScenarios() throws {
         check(notificationEvents(previous: dStatus("enforce:noop"), current: dStatus("enforce:disableCharging"))
                 == [.limitReached(upperLimit: 90)],
               "放电-25", "回归：普通 enforce 转移 → limitReached 照旧（P1-4 仅抑制动作前缀）")
+    }
+
+    // ---- ⑨ 0.20 M1a：CHIE 控制面基础（client 直挂原位重构随迁场景）----
+
+    // 放电-30：同值写探针（0x00→0x00 幂等安全——S1 E1 实证）+ 状态查询 + 写封包字节面。
+    do {
+        let ok = MockCHIETransport()
+        ok.chieValue = 0x00
+        check(DischargeAdapterControl.sameValueWriteProbe(client: SMCClient(transport: ok)) == true
+                && ok.writeCount == 1 && ok.chieValue == 0x00,
+              "放电-30", "同值写探针：0x00→写→回读 0x00 → true（幂等，恰 1 次写）")
+        let stuck = MockCHIETransport()
+        stuck.chieValue = 0x08
+        stuck.failWrites = 1
+        check(DischargeAdapterControl.sameValueWriteProbe(client: SMCClient(transport: stuck)) == false
+                && stuck.chieValue == 0x08,
+              "放电-30", "写探针失败（写被吞回读 0x08）→ false（fail-closed，不上抛）")
+        let stateful = MockCHIETransport()
+        stateful.chieValue = 0x08
+        check(try DischargeAdapterControl.adapterState(client: SMCClient(transport: stateful)) == false,
+              "放电-30", "adapterState：0x08 → false（禁用）")
+        let packet = CheckTransport()
+        packet.enqueue(reply(), for: Spec.write)
+        try DischargeAdapterControl.setAdapterEnabled(false, client: SMCClient(transport: packet))
+        let input = packet.inputs[0]
+        check(input[Spec.data8Offset] == Spec.write && input[Spec.dataSizeOffset] == 1
+                && input[Spec.bytesOffset] == 0x08,
+              "放电-30", "setAdapterEnabled(false) 封包：data8=6 / offset28=1 / bytes=08（与 TahoeBackend CHIE 路径同源同字节）")
+    }
+
+    // ---- ⑩ 0.20 M1a：CHIE 控制面探测矩阵（探测序第三级）----
+
+    // 放电-31：dischargeControlPlane 四臂 + 传输故障上抛 + 探测序契约。
+    do {
+        // 臂 1：CHIE 键缺席（132）→ .unavailable。
+        let absent = CheckTransport()
+        absent.enqueue(reply(result: 132), for: Spec.keyInfo)
+        check(try RuntimeProbe.dischargeControlPlane(client: SMCClient(transport: absent), isRoot: true) == .unavailable,
+              "放电-31", "CHIE 缺席（132）→ .unavailable（键缺席，非故障）")
+        // 臂 2：在位 + 读成功 + root + 写探针过 → .writable。
+        let writable = MockCHIETransport()
+        writable.chieValue = 0x00
+        check(try RuntimeProbe.dischargeControlPlane(client: SMCClient(transport: writable), isRoot: true) == .writable,
+              "放电-31", "keyInfo 在位 + 读成功 + 同值写探针过（root）→ .writable")
+        // 臂 3：非 root → 在位但可写性未知（如实上报；**写探针不执行**——零写调用）。
+        let unknown = MockCHIETransport()
+        unknown.chieValue = 0x00
+        check(try RuntimeProbe.dischargeControlPlane(client: SMCClient(transport: unknown), isRoot: false) == .writabilityUnknown
+                && unknown.writeCount == 0,
+              "放电-31", "非 root → .writabilityUnknown（在位可读、写探针未执行——零写调用）")
+        // 臂 3b：writeProbe: false（P2 评审修法——doctor 只读契约）：root 也跳过写
+        // 探针 → .writabilityUnknown（**零写调用**——「不写任何 SMC 键」契约钉死）。
+        let readOnly = MockCHIETransport()
+        readOnly.chieValue = 0x00
+        check(try RuntimeProbe.dischargeControlPlane(
+                client: SMCClient(transport: readOnly), isRoot: true, writeProbe: false) == .writabilityUnknown
+                && readOnly.writeCount == 0,
+              "放电-31", "writeProbe: false（doctor 只读契约）→ .writabilityUnknown 且零写调用（在位可读即止）")
+        // 臂 4：root 写探针失败（写被吞回读 0x08）→ .unavailable（fail-closed 折叠）。
+        let broken = MockCHIETransport()
+        broken.chieValue = 0x08
+        broken.failWrites = 1
+        check(try RuntimeProbe.dischargeControlPlane(client: SMCClient(transport: broken), isRoot: true) == .unavailable,
+              "放电-31", "写探针失败（root）→ .unavailable（折叠不抖动——sticky 终态防每 tick 写探针）")
+        // 臂 5：keyInfo 传输故障原样上抛（P1-7 纪律——坏连接 ≠ 平台结论）。
+        let badKR = Int32(bitPattern: 0xE000_02C7)
+        let transportFail = CheckTransport()
+        transportFail.enqueue(reply(), kr: badKR, for: Spec.keyInfo)
+        expectThrows(try RuntimeProbe.dischargeControlPlane(client: SMCClient(transport: transportFail), isRoot: true),
+                     as: SMCError.transportFailure(kr: badKR),
+                     "放电-31", "传输故障原样上抛，绝不折叠为 .unavailable（P1-7 同款）")
+        // 臂 6：探测序契约——probe() CHTE→CH0B 双 132 即抛 noBackendAvailable，
+        // CHIE 不被 probe() 触达（第三级由调用方在终态臂另测）。
+        let sequence = CheckTransport()
+        sequence.enqueue(reply(result: 132), for: Spec.keyInfo)   // CHTE
+        sequence.enqueue(reply(result: 132), for: Spec.keyInfo)   // CH0B
+        sequence.enqueue(reply(dataSize: 1, type: "hex_"), for: Spec.keyInfo)   // CHIE（probe() 后）
+        expectThrows(try RuntimeProbe.probe(client: SMCClient(transport: sequence)),
+                     as: BackendError.noBackendAvailable,
+                     "放电-31", "CHTE/CH0B 双 132 → noBackendAvailable（探测序前两级）")
+        check(sequence.inputs.count == 2, "放电-31", "probe() 探测序 CHTE→CH0B 即止——CHIE 控制面探测不属 ChargingBackend 选定")
+    }
+
+    // ---- ⑪ 0.20 M1a：观测段路由（§2.1/§2.2 #5——R2-P1 成因拆分真值表）----
+    // daemon 观测段早退分支只消费本判定（Discharge.observationRoute）；⚠️ 时序
+    // 契约（R2-P3 采样失败时序用例锚）：daemon 侧先 sampleAndPublishLocked 后路由
+    // ——快照缺席拍路由落 .noteMonitoringLoss，不推进完成判定（本组钉判定语义，
+    // 调用点次序由 daemon 侧注记 + code-review 走查兜底）。
+
+    // 放电-32：三分支真值表（26 回归 + 27 豁免 + 止损保留）。
+    do {
+        // 26 瞬态窗口（非终态）→ 恒计数（26 行为零变化——编排门不含 26 瞬态）。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: false, isDischargeAction: true, actionActive: true,
+                controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "26 瞬态（backend 暂缺）∧ 放电活跃 → noteMonitoringLoss（既有 90s 止损语义零变化）")
+        // 27 + 放电活跃 + 控制面可写 + 快照在位 → 维护子分支（豁免 backend 缺席成因）。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                controlWritable: true, snapshotAvailable: true) == .maintainDischarge,
+              "放电-32", "27 终态 ∧ 放电活跃 ∧ 控制面可写 ∧ 快照在位 → maintainDischarge（仅豁免 backend 缺席成因）")
+        // R2-P3 时序锚：快照缺席（采样失败）→ 照常计数（不推进完成判定——90s 盲态止损保留）。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                controlWritable: true, snapshotAvailable: false) == .noteMonitoringLoss,
+              "放电-32", "27 ∧ 放电活跃 ∧ 快照缺席（采样失败）→ noteMonitoringLoss（R2-P1：采样失败成因不豁免）")
+        // 控制面缺席 → 照常计数。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                controlWritable: false, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "27 ∧ 放电活跃 ∧ 控制面不可写 → noteMonitoringLoss（fail-closed）")
+        // 非放电动作活跃（27 上校准/fullOnce 均不可达——防御计数）。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: true, isDischargeAction: false, actionActive: true,
+                controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "27 ∧ 其他动作活跃（防御）→ noteMonitoringLoss（轨道门控谓词 no-op 兜底）")
+        // 空轨 → 巡检兜底 + 自动触发插桩。
+        check(Discharge.observationRoute(
+                orchestrationTerminal: true, isDischargeAction: false, actionActive: false,
+                controlWritable: true, snapshotAvailable: true) == .patrolResidual,
+              "放电-32", "27 ∧ 空轨 → patrolResidual（§2.2 #7 残留巡检兜底落位观测段）")
+    }
+
+    // ---- ⑫ 0.20 M1a：合盖拒绝闸（§2.2 合盖管道；mini-spike 结论见 ClamshellProbe；
+    //       **P1 评审修法 (a)：仅 27 终态生效**——gateActive 由 backendUnavailableTerminal
+    //       同源判别式传入，26 clamshell-mode 放行/续行回归钉死）----
+
+    // 放电-33：启动拒绝判定矩阵（强检查/弱检查/放行）+ 运行中止三态（gateActive=true = 27）。
+    do {
+        // 强检查命中：合盖 → 拒绝（ext 无关）。
+        check(ClamshellGate.startRejected(gateActive: true, closed: true, userActive: true, externalConnected: true),
+              "放电-33", "27：合盖（强检查命中）→ 启动拒绝")
+        // 开盖放行。
+        check(!ClamshellGate.startRejected(gateActive: true, closed: false, userActive: nil, externalConnected: nil),
+              "放电-33", "27：开盖（强检查否决）→ 放行")
+        // 弱检查降级（强字段不可得）：ext=true ∧ 用户活跃 → 放行（manual 路径现实形态）。
+        check(!ClamshellGate.startRejected(gateActive: true, closed: nil, userActive: true, externalConnected: true),
+              "放电-33", "27：强字段不可得 + ext=true ∧ 用户活跃 → 弱检查放行（局限登记 DEVICES.md）")
+        // 弱检查命中：屏幕唤醒代理明确为否 → 拒绝（弱检查分支同样仅 27——P1）。
+        check(ClamshellGate.startRejected(gateActive: true, closed: nil, userActive: false, externalConnected: true),
+              "放电-33", "27：强字段不可得 + 用户活跃=否 → 弱检查拒绝（保守）")
+        // 弱检查命中：ext 明确为否 → 拒绝（纵深——startPrecondition 之外的独立半边）。
+        check(ClamshellGate.startRejected(gateActive: true, closed: nil, userActive: nil, externalConnected: false),
+              "放电-33", "27：强字段不可得 + 未外接 → 弱检查拒绝")
+        // 双未知 → 放行（fail-open + 局限登记：防探测失败整机拒绝放电）。
+        check(!ClamshellGate.startRejected(gateActive: true, closed: nil, userActive: nil, externalConnected: nil),
+              "放电-33", "27：强字段与弱检查双双不可知 → 放行（fail-open + 登记局限）")
+        // 运行中止三态：仅强检查——nil 不中止（息屏 ≠ 合盖，防误伤开盖息屏的合法放电）。
+        check(ClamshellGate.shouldAbort(gateActive: true, closed: true),
+              "放电-33", "27：运行中检出合盖 → 中止（30s 粒度，维护 tick 判定）")
+        check(!ClamshellGate.shouldAbort(gateActive: true, closed: false)
+                && !ClamshellGate.shouldAbort(gateActive: true, closed: nil),
+              "放电-33", "27：运行中开盖/字段不可读 → 不中止（nil 诚实缺席不误伤）")
+        // 纯函数一致性入口：startPrecondition 的 clamshellClosed 参数（daemon 经
+        // ClamshellGate 判定后上抛 .clamshellClosed；缺省 nil = 既有构造点零改动）。
+        check(Discharge.startPrecondition(
+                mode: "active", externalConnected: true, percent: 85, targetPercent: 80,
+                clamshellClosed: true) == .clamshellClosed,
+              "放电-33", "startPrecondition 合盖入参 → .clamshellClosed（诚实原因上屏）")
+        check(Discharge.startPrecondition(
+                mode: "active", externalConnected: true, percent: 85, targetPercent: 80,
+                clamshellClosed: false) == nil,
+              "放电-33", "startPrecondition 开盖入参 → 放行（既有矩阵零回归：缺省 nil 同放电-23）")
+        check(DischargeStartRejection.clamshellClosed.message.contains("开盖"),
+              "放电-33", "拒绝原文含「开盖」引导（XPC errorReply 上屏，诚实原因）")
+    }
+
+    // 放电-34：26 平台门控回归（P1 评审修法 (a) 回归钉死）——gateActive=false（26
+    // 及更早，backendUnavailableTerminal 同源判别式为 false）恒放行/恒不中止：
+    // clamshell-mode 手动放电照旧、运行续行照旧，26 行为零变化。
+    do {
+        // 26 启动放行：即使合盖强检查命中也放行（26 clamshell-mode 手动放电照旧）。
+        check(!ClamshellGate.startRejected(gateActive: false, closed: true, userActive: true, externalConnected: true),
+              "放电-34", "26：合盖强检查命中 → 仍放行（合盖闸不生效——26 行为零变化）")
+        // 26 弱检查分支放行：userActive/ext 拒绝分支在 26 同样不触发（弱检查仅 27——P1）。
+        check(!ClamshellGate.startRejected(gateActive: false, closed: nil, userActive: false, externalConnected: false),
+              "放电-34", "26：弱检查双命中 → 仍放行（userActive/ext 拒绝分支仅 27 生效）")
+        // 26 运行不中止：即使合盖强检查命中也不中止（26 clamshell-mode 运行续行照旧）。
+        check(!ClamshellGate.shouldAbort(gateActive: false, closed: true),
+              "放电-34", "26：运行中检出合盖 → 不中止（维护 tick 门控不生效——26 行为零变化）")
     }
 }

@@ -73,7 +73,11 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // 钉死，既有 FanSection 构造零改动）；
 // v0.19.20 自 342 扩 354——充电编排节 2 态 12 新增（Orchestration_ready/failed：
 // 就绪态 + 上次失败详情态（失败详情 = daemon 回报 lastError 样例串）新组件
-// OrchestrationSectionView 形态钉死，回调控件空闭包——渲染无副作用））
+// OrchestrationSectionView 形态钉死，回调控件空闭包——渲染无副作用））；
+// 0.20 M2 自 354 扩 390——WP4 已停转 2 态 12（StatusLine_fanStopped_dual/single）
+// + WP2 sub80 组件 3 态 18（Sub80Status_experimental/falling/degraded）
+// + WP3 读回展示 1 态 6（Orchestration_readback）——全部全新文件（新增非扰动；
+// 既有 >0 thirdRow 与 Orchestration_ready/failed 构造零改动零 diff）
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -915,6 +919,71 @@ private func buildCases() -> [SnapshotCase] {
                     })
                 })
             }
+
+            // 0.20 M2 自 354 扩 390——六组新形态 36 张（全部全新文件，新增非扰动）：
+            // ①StatusLine_fanStopped_dual/single（WP4 §5：rpm==0 → 「已停转」语汇
+            //   词——GA 低温静息停转判谳 §11.3.1，0 是有效读数非门控；双扇两格 +
+            //   单扇合一两形态；既有 >0 thirdRow 构造零改动 → 既有 golden 零 diff）；
+            // ②Sub80Status_experimental/falling/degraded（WP2 §3.4：实验性徽章 +
+            //   说明 / 回落进度「回落中 82%→75%」/ 降级横幅——参数驱动新组件
+            //   Sub80StatusView，三态全缺省 EmptyView 由宿主门控保证零渲染）；
+            // ③Orchestration_readback（WP3 §4：读回展示行「当前生效上限（读回）：
+            //   75%」——宿主页组装成品串样例；readbackLine 缺省 nil → 既有
+            //   Orchestration_ready/failed 构造零改动零 diff）。
+            //   --regen --only=StatusLine_fanStopped / Sub80Status / Orchestration_readback 分组跑。
+            let fanStoppedBase = makeSnapshot(percent: 90, isCharging: false, externalConnected: true,
+                                              amperageMA: 0,
+                                              adapter: ["Watts": 96, "AdapterVoltage": 20_150,
+                                                        "Current": 4_770, "Name": "96W USB-C Power Adapter",
+                                                        "Description": "adapter", "IsWireless": false])
+            cases.append(SnapshotCase(
+                name: "StatusLine_fanStopped_dual_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(snapshot: fanStoppedBase, cpuSkinTempC: 36.4, fanLRPM: 0, fanRRPM: 0)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+            cases.append(SnapshotCase(
+                name: "StatusLine_fanStopped_single_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    StatusLineView(snapshot: fanStoppedBase, cpuSkinTempC: 36.4, fanLRPM: 0)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
+            let sub80Sections: [(String, Sub80StatusView)] = [
+                ("experimental", Sub80StatusView(experimentalTarget: 75)),
+                ("falling", Sub80StatusView(experimentalTarget: 75, fallingFrom: 82, fallingTarget: 75)),
+                ("degraded", Sub80StatusView(degraded: true)),
+            ]
+            for (stateName, section) in sub80Sections {
+                cases.append(SnapshotCase(
+                    name: "Sub80Status_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                    width: 304, height: nil, style: style, scheme: scheme
+                ) {
+                    AnyView(wrap(style, scheme) {
+                        section.frame(width: 304, alignment: .leading)
+                    })
+                })
+            }
+
+            cases.append(SnapshotCase(
+                name: "Orchestration_readback_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    OrchestrationSectionView(
+                        enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                        lastError: nil, busy: false,
+                        readbackLine: "当前生效上限（读回）：75%", readbackIsWarning: false,
+                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                    ).frame(width: 304, alignment: .leading)
+                })
+            })
         }
     }
     return cases

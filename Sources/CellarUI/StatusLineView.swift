@@ -248,12 +248,25 @@ public struct StatusLineView: View {
         }
     }
 
-    /// 风扇格值：nil 来源 → 裸转速 Text（与既有形态逐字节一致）；非 nil →
-    /// 转速 + 来源小字（caption2 + tertiaryText——层级低于数值，「1344 rpm ·系统」
-    /// 语汇不加中点，来源词独立着色区分）。
+    /// 风扇格值：rpm == 0 → 「已停转」词（0.20 WP4 §5——GA 低温静息停转判谳
+    /// §11.3.1：0 是有效读数非门控，渲染为语汇词而非数字 0；来源小字保留）；
+    /// rpm > 0 → **保持 `Text("\(Int)…")` LocalizedStringKey 插值形态**（locale
+    /// 千分位格式化——「1,344 rpm」，golden 对账钉死；抽 String 会降级 verbatim
+    /// 丢格式，M2 对账实测回归已修）；来源小字 caption2 + tertiaryText。
     @ViewBuilder
     private func fanValueText(rpm: Double) -> some View {
-        if let fanSource {
+        if rpm == 0 {
+            if let fanSource {
+                HStack(spacing: 4) {
+                    Text(CellarL10n.s("statusline.fanStopped"))
+                    Text(fanSource)
+                        .font(.caption2)
+                        .foregroundStyle(theme.tertiaryText)
+                }
+            } else {
+                Text(CellarL10n.s("statusline.fanStopped"))
+            }
+        } else if let fanSource {
             HStack(spacing: 4) {
                 Text("\(Int(rpm.rounded())) rpm")
                 Text(fanSource)

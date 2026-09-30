@@ -27,6 +27,26 @@
 > 且 CHTE 停充回读一致。`device.discharge.verify = pass` 表示最近一次放电已完整
 > 走到终点（其余时刻为瞬态 `unknown` 属预期）。
 
+## SMC 控制键世代表（0.20 M1a 实测，随批收录）
+
+按 macOS 代际记录控制键/关键字段的在位与可写性（spike 实测 + 真机巡检；「不可读」=
+keyInfo 132 或读失败，「可写」= 同值写探针 0x00→0x00 回读一致——S1 E1 实证幂等安全）：
+
+| macOS 代际 | CHTE | CH0B/CH0C | CHIE | bf 系（bfD0/bfE0/bfF0） | Clamshell（合盖状态） |
+| --- | --- | --- | --- | --- | --- |
+| 26.x（Tahoe，26.6.2 实测） | ✓ 可读可写（ui32/4B） | ✗ 缺席 | ✓ 可读可写（hex_/1B） | 未测（26 无此需求） | AppleSmartBattery 侧未依赖；合盖闸走 IOPMrootDomain |
+| 27 GA（26A428 系，27.0.1 26A434 实测） | **✗ 不可读**（键族被系统删除） | ✗ 缺席 | **✓ 存活可写**（hex_/1B） | **❌ 全部不存在**（keyInfo 132） | **AppleSmartBattery 无 ClamshellState**（全字典 grep 命中 0）；等价字段 = `IOPMrootDomain.AppleClamshellState`（Bool，**非 root 可读**）+ `AppleClamshellCausesSleep`；屏幕唤醒代理 `IOPMUserIsActive` 同服务可读 |
+
+- 27 放电控制面 = CHIE（`RuntimeProbe.dischargeControlPlane` 第三级探测：keyInfo 在位
+  + 读成功 + 同值写探针）；充电执法经编排/topoff 通道（topoff 通道 0.20 M1b 落地）。
+- **合盖闸作用域（0.20 P1 评审修定）：仅 macOS 27 终态生效**（daemon
+  `backendUnavailableTerminal` 同源判别式）——26 及更早 clamshell-mode 手动放电/
+  运行续行零变化（闸不介入）。
+- **合盖闸局限登记**：强字段（`IOPMrootDomain.AppleClamshellState`）读取失败时降级
+  「ext=true ∧ 用户活跃（IOPMUserIsActive）」弱检查——弱检查仅在放电启动路径生效
+  （且仅 27）；运行中 30s 粒度中止依赖强字段（不可读时诚实缺席不中止，防误伤开盖
+  息屏的合法放电）。代理性质如实标注：`IOPMUserIsActive` 不精确等价显示态。
+
 ## 各机型实测行收录表
 
 欢迎在 issue 中附上完整 `cellar doctor --devices` 输出行（并注明机型/芯片/macOS

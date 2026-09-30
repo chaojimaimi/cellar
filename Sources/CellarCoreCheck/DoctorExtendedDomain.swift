@@ -476,4 +476,134 @@ func runDoctorExtendedDomainScenarios() {
                 && !defaulted.checks[2].detail.contains("macOS 27"),
               "用例119", "osMajorVersion 缺省（默认 26）→ noneAvailable detail 逐字零附注（既有构造点零改动）")
     }
+
+    // ---- 0.20 M1a：检查 4 的 27 控制面分支（§2.3 工单第 7 项）+ 检查 11 控制面臂
+    //      + 检查 18 topoff 域（root 只读展示）----
+
+    /// 27 控制面 fixture：noneAvailable + dischargeProbe（controlPlane 注入）。
+    func planeInputs(
+        _ plane: RuntimeProbe.DischargeControlPlane?, chieState: Bool? = nil,
+        osMajorVersion: Int = 27
+    ) -> DoctorInputs {
+        DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable,
+            chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            dischargeProbe: DischargeProbe(
+                supported: false, chieState: chieState, readFailed: false, controlPlane: plane
+            ),
+            osMajorVersion: osMajorVersion
+        )
+    }
+
+    // 医生-18：检查 4 三臂——CHIE 可写 → info「放电控制面可用（CHIE）」；非 root
+    // 可写性未知 → info；探针失败 → fail「放电控制面不可用」。
+    do {
+        let writable = DoctorReportGenerator.generate(planeInputs(.writable)).checks[3]
+        check(writable.status == .info
+                && writable.detail.contains("放电控制面可用（CHIE）")
+                && writable.detail.contains("编排/topoff 通道"),
+              "医生-18", "27 ∧ CHIE 可写 → 检查 4 info（充电执法经编排/topoff 通道——诚实化，不再一刀切 FAIL）")
+        let unknown = DoctorReportGenerator.generate(planeInputs(.writabilityUnknown)).checks[3]
+        check(unknown.status == .info && unknown.detail.contains("可写性未知")
+                && unknown.detail.contains("只读契约"),
+              "医生-18", "27 ∧ 可写性未探测（doctor 只读契约）→ 检查 4 info（如实上报，不误报）")
+        let unavailable = DoctorReportGenerator.generate(planeInputs(.unavailable)).checks[3]
+        check(unavailable.status == .fail && unavailable.detail.contains("放电控制面不可用"),
+              "医生-18", "27 ∧ CHIE 探针失败 → 检查 4 fail（放电控制面不可用）")
+        // 26 同形态（controlPlane 非 nil 但 osMajor 26）→ 既有 FAIL 臂（平台门语义）。
+        let on26 = DoctorReportGenerator.generate(planeInputs(.writable, osMajorVersion: 26)).checks[3]
+        check(on26.status == .fail && on26.detail == "控制键状态未知（读取异常）",
+              "医生-18", "26 不走 27 分支 → 既有 FAIL detail 逐字不变（26 行为零变化）")
+    }
+
+    // 医生-19：检查 11 控制面臂——27 writable 与 supported 等效可用；unavailable
+    // 专属文案；writabilityUnknown 走「放电不可用」既有文案。
+    do {
+        let available = dischargeCheck(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            dischargeProbe: DischargeProbe(
+                supported: false, chieState: true, readFailed: false,
+                controlPlane: .writable
+            )
+        ))
+        check(available.status == .pass && available.detail.contains("适配器已使能"),
+              "医生-19", "27 ∧ CHIE 控制面可写 ∧ 无动作 ∧ CHIE=0x00 → PASS（与 supported 等效判定表）")
+        let unavailable = dischargeCheck(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            dischargeProbe: DischargeProbe(
+                supported: false, chieState: nil, readFailed: false,
+                controlPlane: .unavailable
+            )
+        ))
+        check(unavailable.status == .info && unavailable.detail.contains("放电控制面不可用"),
+              "医生-19", "27 ∧ CHIE 探针失败 → INFO「放电控制面不可用」（平台事实，非机器故障）")
+        let unknown = dischargeCheck(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            dischargeProbe: DischargeProbe(
+                supported: false, chieState: nil, readFailed: false,
+                controlPlane: .writabilityUnknown
+            )
+        ))
+        check(unknown.status == .info && unknown.detail.contains("CHIE 在位但可写性未知")
+                && unknown.detail.contains("只读契约"),
+              "医生-19", "27 ∧ 可写性未探测（doctor 只读契约 writeProbe: false）→ INFO（与检查 4「在位」口径一致，检查间不打架）")
+    }
+
+    // 医生-20：检查 18 topoff 域（采集纯函数 + 渲染条件三态）。
+    do {
+        // parseInt：整数串 → Int；文本/空 → nil。
+        check(TopoffDomainDoctorProbe.parseInt(" 90 \n") == 90, "医生-20", "defaults read 整数输出解析（trim）")
+        check(TopoffDomainDoctorProbe.parseInt("abc") == nil && TopoffDomainDoctorProbe.parseInt("") == nil,
+              "医生-20", "非整数输出 → nil（键缺席/异常形态）")
+        // 非 root → 受限形态（诚实标注，不误报）。
+        let nonRoot = TopoffDomainDoctorProbe.collect(isRoot: false) { _, _ in ("", 0) }
+        check(nonRoot.domainPresent == false && nonRoot.readDetail?.contains("非 root") == true,
+              "医生-20", "非 root → 受限形态（sudo 复核指引）")
+        // 域缺席（干净机器）：defaults read 非零退出 → 未创建展示。
+        let absent = TopoffDomainDoctorProbe.collect(isRoot: true) { _, args in
+            args.count == 3 ? ("The domain/default pair does not exist", 1) : ("", 1)
+        }
+        check(absent.domainPresent == false && absent.readDetail?.contains("域未创建") == true,
+              "医生-20", "域缺席 → 「干净形态」展示（R2-P2：存在性仅诊断展示用）")
+        // 域在位：两键解析（MCLFeatureState=1 / mclLimitValue=90——SMC-NOTES §11.5 E0 原值）。
+        let present = TopoffDomainDoctorProbe.collect(isRoot: true) { _, args in
+            if args.count == 2 { return ("MCLFeatureState = 1\nmclLimitValue = 90", 0) }
+            if args.last == "MCLFeatureState" { return ("1", 0) }
+            if args.last == "mclLimitValue" { return ("90", 0) }
+            return ("", 1)
+        }
+        check(present.domainPresent == true && present.featureState == 1 && present.mclLimit == 90
+                && present.readDetail == nil,
+              "医生-20", "域在位 → 两键解析（0.19.20 实验期残留形态如实展示）")
+        // 渲染：attempted 缺省零渲染；非 root / 在位两臂 info（恒不抬退出码）。
+        check(!DoctorReportGenerator.generate(DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: [])
+        )).checks.contains { $0.name == "topoff 域" },
+              "医生-20", "attempted 缺省 → 检查 18 零渲染（既有 count 断言零回归）")
+        let rendered = DoctorReportGenerator.generate(DoctorInputs(
+            isRoot: false, smcConnected: true,
+            probe: .noneAvailable, chargingEnabled: nil, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            topoffDomain: nonRoot, topoffDomainProbeAttempted: true
+        ))
+        let topoffCheck = rendered.checks.last
+        check(topoffCheck?.name == "topoff 域" && topoffCheck?.status == .info,
+              "医生-20", "检查 18 渲染 info（不抬退出码——展示/残留诊断定位）")
+    }
 }

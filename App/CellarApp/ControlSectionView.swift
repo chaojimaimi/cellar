@@ -69,7 +69,8 @@ struct ControlSectionView: View {
                     .monospacedDigit()
             }
             // §7.1：松手（onEditingChanged(false)）→ 防抖 300ms → applyLimits
-            // 全链路（预检/三态/banner/busy/stale 比对全复用）。
+            // 全链路（预检/三态/banner/busy/stale 比对全复用）。滑杆范围 60…100
+            // 两平台同形（60 地板红线不动）——差异在 <80 标注（下方）。
             Slider(
                 value: $upperLimit,
                 in: 60...100,   // UI 层 60 地板（红线 1）
@@ -80,10 +81,20 @@ struct ControlSectionView: View {
                 }
             )
             .disabled(isModeDisabled || isActionActive)
-            // v0.19.20 WP-4 §5：编排生效中（enabled ∧ 27 终态）的 <80 行内标注
-            // ——S6 原生范围硬限 80-100，<80 由 daemon nativeTarget 钳到 80 应用
-            //（policy 仍存用户意图值——日程恢复/退出边沿语义不受影响）。
-            if statusController.orchestrationActive, Int(upperLimit) < 80 {
+            // 0.20 WP2 §3.4：<80 标注按 sub80 能力分流——
+            // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 通道）→ 实验性
+            //   徽章 + 说明 / 回落进度（active ∧ percent > 目标）/ 降级横幅
+            //  （degraded）——Sub80StatusView 参数驱动组件（CellarUICheck 可快照）；
+            // - 无能力（26 / 27 无 CHIE）：0.19.20 钳 80 原样——编排生效中 <80 行内
+            //   标注（S6 原生范围硬限 80-100，daemon nativeTarget 钳 80 应用）。
+            if sub80Capable {
+                Sub80StatusView(
+                    degraded: statusController.daemonStatus?.sub80State == .degraded,
+                    experimentalTarget: Int(upperLimit) < 80 ? Int(upperLimit) : nil,
+                    fallingFrom: fallingFrom,
+                    fallingTarget: fallingTarget
+                )
+            } else if statusController.orchestrationActive, Int(upperLimit) < 80 {
                 Text(CellarL10n.s("panel.orchestration.minNative"))
                     .font(.caption)
                     .foregroundStyle(theme.warning)
@@ -245,5 +256,29 @@ struct ControlSectionView: View {
 
     private var isModeDisabled: Bool {
         statusController.daemonStatus?.mode == "disabled"
+    }
+
+    // MARK: - 0.20 WP2 §3.4 sub80 状态
+
+    /// sub80 能力（capabilities 含 sub80——27 终态矩阵上报；26/无 CHIE 机器缺席
+    /// → <80 标注保持 0.19.20 钳 80 原样，全部新 UI 元素门控回退）。
+    private var sub80Capable: Bool {
+        statusController.capabilities?.contains(DaemonXPC.capabilitySub80) == true
+    }
+
+    /// 回落进度当前电量（sub80State == active ∧ 当前电量 > 目标——「回落中
+    /// 82%→75%」，进度语义不承诺时长；nil = 不渲染）。26/无能力机器恒 nil。
+    private var fallingFrom: Int? {
+        guard sub80Capable,
+              statusController.daemonStatus?.sub80State == .active,
+              let percent = statusController.daemonStatus?.lastPercent,
+              let target = statusController.daemonStatus?.upperLimit,
+              percent > target else { return nil }
+        return percent
+    }
+
+    /// 回落目标（与 fallingFrom 成对——单值门）。
+    private var fallingTarget: Int? {
+        fallingFrom != nil ? statusController.daemonStatus?.upperLimit : nil
     }
 }

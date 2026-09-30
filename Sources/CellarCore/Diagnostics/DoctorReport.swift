@@ -137,6 +137,11 @@ public struct DoctorInputs: Sendable {
     public let orchestrationProbe: OrchestrationDoctorProbe?
     /// 检查 17 是否已探测（attempted 缺省零渲染——既有 count 断言零回归）。
     public let orchestrationProbeAttempted: Bool
+    /// 检查 18（0.20 M1a）：topoffprotection 域状态（root 只读展示；nil = 未探测
+    /// 不渲染——检查 9-17 同款条件渲染兼容约束）。
+    public let topoffDomain: TopoffDomainDoctorProbe?
+    /// 检查 18 是否已探测（DoctorCommand 恒 true——缺省形态零渲染）。
+    public let topoffDomainProbeAttempted: Bool
     /// macOS 大版本（v0.19.8 G5，方案 §3.3）：检查 3/4 的 macOS 27 感知附注开关；
     /// v0.19.20 WP-6 扩面——检查 15 的 27「注册残留」语义开关。收集侧注入
     /// （DoctorCommand 读 `ProcessInfo`；CellarCoreCheck 场景注入 26/27
@@ -172,6 +177,8 @@ public struct DoctorInputs: Sendable {
         magSafeLedProbeAttempted: Bool = false,
         orchestrationProbe: OrchestrationDoctorProbe? = nil,
         orchestrationProbeAttempted: Bool = false,
+        topoffDomain: TopoffDomainDoctorProbe? = nil,
+        topoffDomainProbeAttempted: Bool = false,
         osMajorVersion: Int = 26
     ) {
         self.isRoot = isRoot
@@ -201,6 +208,8 @@ public struct DoctorInputs: Sendable {
         self.magSafeLedProbeAttempted = magSafeLedProbeAttempted
         self.orchestrationProbe = orchestrationProbe
         self.orchestrationProbeAttempted = orchestrationProbeAttempted
+        self.topoffDomain = topoffDomain
+        self.topoffDomainProbeAttempted = topoffDomainProbeAttempted
         self.osMajorVersion = osMajorVersion
     }
 }
@@ -304,6 +313,11 @@ public enum DoctorReportGenerator {
         if let orchestrationCheck = orchestrationChannel(inputs) {
             checks.append(orchestrationCheck)
         }
+        // 0.20 M1a 检查 18：topoffprotection 域状态（条件渲染同 9-17——attempted
+        // 缺省零渲染；info 恒不抬退出码——仅展示/残留诊断）。
+        if let topoffCheck = topoffDomain(inputs) {
+            checks.append(topoffCheck)
+        }
         return DoctorReport(checks: checks)
     }
 
@@ -383,6 +397,33 @@ public enum DoctorReportGenerator {
                 name: "控制键状态", status: .pass,
                 detail: enabled ? "充电使能" : "已停充"
             )
+        }
+        // 0.20 M1a §2.3 doctor 27 分支（M1a 工单第 7 项）：CHTE 不可读（错误与值
+        // 双 nil = 27 现实形态）+ CHIE 控制面探测结论分流——一刀切 FAIL 在放电可
+        // 用机器上不诚实（诚实化纪律）：
+        // - CHIE 可写 → 「放电控制面可用（CHIE）；充电执法经编排/topoff 通道」
+        //   （info——非故障，不抬退出码；topoff 通道执法 M1b 落地）；
+        // - 可写性未知（doctor 只读契约 writeProbe: false——P2 评审修法）→ info
+        //   （如实，不误报；可写性裁定归 daemon 启动探测）；
+        // - CHIE 探针失败 → fail「放电控制面不可用」。
+        if inputs.osMajorVersion >= 27, let plane = inputs.dischargeProbe?.controlPlane {
+            switch plane {
+            case .writable:
+                return DoctorCheck(
+                    name: "控制键状态", status: .info,
+                    detail: "放电控制面可用（CHIE）；充电执法经编排/topoff 通道"
+                )
+            case .writabilityUnknown:
+                return DoctorCheck(
+                    name: "控制键状态", status: .info,
+                    detail: "CHIE 在位但可写性未知（doctor 只读契约——写探针仅在 daemon 侧执行）"
+                )
+            case .unavailable:
+                return DoctorCheck(
+                    name: "控制键状态", status: .fail,
+                    detail: "放电控制面不可用（CHIE 探针未通过）" + macOS27Note(inputs)
+                )
+            }
         }
         // 输入域外（错误与值皆缺）：按失败呈现，不静默。macOS 27 现实形态
         // （CHTE 系被移除 → 探测 noneAvailable → 错误与值双 nil）落在本臂。

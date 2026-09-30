@@ -77,18 +77,34 @@ func runHealthCapabilitiesDomainScenarios() throws {
                      as: .transportFailure(kr: 1), "能力-5", "传输错误（kr≠0）原样上抛，绝不降级为 noBackendAvailable")
     }
 
-    // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②；v0.19.20 编排批扩展）
+    // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②；v0.19.20 编排批扩展；
+    // 0.20 M1a capabilities 三平台矩阵——方案 §2.1 R1-P1/R2-P2 处置）
     // ——常量元组钉语义：client 保留（风扇/LED/Ts 观察面不陪葬）/ capabilities
-    // 上报 ["orchestration"]（非 nil——27 终态不再报空数组：编排是 27 唯一执法
-    // 路径，该能力即「27 终态」标记本体，App 显隐编排节 + fullOnce 拒绝启动
-    // WP-5）/ 进程内不重试（sticky 终态，重启即唯一清除路径）。
-    // daemon establishBackendLocked catch 分支只消费本函数、不内联字面量。
+    // 上报非 nil（27 终态不报空数组：编排是 27 唯一充电执法路径，该能力即「27
+    // 终态」标记本体）/ 进程内不重试（sticky 终态——**27 含 CHIE 在位仍 sticky**，
+    // 仅 reportedCapabilities 扩展，R1-P1）。矩阵：
+    // - 27 + CHIE 可写 → [orchestration, discharge, autoDischarge, sub80]
+    //   （必含 orchestration——编排链/fullOnce 拒绝判定/App 编排节显隐依赖；含
+    //   autoDischarge 使 daemon 自动触发门与 App 开关门对称；sub80 终态即报
+    //   无条件——域存在性不作上报条件，R2-P2）；
+    // - 27 无 CHIE → [orchestration, sub80]；
+    // - 26 两平台成功路径不消费本函数（清单 [discharge, autoDischarge, calibration]
+    //   不变——由 establishBackendLocked 成功臂承载）。
     do {
-        let disposition = RuntimeProbe.noBackendTerminalDisposition()
-        check(disposition == (retainClient: true,
-                              reportedCapabilities: [DaemonXPC.capabilityOrchestration],
+        let withChie = RuntimeProbe.noBackendTerminalDisposition(chieWritable: true)
+        check(withChie == (retainClient: true,
+                           reportedCapabilities: [DaemonXPC.capabilityOrchestration,
+                                                  DaemonXPC.capabilityDischarge,
+                                                  DaemonXPC.capabilityAutoDischarge,
+                                                  DaemonXPC.capabilitySub80],
+                           retryWithinProcess: false),
+              "能力-6", "27+CHIE 可写矩阵：[orchestration, discharge, autoDischarge, sub80] + sticky + client 保留")
+        let withoutChie = RuntimeProbe.noBackendTerminalDisposition(chieWritable: false)
+        check(withoutChie == (retainClient: true,
+                              reportedCapabilities: [DaemonXPC.capabilityOrchestration,
+                                                     DaemonXPC.capabilitySub80],
                               retryWithinProcess: false),
-              "能力-6", "终态处置常量：(retainClient: true, reportedCapabilities: [\"orchestration\"], retryWithinProcess: false)——27 终态编排执法通道（v0.19.20 扩展）")
+              "能力-6", "27 无 CHIE 矩阵：[orchestration, sub80] + sticky + client 保留")
     }
 
     // ---- ⑦ capabilities decode 双向 ----
@@ -125,6 +141,70 @@ func runHealthCapabilitiesDomainScenarios() throws {
         let newEmpty = #"{"version":"0.3.1-alpha-dev","mode":"active","upperLimit":80,"hysteresis":2,"capabilities":[],"timestamp":123.0}"#
         let decodedEmpty = try? JSONDecoder().decode(DaemonStatus.self, from: Data(newEmpty.utf8))
         check(decodedEmpty?.capabilities == [], "能力-2", "显式空数组解码 → []（与缺席 nil 语义区分——App 两态文案）")
+    }
+
+    // ---- 0.20 M1a：capabilities 追加串 + clamshellClosed 追加式可选字段（wire
+    // 零破坏性变更钉死——旧 App 忽略未知串/缺字段，旧 daemon 下新 App 走缺省分支）----
+
+    // 能力-7：27 终态矩阵 round-trip（追加串 + clamshellClosed 三态）。
+    do {
+        let matrix27 = DaemonStatus(
+            version: "0.20.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
+            capabilities: [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilityDischarge,
+                           DaemonXPC.capabilityAutoDischarge, DaemonXPC.capabilitySub80],
+            clamshellClosed: false,
+            timestamp: Date(timeIntervalSince1970: 1234)
+        )
+        let round = DaemonXPC.encodeStatus(matrix27).flatMap { try? DaemonXPC.decodeStatus($0) }
+        check(round == matrix27 && round?.capabilities?.contains(DaemonXPC.capabilitySub80) == true
+                && round?.clamshellClosed == false,
+              "能力-7", "27 矩阵（含 sub80）+ clamshellClosed=false round-trip 全字段保留（追加式兼容）")
+        let unknown = DaemonStatus(
+            version: "0.20.0-alpha", mode: "active", upperLimit: 75, hysteresis: 2,
+            capabilities: [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilitySub80],
+            clamshellClosed: nil,
+            timestamp: Date(timeIntervalSince1970: 1234)
+        )
+        let roundUnknown = DaemonXPC.encodeStatus(unknown).flatMap { try? DaemonXPC.decodeStatus($0) }
+        check(roundUnknown == unknown && roundUnknown?.clamshellClosed == nil,
+              "能力-7", "clamshellClosed=nil（读取失败诚实缺席）round-trip")
+    }
+
+    // 能力-8：旧 daemon JSON（无 clamshellClosed 键）→ 解码 nil 且既有字段照常
+    //（合成 Codable decodeIfPresent——新 App 对旧 daemon 缺省分支天然兼容）。
+    do {
+        let legacyJSON = #"{"version":"0.19.20-alpha","mode":"active","upperLimit":80,"hysteresis":2,"timestamp":123.0}"#
+        let legacy = try? JSONDecoder().decode(DaemonStatus.self, from: Data(legacyJSON.utf8))
+        check(legacy?.clamshellClosed == nil && legacy?.version == "0.19.20-alpha",
+              "能力-8", "旧 daemon JSON（无 clamshellClosed 键）→ 解码 nil（decodeIfPresent 先例）")
+    }
+
+    // 能力-9：0.20 M1b sub80State 三态 wire（§3.2 降级态传播；追加式 decodeIfPresent）。
+    do {
+        for (state, label) in [(Sub80State.active, "active"), (.degraded, "degraded"), (.off, "off")] {
+            let status = DaemonStatus(
+                version: "0.20.0-alpha", mode: "active", upperLimit: 75, hysteresis: 2,
+                capabilities: [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilitySub80],
+                sub80State: state,
+                timestamp: Date(timeIntervalSince1970: 1234)
+            )
+            let round = DaemonXPC.encodeStatus(status).flatMap { try? DaemonXPC.decodeStatus($0) }
+            check(round == status && round?.sub80State == state,
+                  "能力-9", "sub80State=\(label) round-trip（字符串编码——App 横幅消费）")
+        }
+        let noneSub80 = DaemonStatus(
+            version: "0.20.0-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
+            capabilities: [DaemonXPC.capabilityDischarge],
+            sub80State: nil,
+            timestamp: Date(timeIntervalSince1970: 1234)
+        )
+        let roundNone = DaemonXPC.encodeStatus(noneSub80).flatMap { try? DaemonXPC.decodeStatus($0) }
+        check(roundNone?.sub80State == nil,
+              "能力-9", "26/无 sub80 能力 → 不填（缺席 = 无此特性，R3-P3）")
+        let oldDaemon = #"{"version":"0.19.20-alpha","mode":"active","upperLimit":80,"hysteresis":2,"timestamp":123.0}"#
+        let legacy = try? JSONDecoder().decode(DaemonStatus.self, from: Data(oldDaemon.utf8))
+        check(legacy?.sub80State == nil,
+              "能力-9", "旧 daemon JSON（无 sub80State 键）→ 解码 nil（decodeIfPresent 先例）")
     }
 }
 // MARK: - StatusFailureKind 横幅通道映射（WP2' 验收修正钉死：done 不进失败通道）

@@ -61,6 +61,15 @@ final class DaemonCore: @unchecked Sendable {
     /// 进程内 sticky——不再每 tick 重探（消除 makeDefault+日志+clientGeneration 抖动
     /// 循环）。进程重启是唯一清除路径（键族恢复伴随系统更新/重装，必然重启 daemon）。
     private var backendUnavailableTerminal = false
+    /// CHIE 放电控制面探测结论（0.20 M1a §2.1）：仅 establishBackendLocked 的
+    /// noBackendAvailable 终态臂置值（探测序第三级——CHTE/CH0B 落空后的 27 放电
+    /// 面）；26 成功路径不触及（backend 路径优先，本属性保持 unavailable 初值）。
+    /// 探测点 = 终态臂内单次（sticky 吞掉重试，防 CHIE 写探针每 tick 抖动）。
+    private(set) var chieControlPlane: RuntimeProbe.DischargeControlPlane = .unavailable
+    /// 合盖状态缓存（0.20 M1a 合盖拒绝闸；每 tick 只读探测一次——DaemonStatus.
+    /// clamshellClosed 数据源 + 运行中止判定输入）。nil = 读取失败（诚实缺席，
+    /// 弱检查局限见 docs/DEVICES.md 键世代表）。
+    private(set) var lastClamshellClosed: Bool?
     /// 编排链门控（0.19.20 R2 P2 钉死）：仅 27 终态驱动——平台终态 sticky（本进程
     /// 内不再重探）或 capabilities 已含 orchestration。26 瞬态后端缺席窗口恒 false
     /// （观测段保持 sample+publish 原样——落地 limit 转移 = 26 行为增量，违反 §8
@@ -75,6 +84,26 @@ final class DaemonCore: @unchecked Sendable {
     /// 0.19.10 WP-A：noBackendAvailable 平台终态同样置值（[] 非 nil）——App 侧
     /// 三态消费面（nil=未上报瞬态 / []=无能力 / 含值=可用）自动降「不支持」。
     private(set) var capabilities: [String]?
+    /// CHIE 放电控制面可写判据（0.20 M1a §2.2 #1 启动守卫的运行时门；锁内消费）：
+    /// **原 backend 路径优先**——26 tahoe 后端在位（adapterControlSupported）恒
+    /// 可写（CHTE 在位时行为不变）；backend 缺席（27 终态）→ CHIE 探测结论
+    /// `.writable` 才可写（非 root「在位但可写性未知」fail-closed → false）。
+    var dischargeControlWritableLocked: Bool {
+        if let backend, backend.adapterControlSupported { return true }
+        return chieControlPlane == .writable
+    }
+    /// 合盖闸生效门（0.20 P1 评审修法 (a)：**仅 27 终态生效**——backendUnavailable
+    /// Terminal 同源判别式；26 及更早恒 false → 启动放行/运行续行零变化，clamshell-
+    /// mode 手动放电照旧）。每 tick 的 ClamshellProbe 只读探测保留（无害——
+    /// DaemonStatus.clamshellClosed 数据源），但拒绝/中止决策仅本门为 true 时生效。
+    var clamshellGateActiveLocked: Bool { backendUnavailableTerminal }
+    /// CHIE 控制面 client（锁内）：可写判据通过 ∧ smcClient 在位 → 返回 client
+    /// （26 上即 backend 所持同一连接——字节不变；27 上为终态保留的直挂连接）。
+    /// nil = 控制面不可用（调用方走既有「恢复不可执行」告警臂）。
+    var dischargeControlClientLocked: SMCClient? {
+        guard dischargeControlWritableLocked else { return nil }
+        return smcClient
+    }
     /// 最近一次成功采样的状态快照（tick 失败保留上次）。
     var lastStatus: DaemonStatus?
     /// 上次成功采样的电量（百分点变化事件判定，评审 A-1）。
@@ -116,6 +145,15 @@ final class DaemonCore: @unchecked Sendable {
     /// **不持久化（R1 P2 取舍）**：重启后 lastApplied 丢失 → 首 tick valueChange
     /// 幂等误发一次（S3 已证同值重设无痕）+ 冷却窗重置——换零新增落盘面。
     var orchestrationState = OrchestrationState()
+    /// 0.20 M1b topoff 通道运行时状态（结构体定义在 CellarCore Topoff.swift；决策
+    /// 全在 Topoff 纯函数，副作用在 DaemonCore+Topoff.swift）。**不持久化**（照
+    /// orchestrationState 先例：重启即重探，lastWritten 丢失 → 首 tick 幂等重写
+    /// 一次；降级态重启后从头计 strike——登记取舍，换零新增落盘面）。
+    var topoffState = TopoffChannelState()
+    /// 0.20 M1b P3-1：topoff 域写连续失败计数（日志降频——首条 error、后续合并
+    /// 计数 warn；写成功即清零）。锁内内存态（纯日志面，不持久化）。⚠️ internal：
+    /// DaemonCore+Topoff.swift 跨文件访问——executable internal 模块外不可达。
+    var topoffWriteFailureStreak = 0
 
     // MARK: - 生命周期
 
@@ -185,9 +223,12 @@ final class DaemonCore: @unchecked Sendable {
                 // 统一完成记录（五落点之五）：崩溃恢复终止即记冷却——顺带给 daemon
                 // 重启后 30min 冷却 + 翻转门关闭（叠加 §3.7 良性分析）。
                 noteDischargeTerminatedLocked(now: Date())
-                if let backend, backend.adapterControlSupported {
+                // 0.20 M1a §2.2 #9（DaemonCore.swift:188-189 处置）：恢复写经控制面
+                // ——26 tahoe 路径行为不变（同一 client）；27 经 CHIE 探测直挂写
+                // 0x00（终止必须真实还原，防适配器禁用泄漏）。
+                if let client = dischargeControlClientLocked {
                     let restoreError = DischargeAdapterControl.restoreEnabled(
-                        backend: backend, attempts: Discharge.terminalRestoreAttempts
+                        client: client, attempts: Discharge.terminalRestoreAttempts
                     )
                     if let restoreError {
                         events.append(LogEvent(
@@ -197,7 +238,7 @@ final class DaemonCore: @unchecked Sendable {
                     } else {
                         events.append(LogEvent(
                             category: .control, level: .warn,
-                            message: "崩溃恢复：放电动作残留，已恢复 CHIE=0x00（限制充电由启动后常规 enforce 收敛）"
+                            message: "崩溃恢复：放电动作残留，已恢复 CHIE=0x00（限制充电由启动后常规 enforce/编排收敛）"
                         ))
                     }
                 } else {
@@ -480,6 +521,11 @@ final class DaemonCore: @unchecked Sendable {
         // Phase 5 v1.8：disable 恢复路口——LED 交还系统（方案 §0-D3；写失败仅
         // 日志不阻断 disable——残留交系统充放覆写自愈）。
         releaseMagSafeLedLocked(events: &events)
+        // 0.20 M1b §3.7 关断清理（第一路径）：mode→disabled → sub80 能力机域随写
+        // 100 + off（SIGHUP→disabled 路径由汇聚点 mode nil 臂兜底——幂等）。
+        if capabilities?.contains(DaemonXPC.capabilitySub80) == true {
+            topoffShutdownCleanupLocked(now: Date(), events: &events)
+        }
         persistPolicyLocked(events: &events)
         lastStatus = DaemonStatus(
             version: DaemonXPC.daemonVersion,
@@ -562,6 +608,12 @@ final class DaemonCore: @unchecked Sendable {
                 message: "退出恢复：无控制后端，跳过写使能"
             ))
         }
+        // 0.20 M1b §3.7 关断清理（第三路径）：退出恢复 27 等价路径 → sub80 能力机
+        // 域随写 100 + off（agent 每分钟跟随域值——退出后域值 100 = 无残留执法）。
+        // 同步执行（进程即将退出，无下拍兜底）。
+        if capabilities?.contains(DaemonXPC.capabilitySub80) == true {
+            topoffShutdownCleanupLocked(now: Date(), events: &events)
+        }
         lock.unlock()
         emit(events)
         exit(0)
@@ -640,22 +692,86 @@ final class DaemonCore: @unchecked Sendable {
     /// fullOnce 启动后调用；WP2' 放电维护分支在 DaemonCore+Discharge.swift）：
     /// backend 保证 → 采样 → 控制键读取 → 电量变化事件 → active 模式 enforce → lastStatus。
     func performTickLocked(events: inout [LogEvent]) {
+        // 0.20 M1a 合盖拒绝闸：合盖状态只读探测（每 tick 一次缓存——DaemonStatus.
+        // clamshellClosed 数据源 + 运行中止判定输入；读取失败 → nil 诚实缺席，
+        // mini-spike 结论与弱检查局限见 ClamshellProbe/DEVICES.md）。
+        lastClamshellClosed = ClamshellProbe().clamshellClosed()
         // 1) 控制后端（探测失败 → 计数自愈；实施注记：同一 ensure 只调一次，
         // guard 解包后执法段继续用同一 backend——不重复调用）。
         let backend = ensureBackendLocked(events: &events)
         guard let backend else {
-            // WP2' 评审 P1-5：放电动作活跃期的早退 = 监护缺失（计数 ≥3 tick 终止）。
-            noteDischargeMonitoringLossLocked(events: &events)
             // 0.19.10 WP-B：后端缺席（平台终态/瞬态）不再中断监测——采样 + 电量
             // 事件 + lastStatus/wire 供给照走；执法段（步骤 3 起）跳过（只读模式
             // = 监测照走、执法停用，RuntimeProbe.swift 契约）。
+            // ⚠️ 时序钉死（M1a R2-P3 采样失败时序用例锚）：**先采样后维护**——
+            // 快照缺席拍不推进完成判定（维护路由含 snapshotAvailable 输入）。
             let snapshot = sampleAndPublishLocked(events: &events)
+            // 适配器翻转门（0.20 M1a：27 观测段承接——执法段步骤 4 在 27 不可达；
+            // 26 瞬态窗口既有语义不含本检测，仅 27 终态门控内生效）。
+            if orchestrationTerminalLocked, let snapshot {
+                noteAdapterCycleLocked(snapshot)
+            }
+            // 0.20 M1a §2.1/§2.2 #5/#7：观测段路由（纯函数 Discharge.observationRoute
+            // ——CellarCoreCheck 场景域钉死真值表，daemon 只消费）：
+            // - 27 终态 ∧ 放电活跃 ∧ 控制面可写 ∧ 快照在位 → 维护子分支（豁免
+            //   backend 缺席成因的监控缺失计数——R2-P1；快照缺席/控制面缺席 →
+            //   照常计数，90s 盲态止损保留）；
+            // - 27 终态 ∧ 空轨 → 残留巡检兜底 + 自动放电插桩；
+            // - 26 瞬态窗口 → 既有监控缺失计数（26 行为零变化）。
+            switch Discharge.observationRoute(
+                orchestrationTerminal: orchestrationTerminalLocked,
+                isDischargeAction: actionTrack.action?.kind == Discharge.dischargeToLimitKind,
+                actionActive: actionTrack.isActive,
+                controlWritable: dischargeControlWritableLocked,
+                snapshotAvailable: snapshot != nil
+            ) {
+            case .maintainDischarge:
+                if let client = smcClient, let snapshot {
+                    let actionName = maintainDischargeLocked(
+                        now: Date(), snapshot: snapshot, client: client, events: &events
+                    )
+                    lastStatus?.lastAction = actionTrack.effectiveLastAction(actionName)
+                } else {
+                    // 防御分支：路由已判可写，client 理论恒在位（chieControlPlane
+                    // 置值拍 smcClient 同拍保留）——仅传输故障重建窗可达，照防御
+                    // 纪律落监控缺失计数，不静默。
+                    noteDischargeMonitoringLossLocked(events: &events)
+                }
+            case .patrolResidual:
+                // §2.2 #7：27 残留巡检兜底（防崩溃/恢复失败泄漏 CHIE=0x8 致电池
+                // 持续耗电）。命中 tick 到此为止（照执法段钉死优先序：巡检命中 >
+                // 自动触发 > 编排链——无「恢复 0x00 后同拍又写 0x8」乒乓）。
+                var patrolHit = false
+                if let client = smcClient,
+                   let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
+                    lastStatus?.lastAction = patrolLiteral
+                    patrolHit = true
+                }
+                // 自动放电插桩（M1a——autoDischarge 能力诚实化：autoTriggerReady 在
+                // 27 执法段不可达，观测段承接同款判定与启动序列）。
+                if !patrolHit, let client = smcClient, let snapshot {
+                    autoDischargeObservationLocked(
+                        now: Date(), snapshot: snapshot, client: client, events: &events
+                    )
+                }
+            case .noteMonitoringLoss:
+                noteDischargeMonitoringLossLocked(events: &events)
+            }
             // v0.19.20 编排链（R2 P2 门控钉死：仅 27 终态驱动——26 瞬态窗口保持
             // sample+publish 原样，不落地 limit 转移）。前置日程转移 + assertionRequest
             // + 发布 pending，逻辑全在 DaemonCore+Orchestration.swift。
             if orchestrationTerminalLocked, let snapshot {
                 orchestrationTickLocked(now: Date(), snapshot: snapshot, events: &events)
             }
+            return
+        }
+        // CHIE 控制面 client（0.20 M1a：backend 在位 ⇒ establishBackendLocked 同拍
+        // 置值——本 guard 为类型系统封口；不可达臂照防御分支纪律显式报错不静默）。
+        guard let client = smcClient else {
+            events.append(LogEvent(
+                category: .control, level: .error,
+                message: "内部不变量破坏：后端在位但 SMC client 缺席——本拍执法段跳过"
+            ))
             return
         }
 
@@ -690,17 +806,9 @@ final class DaemonCore: @unchecked Sendable {
             ))
             lastPercent = snapshot.percent
         }
-        // WP2' 适配器翻转检测（code-review P1 armed 语义）：终止后 disarm——放电稳态
-        // 遥测 ext=false、恢复 CHIE 后 1-2 tick 内回跳 true 是放电自身恢复痕迹，仅
-        // 重新武装不开门；武装后的转移（真实拔/插）才开重插门。首 tick lastStatus nil
-        // 的恒真比较被 disarm 吸收（崩溃恢复已记冷却关门，不误开）。
-        if snapshot.externalConnected != lastStatus?.lastExternalConnected {
-            if adapterCycleArmed {
-                adapterCycleSinceAutoCompletion = true
-            } else if snapshot.externalConnected {
-                adapterCycleArmed = true   // 放电后回跳：仅武装
-            }
-        }
+        // WP2' 适配器翻转检测（code-review P1 armed 语义）——0.20 M1a 提取为共用
+        // 方法（27 观测段承接同款检测；执法段语义零变化）。
+        noteAdapterCycleLocked(snapshot)
 
         // Phase 5 v1.4 终态观察（UD-5 第②点，空闲臂）：无在轨动作 ∧ 锁存字面量 ∈
         // 校准终态族（全等匹配）→ 补写上次校准记录——覆盖 done/timeout/safety 等
@@ -725,7 +833,7 @@ final class DaemonCore: @unchecked Sendable {
                 actionName = maintainDischargeLocked(
                     now: Date(),
                     snapshot: snapshot,
-                    backend: backend,
+                    client: client,
                     events: &events
                 )
             } else if actionTrack.action?.kind == Calibration.kind {
@@ -747,7 +855,7 @@ final class DaemonCore: @unchecked Sendable {
         } else if policy.mode == "active" {
             // §2.4 CHIE 残留不变量巡检（无动作期，安全红线）：命中 → 本 tick 转
             // 安全告警（lastAction=safety），enforce 延后至下 tick（巡检优先级最高）。
-            if let patrolLiteral = patrolCHIEResidualLocked(backend: backend, events: &events) {
+            if let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                 actionName = patrolLiteral
             } else {
                 // WP2' 自动触发插桩（优先序钉死：巡检命中 > 自动触发 > enforce，R1
@@ -774,7 +882,7 @@ final class DaemonCore: @unchecked Sendable {
                         if try dischargeToLimitLocked(now: tickNow, initiator: .auto, events: &events) == .started {
                             autoStarted = true
                             actionName = maintainDischargeLocked(
-                                now: tickNow, snapshot: snapshot, backend: backend, events: &events
+                                now: tickNow, snapshot: snapshot, client: client, events: &events
                             )
                         }
                     } catch {
@@ -886,7 +994,7 @@ final class DaemonCore: @unchecked Sendable {
             }
         } else {
             // disabled 档同样巡检（不变式无条件：CHIE=0x8 仅允许在动作活跃期存在）。
-            if let patrolLiteral = patrolCHIEResidualLocked(backend: backend, events: &events) {
+            if let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                 actionName = patrolLiteral
             } else {
                 actionName = "disabled:idle"
@@ -911,6 +1019,21 @@ final class DaemonCore: @unchecked Sendable {
             action: actionTrack.action,
             timestamp: snapshot.timestamp
         )
+    }
+
+    /// WP2' 适配器翻转检测（code-review P1 armed 语义；0.20 M1a 自执法段步骤 4
+    /// 提取——执法段与 27 观测段共用）：终止后 disarm——放电稳态遥测 ext=false、
+    /// 恢复 CHIE 后 1-2 tick 内回跳 true 是放电自身恢复痕迹，仅重新武装不开门；
+    /// 武装后的转移（真实拔/插）才开重插门。首 tick lastStatus nil 的恒真比较被
+    /// disarm 吸收（崩溃恢复已记冷却关门，不误开）。
+    func noteAdapterCycleLocked(_ snapshot: BatterySnapshot) {
+        if snapshot.externalConnected != lastStatus?.lastExternalConnected {
+            if adapterCycleArmed {
+                adapterCycleSinceAutoCompletion = true
+            } else if snapshot.externalConnected {
+                adapterCycleArmed = true   // 放电后回跳：仅武装
+            }
+        }
     }
 
     /// 观测段（0.19.10 WP-B）：后端缺席分支的采样 + 电量变化事件 + lastStatus 供给
@@ -1023,12 +1146,21 @@ final class DaemonCore: @unchecked Sendable {
             ))
             return detected
         } catch BackendError.noBackendAvailable {
-            // 平台终态处置（决策函数钉语义，daemon 只消费不内联；0.20 CHIE-only
-            // 批在此长出真分支）：① client 保留——风扇/LED/Ts 探测等观察面与充电
-            // 后端无关，不应陪葬；② capabilities 上报 []（非 nil）——App 侧三态
-            // 消费面自动降「不支持」；③ backend 保持 nil + 终态 sticky（进程内
-            // 不再重探，ensureBackendLocked 头部短路）——限充只读降级语义不变。
-            let disposition = RuntimeProbe.noBackendTerminalDisposition()
+            // 0.20 M1a §2.1：探测序第三级——CHIE 放电控制面探测（CHTE/CH0B 落空
+            // 后的 27 放电面；传输错误原样上抛不折叠，P1-7 纪律同款；写探针失败
+            // 折叠为 .unavailable——sticky 吞重试，防 CHIE 写探针每 tick 抖动）。
+            // 非 root（daemon 恒 root；CLI 场景可达）→ 在位但可写性未知，fail-closed。
+            chieControlPlane = try RuntimeProbe.dischargeControlPlane(client: client)
+            // 平台终态处置（决策函数钉语义，daemon 只消费不内联；0.20 capabilities
+            // 矩阵经 chieWritable 参数长出真分支）：① client 保留——风扇/LED/Ts
+            // 探测等观察面与充电后端无关，不应陪葬；② capabilities 上报非 nil
+            // ——27+CHIE=[orchestration, discharge, autoDischarge, sub80] / 27 无
+            // CHIE=[orchestration, sub80]（R1-P1/R2-P2）；③ backend 保持 nil +
+            // 终态 sticky（进程内不再重探，ensureBackendLocked 头部短路）——限充
+            // 只读降级语义不变，仅 reportedCapabilities 扩展（R1-P1 sticky 处置）。
+            let disposition = RuntimeProbe.noBackendTerminalDisposition(
+                chieWritable: chieControlPlane == .writable
+            )
             backendUnavailableTerminal = !disposition.retryWithinProcess
             // client 缺席即换代（新 client → 风扇 facts 缓存失效信号）；sticky
             // 在位期间本 catch 不可达（短路先于 establish），无重复换代抖动。
@@ -1040,7 +1172,7 @@ final class DaemonCore: @unchecked Sendable {
             capabilities = disposition.reportedCapabilities
             events.append(LogEvent(
                 category: .control, level: .warn,
-                message: "后端不可用：SMC 充电控制键族不存在（平台限制，进程内不再重试）——降级只读；观察面（风扇/LED/温度探测）保留，能力上报 \(capabilities?.joined(separator: ",") ?? "[]")（编排执法通道）"
+                message: "后端不可用：SMC 充电控制键族不存在（平台限制，进程内不再重试）——降级只读；观察面（风扇/LED/温度探测）保留，能力上报 \(capabilities?.joined(separator: ",") ?? "[]")（CHIE 控制面 \(chieControlPlane == .writable ? "可写：放电经 CHIE、充电执法经编排/topoff 通道" : "不可用/可写性未知")）"
             ))
             throw BackendError.noBackendAvailable   // 上层 ensure 计数一次后由 sticky 短路
         }
@@ -1170,6 +1302,16 @@ final class DaemonCore: @unchecked Sendable {
         // ——照 magSafeLed 先例，UD-7：全回包携带防 ingest 覆盖触发「旧 daemon」
         // 闪断；26- 机器 enabled=false 空态照填，UI 侧 capabilities 门控不渲染）。
         status.orchestration = orchestrationStatusLocked()
+        // 0.20 M1a：合盖状态**恒填**（每 tick 只读探测缓存——nil = 读取失败/未探测
+        // 诚实缺席；合成 Codable decodeIfPresent，旧客户端解码兼容）。
+        status.clamshellClosed = lastClamshellClosed
+        // 0.20 M1b：sub80 通道态（§3.2 降级态传播；**仅 sub80 能力机填充**——26/无
+        // sub80 能力不填，缺席 = 无此特性，R3-P3；追加式 decodeIfPresent wire 兼容）。
+        if capabilities?.contains(DaemonXPC.capabilitySub80) == true {
+            status.sub80State = topoffState.off
+                ? Sub80State.off
+                : (topoffState.degraded ? .degraded : .active)
+        }
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

@@ -105,11 +105,85 @@ public struct DischargeProbe: Equatable, Sendable {
     public let chieState: Bool?
     /// CHIE 读取失败标志（键可见性不稳定/非 root——按 info 降级不误报）。
     public let readFailed: Bool
+    /// 0.20 M1a：CHIE 放电控制面探测结论（§2.3 doctor 27 分支——26 探测成功形态
+    /// / 既有构造点缺省 nil 零渲染，兼容性约束同 DoctorInputs 新字段纪律）。
+    public let controlPlane: RuntimeProbe.DischargeControlPlane?
 
-    public init(supported: Bool, chieState: Bool?, readFailed: Bool) {
+    public init(
+        supported: Bool, chieState: Bool?, readFailed: Bool,
+        controlPlane: RuntimeProbe.DischargeControlPlane? = nil
+    ) {
         self.supported = supported
         self.chieState = chieState
         self.readFailed = readFailed
+        self.controlPlane = controlPlane
+    }
+}
+
+// MARK: - 检查 18：topoffprotection 域状态（0.20 M1a §2.3/work-order——root 只读展示）
+
+/// topoffprotection 偏好域状态（WP2 <80% 限充通道的执法域；
+/// `/var/root/Library/Preferences/com.apple.smartcharging.topoffprotection`——
+/// SMC-NOTES §11.5 实测键：MCLFeatureState / mclLimitValue）。**仅展示/残留诊断
+/// 用**（R2-P2：域存在性不作为 sub80 能力上报条件；写通道与卫生条款 M1b 落地）。
+public struct TopoffDomainDoctorProbe: Equatable, Sendable {
+    /// 域是否在位（干净 27 机器未首写时缺席——展示「干净形态」而非故障）。
+    public let domainPresent: Bool
+    /// MCLFeatureState（nil = 键缺席/读失败）。
+    public let featureState: Int?
+    /// mclLimitValue（nil = 键缺席/读失败）。
+    public let mclLimit: Int?
+    /// 读取失败/受限详情（nil = 成功读取——非 root / 域缺席也落此字段）。
+    public let readDetail: String?
+
+    public init(domainPresent: Bool, featureState: Int?, mclLimit: Int?, readDetail: String?) {
+        self.domainPresent = domainPresent
+        self.featureState = featureState
+        self.mclLimit = mclLimit
+        self.readDetail = readDetail
+    }
+
+    /// topoff 域 defaults 路径（root 用户域；defaults 按路径定位 plist 文件）。
+    public static let defaultsPath = "/var/root/Library/Preferences/com.apple.smartcharging.topoffprotection"
+
+    /// `defaults read` 整数输出解析（纯函数）：trim 后整数字符串 → Int；其余
+    /// （含空/多行/文本）→ nil。
+    public static func parseInt(_ output: String) -> Int? {
+        Int(output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// 域状态采集（IO 经 `run` 注入——CellarCoreCheck 场景域可测；生产接线传
+    /// DoctorCommand.runProcessCapture 同款闭包）。三次只读 `defaults read`：
+    /// 域整体（存在性）→ 两键现值。非 root → 受限形态（诚实标注，不误报）。
+    public static func collect(
+        isRoot: Bool,
+        defaultsPath: String = TopoffDomainDoctorProbe.defaultsPath,
+        run: (_ executablePath: String, _ arguments: [String]) -> (output: String, exitCode: Int32)
+    ) -> TopoffDomainDoctorProbe {
+        guard isRoot else {
+            return TopoffDomainDoctorProbe(
+                domainPresent: false, featureState: nil, mclLimit: nil,
+                readDetail: "非 root 不可读（sudo cellar doctor 复核）"
+            )
+        }
+        let domainRead = run("/usr/bin/defaults", ["read", defaultsPath])
+        guard domainRead.exitCode == 0 else {
+            return TopoffDomainDoctorProbe(
+                domainPresent: false, featureState: nil, mclLimit: nil,
+                readDetail: "域未创建（干净形态——<80 限充首用时由 daemon 写入）"
+            )
+        }
+        func keyInt(_ key: String) -> Int? {
+            let keyRead = run("/usr/bin/defaults", ["read", defaultsPath, key])
+            guard keyRead.exitCode == 0 else { return nil }
+            return parseInt(keyRead.output)
+        }
+        return TopoffDomainDoctorProbe(
+            domainPresent: true,
+            featureState: keyInt("MCLFeatureState"),
+            mclLimit: keyInt("mclLimitValue"),
+            readDetail: nil
+        )
     }
 }
 
@@ -168,14 +242,33 @@ extension DoctorReportGenerator {
         return DoctorCheck(name: "版本矩阵", status: .pass, detail: "CLI/daemon/App 三方一致（\(matrix.cliVersion)）")
     }
 
-    /// 检查 11：放电能力（判定表见方案 §2.1，逐字）：
+    /// 检查 11：放电能力（判定表见方案 §2.1，逐字；0.20 M1a 扩 27 控制面臂）：
     /// 不支持=INFO；动作活跃（kind==dischargeToLimit）∧ CHIE=禁用 0x08 → PASS、
     /// 动作活跃其他值 → WARN；无动作 CHIE=使能 0x00 → PASS、CHIE=禁用 0x08 →
     /// FAIL（巡检残留，附恢复指引）；读取失败/非 root → INFO（键可见性不稳定，
     /// 与检查 3 同降级）。
+    /// 27 臂（M1a §2.3）：controlPlane == .writable → 与 supported 等效可用（CHIE
+    /// 控制面路径）；.unavailable → 「放电控制面不可用」；.writabilityUnknown →
+    /// INFO（非 root 可写性未知，不误报）。
     static func dischargeCapability(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard let probe = inputs.dischargeProbe else { return nil }
-        guard probe.supported else {
+        let planeAvailable = probe.controlPlane == .writable
+        guard probe.supported || planeAvailable else {
+            if probe.controlPlane == .unavailable {
+                return DoctorCheck(
+                    name: "放电能力", status: .info,
+                    detail: "放电控制面不可用（CHIE 探针未通过——macOS 27 放电功能不可用属平台事实）"
+                )
+            }
+            if probe.controlPlane == .writabilityUnknown {
+                // 可写性未探测（doctor 只读契约 writeProbe: false——P2 评审修法）：
+                // 与检查 4 的「在位」口径一致，不落「CHIE 在位」未满足的既有文案
+                // （诚实化，检查间不打架）；可写性裁定归 daemon 启动探测。
+                return DoctorCheck(
+                    name: "放电能力", status: .info,
+                    detail: "CHIE 在位但可写性未知（doctor 只读契约）——可写性由 daemon 启动探测裁定"
+                )
+            }
             return DoctorCheck(
                 name: "放电能力", status: .info,
                 detail: "放电不可用（需 Tahoe 代后端且 CHIE 在位）"
@@ -204,6 +297,47 @@ extension DoctorReportGenerator {
         return DoctorCheck(
             name: "放电能力", status: .fail,
             detail: "CHIE 残留禁用（0x08）——巡检本应 1 tick 内清零，疑似巡检失效或 daemon 未运行；重启系统或重装 daemon（sudo cellar install）恢复"
+        )
+    }
+
+    // MARK: - 检查 18：topoffprotection 域状态（0.20 M1a；条件渲染同 9-17）
+
+    /// root 只读展示（**info 恒不抬退出码**——R2-P2：域存在性仅诊断展示用，不构
+    /// 成健康判定；sub80 能力上报与域存在性解耦）。非 root / 域缺席 / 键缺席均
+    /// INFO 诚实呈现，不误报。
+    static func topoffDomain(_ inputs: DoctorInputs) -> DoctorCheck? {
+        guard inputs.topoffDomainProbeAttempted else { return nil }
+        guard let probe = inputs.topoffDomain else {
+            return DoctorCheck(
+                name: "topoff 域", status: .info,
+                detail: "topoffprotection 域状态未采集"
+            )
+        }
+        guard probe.domainPresent else {
+            return DoctorCheck(
+                name: "topoff 域", status: .info,
+                detail: probe.readDetail ?? "域未创建（干净形态）"
+            )
+        }
+        var parts = ["域在位"]
+        if let state = probe.featureState {
+            parts.append("MCLFeatureState=\(state)")
+        } else {
+            parts.append("MCLFeatureState 缺席")
+        }
+        if let limit = probe.mclLimit {
+            parts.append("mclLimitValue=\(limit)")
+        } else {
+            parts.append("mclLimitValue 缺席")
+        }
+        // 0.20 M1b：通道执法态展示（daemon 回读 sub80State——active/degraded/off
+        // 三态；旧 daemon/未运行缺席不渲染）。
+        if let channelState = inputs.daemonStatus?.sub80State {
+            parts.append("通道态=\(channelState.rawValue)")
+        }
+        return DoctorCheck(
+            name: "topoff 域", status: .info,
+            detail: parts.joined(separator: "；") + "（<80% 限充执法域——0.20 起 daemon 管理）"
         )
     }
 }

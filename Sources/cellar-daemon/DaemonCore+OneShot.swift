@@ -138,9 +138,12 @@ extension DaemonCore {
             // 立即重触发的漏洞修复）。
             noteDischargeTerminatedLocked(now: Date())
             // 放电统一取消：恢复 CHIE（重试阶梯）+ enforce CHTE（恢复限充语义）。
-            if let backend, backend.adapterControlSupported {
+            // 0.20 M1a §2.2 #9（:142 处置）：恢复写经控制面——26 tahoe 行为不变
+            // （同一 client 同字节）；27 经 CHIE 探测连接真实还原，enforce 交 27
+            // 收敛臂（编排/topoff 通道）。
+            if let client = dischargeControlClientLocked {
                 let restoreError = DischargeAdapterControl.restoreEnabled(
-                    backend: backend, attempts: Discharge.terminalRestoreAttempts
+                    client: client, attempts: Discharge.terminalRestoreAttempts
                 )
                 if let restoreError {
                     events.append(LogEvent(
@@ -174,7 +177,7 @@ extension DaemonCore {
             if let backend, backend.adapterControlSupported {
                 if calibrationPhase == .discharge
                     || Discharge.residualPatrolNeeded(enabled: (try? backend.adapterEnabled()) ?? nil) {
-                    restoreCalibrationCHIELocked(backend: backend, terminal: "取消", events: &events)
+                    restoreCalibrationCHIELocked(terminal: "取消", events: &events)
                 }
                 enforceLimitChargingLocked(
                     backend: backend,

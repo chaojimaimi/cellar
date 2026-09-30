@@ -7701,6 +7701,210 @@
           }
         }
       }
+    },
+    "statusline.fanStopped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已停转"
+          }
+        }
+      }
+    },
+    "panel.sub80.experimental": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验性"
+          }
+        }
+      }
+    },
+    "panel.sub80.experimental.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enforced via a system private preferences domain; a macOS update may disable it. Falls back to an 80% limit automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "经由系统私有偏好域执法，macOS 更新可能使其失效；失效时自动回退 80%。"
+          }
+        }
+      }
+    },
+    "panel.sub80.falling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falling %1$@→%2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回落中 %1$@→%2$@"
+          }
+        }
+      }
+    },
+    "panel.sub80.degraded.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "<80% enforcement degraded"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "<80 执法已降级"
+          }
+        }
+      }
+    },
+    "panel.sub80.degraded.banner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "<80% enforcement is not in effect (a macOS update may have changed the channel); the limit has fallen back to 80%."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "<80 执法未生效（可能系统更新改变了通道），已回退 80% 上限。"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.current": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current effective limit (readback): %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前生效上限（读回）：%@"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Readback unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读回不可用"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.verifying": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying readback…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读回校验中…"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.rerunning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Readback mismatch — retrying automatically (%u of 2)…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读回不符，自动重试中（%u/2）…"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.mismatch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Readback mismatch (target %1$@, actual %2$@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读回与目标不符（目标 %1$@，实际 %2$@）"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Readback verification disabled after repeated mismatches; behavior verification only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读回校验已停用（多次失配，转行为验证）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

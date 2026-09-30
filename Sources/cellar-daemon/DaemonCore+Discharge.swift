@@ -53,11 +53,16 @@ extension DaemonCore {
 
     /// dischargeToLimit 锁内启动（唯一副作用序列；失败臂按臂注记，**全程不 tick**）：
     /// 幂等检查（动作在轨 → .alreadyActive，零副作用直接返回）→ 能力守卫 → 前置
-    /// 快照+startPrecondition → CHTE=0（撤停充）→ CHIE=0x8 写+回读 → startIfIdle
-    /// (timeout: 2h) → actionStore.save → .started。
+    /// 快照+startPrecondition → 合盖拒绝闸（0.20 M1a）→ CHTE=0（撤停充，CHTE 可写
+    /// 门控：26 执行 / 27 跳过）→ CHIE=0x8 写+回读 → startIfIdle(timeout: 2h)
+    /// → actionStore.save → .started。
+    ///
+    /// 0.20 M1a §2.2 #1/#2/#3 路由：能力守卫改校验 CHIE 控制面可写（26 = tahoe
+    /// 后端原路径优先；27 = CHIE 探测 writable）；CHIE 读写经 DischargeAdapterControl
+    /// client 直挂（26 上与 TahoeBackend CHIE 路径同源同字节——行为不变）。
     ///
     /// 失败臂（R1 P1-1 + R2 P3 按臂注记）：
-    /// - 前置/能力拒绝与 CHTE 写失败臂：无副作用、无 tick（与现实现一致）；
+    /// - 前置/能力/合盖拒绝与 CHTE 写失败臂：无副作用、无 tick（与现实现一致）；
     /// - CHIE 回读校验失败臂：仅事件记录 + 上抛，**不做 CHIE 恢复**（写入态未知，
     ///   恢复交 §2.4 CHIE 残留不变量巡检——与现实现一致），无 tick；
     /// - actionStore.save 失败臂：restoreEnabled（CHIE 恢复重试阶梯）+ cancel 回滚
@@ -78,11 +83,12 @@ extension DaemonCore {
             return .alreadyActive
         }
         // 能力纵深防御（App 已按 capabilities 隐藏按钮/开关；XPC 侧独立核验，评审
-        // P1-1 fail-closed）：Legacy 后端/CHIE 缺席/探测失败 → 拒绝。
-        guard let backend, backend.adapterControlSupported else {
+        // P1-1 fail-closed）：CHIE 放电控制面可写才放行（0.20 M1a §2.2 #1——
+        // Legacy 后端/CHIE 缺席/探测失败 → 拒绝；27 可启动放电）。
+        guard let client = dischargeControlClientLocked else {
             events.append(LogEvent(
                 category: .control, level: .error,
-                message: "dischargeToLimit 拒绝：后端不支持适配器控制（capabilityUnavailable）"
+                message: "dischargeToLimit 拒绝：放电控制面不可用（capabilityUnavailable）"
             ))
             throw DischargeStartRejection.capabilityUnavailable
         }
@@ -108,21 +114,48 @@ extension DaemonCore {
         ) {
             throw rejection
         }
-
-        // 启动序列：先 CHTE=00000000（撤停充——把未测胞 CHTE=停充×CHIE=0x8 从状态
-        // 空间消除，评审 P1-2；恢复端由 enforce 收敛）→ 再写 CHIE=0x8 → 回读校验。
-        do {
-            _ = try controller.perform(.enableCharging, backend: backend)
-        } catch {
+        // 合盖拒绝闸（0.20 M1a §2.2 合盖管道；mini-spike 结论见 ClamshellProbe；
+        // **P1 评审修法 (a)：仅 27 终态生效**——clamshellGateActiveLocked 同源门，
+        // 26 clamshell-mode 手动放电放行照旧、26 行为零变化）：合盖检出 → 拒绝
+        // （诚实原因）；强字段不可得 → 弱检查（ext=true 由前置保证 ∧ 屏幕唤醒
+        // 代理）+ 局限登记（docs/DEVICES.md 键世代表）。
+        let clamshellClosed = ClamshellProbe().clamshellClosed()
+        let userActive = clamshellClosed == nil ? ClamshellProbe().userIsActive() : nil
+        if ClamshellGate.startRejected(
+            gateActive: clamshellGateActiveLocked,
+            closed: clamshellClosed, userActive: userActive, externalConnected: external
+        ) {
             events.append(LogEvent(
-                category: .control, level: .error,
-                message: "dischargeToLimit 启动：CHTE 撤停充失败（\(error)），不进入动作态"
+                category: .control, level: .warn,
+                message: "dischargeToLimit 拒绝：合盖状态（防合盖放电黑屏——\(clamshellClosed == nil ? "弱检查" : "强检查")命中）"
             ))
-            throw error
+            throw DischargeStartRejection.clamshellClosed
         }
+
+        // 启动序列 #2（§2.2）：先 CHTE=00000000（撤停充——把未测胞 CHTE=停充×CHIE=0x8
+        // 从状态空间消除，评审 P1-2；恢复端由 enforce 收敛）——CHTE 可写门控：26
+        // 执行、27 跳过（放电前无需 CHTE；27 控制键不在位）。
+        if let backend {
+            do {
+                _ = try controller.perform(.enableCharging, backend: backend)
+            } catch {
+                events.append(LogEvent(
+                    category: .control, level: .error,
+                    message: "dischargeToLimit 启动：CHTE 撤停充失败（\(error)），不进入动作态"
+                ))
+                throw error
+            }
+        } else {
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "dischargeToLimit 启动：27 跳过 CHTE 撤停充（控制键不在位，放电前无需 CHTE）"
+            ))
+        }
+        // 启动序列 #3（§2.2）：CHIE=0x8 写 + 回读校验（DischargeAdapterControl
+        // client 直挂——26 上与 TahoeBackend CHIE 路径同源同字节，行为不变）。
         do {
-            try backend.setAdapterEnabled(false)
-            let state = try backend.adapterEnabled()
+            try DischargeAdapterControl.setAdapterEnabled(false, client: client)
+            let state = try DischargeAdapterControl.adapterState(client: client)
             guard state == false else {
                 throw BackendError.verifyFailed(key: "CHIE", desired: false, actual: state ?? true)
             }
@@ -147,7 +180,7 @@ extension DaemonCore {
             try actionStore.save(actionTrack.action!)
         } catch {
             let restoreError = DischargeAdapterControl.restoreEnabled(
-                backend: backend, attempts: Discharge.terminalRestoreAttempts
+                client: client, attempts: Discharge.terminalRestoreAttempts
             )
             if let restoreError {
                 events.append(LogEvent(
@@ -173,28 +206,51 @@ extension DaemonCore {
         return .started
     }
 
-    /// 放电动作维护分支（performTickLocked 第 5 步放电分支；方案 §2.3 判定次序在
-    /// CellarCore 轨道转移，本方法仅做 CHIE 保活读改写 + 副作用执行）：
-    /// 返回本 tick 的 lastAction 字面量。
+    /// 放电动作维护分支（performTickLocked 第 5 步放电分支 + 0.20 M1a 观测段维护
+    /// 子分支共用——方案 §2.3 判定次序在 CellarCore 轨道转移，本方法仅做 CHIE
+    /// 保活读改写 + 副作用执行）：返回本 tick 的 lastAction 字面量。
+    ///
+    /// 0.20 M1a §2.2 #4 路由：backend 参数 → client（CHIE 控制面直挂）；CHTE 执法
+    /// 面取 self.backend（执法段调用点同值；观测段调用点恒 nil）——终态/取消收敛
+    /// 由 enforceLimitChargingLocked 的 27 臂承接（编排/topoff 通道，M1b 续接）。
+    /// 调用方职责：client 由 dischargeControlClientLocked 保证（执法段不变量封口 /
+    /// 观测段路由判定）。
     func maintainDischargeLocked(
         now: Date,
         snapshot: BatterySnapshot,
-        backend: any ChargingBackend,
+        client: SMCClient,
         events: inout [LogEvent]
     ) -> String {
+        // 合盖拒绝闸——运行中止（0.20 M1a §2.2 合盖管道，30s 粒度；**P1 评审修法
+        // (a)：仅 27 终态生效**——26 clamshell-mode 运行续行照旧）：合盖检出 →
+        // 中止还原 + 通知（daemon 发起取消 → cancelLatched 锁存——App 轮询必见
+        // 终态，审查 M3 同构）。closed == nil 不中止（息屏 ≠ 合盖，局限登记）。
+        if ClamshellGate.shouldAbort(gateActive: clamshellGateActiveLocked, closed: lastClamshellClosed) {
+            noteDischargeTerminatedLocked(now: now)
+            let literal = actionTrack.cancelLatched()
+                ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
+            restoreDischargeAdapterLocked(client: client, terminal: "合盖中止", events: &events)
+            enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
+            deleteActionFileLocked(events: &events)
+            events.append(LogEvent(
+                category: .control, level: .warn,
+                message: "放电运行中止：检出合盖（防黑屏与不可见耗电）——已恢复适配器使能，取消终态锁存待 App 轮询通知"
+            ))
+            return literal
+        }
         // ① CHIE 保活（tick 判定链输入；轨道的保活失败计数经本结果推进）：
         // 回读 == 0x08 → held；≠0x8（含 0x00 重置/未知值）→ 重写 0x8 后回读；
         // 任何失败 → failed（连续 3 次由轨道取消）。
         let chieStatus: DischargeKeepAliveStatus
         do {
-            let enabled = try backend.adapterEnabled()
+            let enabled = try DischargeAdapterControl.adapterState(client: client)
             switch enabled {
             case false:
                 chieStatus = .held
             case true, nil:
                 do {
-                    try backend.setAdapterEnabled(false)
-                    let rechecked = try backend.adapterEnabled()
+                    try DischargeAdapterControl.setAdapterEnabled(false, client: client)
+                    let rechecked = try DischargeAdapterControl.adapterState(client: client)
                     chieStatus = rechecked == false ? .rewritten : .failed
                 } catch {
                     noteControlFailureLocked(error, events: &events, context: "CHIE 保活重写")
@@ -227,13 +283,14 @@ extension DaemonCore {
             case .safetyTerminated(let reason): terminal = "安全终止(\(reason))"
             default: terminal = "终态"
             }
-            restoreDischargeAdapterLocked(backend: backend, terminal: terminal, events: &events)
+            restoreDischargeAdapterLocked(client: client, terminal: terminal, events: &events)
             // 审查 M2：终态必须**即时** enforce CHTE——启动序列曾写 CHTE=0 放行充电，
             // 若只恢复 CHIE，通知说「限充已恢复」但最长 30s 存在无约束充电
             // （enforce 收敛前电池直接充到上限）。floor=60 案 percent<resume →
             // enableCharging 无害（CHTE 本就是 0）。
             // WP1：传本 tick 快照温度——放电热终止（≥40°C）后恢复路径被守卫拦截
             // 热态回充（方案 §2.3）。
+            // 0.20 M1a §2.2 #9：27（backend 缺席）→ 收敛=回归汇聚目标（nil 臂）。
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             deleteActionFileLocked(events: &events)
             return actionTrack.latchedLiteral ?? fallbackLiteral(for: outcome)
@@ -242,7 +299,7 @@ extension DaemonCore {
             // 漏洞（R1 P1-2；过度抑制无害：完成后 percent ≤ 目标本就不满足触发门）。
             noteDischargeTerminatedLocked(now: now)
             // 统一取消：恢复 CHIE（重试阶梯 + 告警）→ enforce CHTE（恢复限充语义）。
-            restoreDischargeAdapterLocked(backend: backend, terminal: "取消(\(reason))", events: &events)
+            restoreDischargeAdapterLocked(client: client, terminal: "取消(\(reason))", events: &events)
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
             deleteActionFileLocked(events: &events)
             return literal
@@ -282,13 +339,15 @@ extension DaemonCore {
 
     /// 终态/取消恢复 CHIE=0x0（写 + 回读校验重试阶梯 —— 取消写失败 ≠ 取消完成，
     /// 红线 5：失败告警后终态照常落盘，残留交 §2.4 CHIE 残留不变量兜底）。
+    /// 0.20 M1a §2.2 #4：backend 参数 → client（CHIE 控制面直挂——26 行为不变，
+    /// 27 经探测连接真实还原）。
     private func restoreDischargeAdapterLocked(
-        backend: any ChargingBackend,
+        client: SMCClient,
         terminal: String,
         events: inout [LogEvent]
     ) {
         let restoreError = DischargeAdapterControl.restoreEnabled(
-            backend: backend, attempts: Discharge.terminalRestoreAttempts
+            client: client, attempts: Discharge.terminalRestoreAttempts
         )
         if let restoreError {
             events.append(LogEvent(
@@ -311,7 +370,21 @@ extension DaemonCore {
 /// WP1：`temperatureC` = 调用点作用域内可得的温度（nil = 快照失败旁路——
 /// 守卫跳过一 tick，按常规决策执行；旁路窗口 ≤1 tick，下 tick 常规守卫按充电
 /// 现态重新介入，方案 §2.3）。
-    func enforceLimitChargingLocked(backend: any ChargingBackend, temperatureC: Double?, events: inout [LogEvent]) {
+///
+/// 0.20 M1a §2.2 #9 + **0.20 M1b 兑现**：`backend` 放宽为可选——nil（27，CHTE 不在
+/// 位）→ 收敛=回归汇聚目标：≥80 编排链**同拍补发**（观测段路由后同 tick 跑
+/// orchestrationTickLocked——动作已清轨，lastApplied != desired 立即 valueChange
+/// 补发）；**<80 topoff 随写续接已接通**（同拍汇聚点分流 topoffOwned → channelTick
+/// 幂等重写域恢复执法；本臂仅落收敛语义日志，域写由汇聚点统一执行防双写）。
+/// 26 传非 nil backend → 原样 CHTE enforce（行为不变）。
+    func enforceLimitChargingLocked(backend: (any ChargingBackend)?, temperatureC: Double?, events: inout [LogEvent]) {
+        guard let backend else {
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "终态/取消：27 收敛=回归汇聚目标（充电执法交编排/topoff 通道——≥80 编排链同拍补发，<80 topoff 同拍汇聚点随写续接）"
+            ))
+            return
+        }
         guard let percent = lastStatus?.lastPercent else {
             events.append(LogEvent(
                 category: .control, level: .warn,
@@ -370,15 +443,17 @@ extension DaemonCore {
     /// 不得用 `adapterControlSupported`（TahoeBackend 硬编码 true）——CHTE 在位但
     /// CHIE 缺席的 Tahoe 机器若按 supported 门控会陷入「巡检读失败 → 自愈计数 →
     /// 90s 重建」的永久失败循环。capabilities 含 discharge 的机器 CHIE 必在位。
+    /// 0.20 M1a §2.2 #7：backend 参数 → client（CHIE 控制面直挂；执法段两处调用
+    /// 点 + 观测段新增调用——27 残留巡检兜底落位）。
     @discardableResult
     func patrolCHIEResidualLocked(
-        backend: any ChargingBackend,
+        client: SMCClient,
         events: inout [LogEvent]
     ) -> String? {
         guard capabilities?.contains(DaemonXPC.capabilityDischarge) == true else { return nil }
         let enabled: Bool?
         do {
-            enabled = try backend.adapterEnabled()
+            enabled = try DischargeAdapterControl.adapterState(client: client)
         } catch {
             noteControlFailureLocked(error, events: &events, context: "CHIE 残留巡检回读")
             return nil
@@ -386,7 +461,7 @@ extension DaemonCore {
         guard Discharge.residualPatrolNeeded(enabled: enabled) else { return nil }
         // 巡检命中：写 0x00 + 回读校验（每次 tick 一次尝试——30s 节奏，连续命中
         // 由 App 侧「同字面量不重复通知」收敛）。
-        let restoreError = DischargeAdapterControl.restoreEnabled(backend: backend, attempts: 1)
+        let restoreError = DischargeAdapterControl.restoreEnabled(client: client, attempts: 1)
         if let restoreError {
             noteControlFailureLocked(restoreError, events: &events, context: "CHIE 残留巡检恢复")
             events.append(LogEvent(
@@ -421,9 +496,12 @@ extension DaemonCore {
         guard let literal = actionTrack.terminateMonitoringLoss() else { return }
         // 统一完成记录（五落点之四）：监护缺失终止即记冷却（R1 P1-2 全集成员）。
         noteDischargeTerminatedLocked(now: Date())
-        if let backend, backend.adapterControlSupported {
+        // 0.20 M1a §2.2 #6：恢复写经控制面——27 经 DischargeAdapterControl 写
+        // CHIE=0x00（终止必须真实还原，防适配器禁用泄漏）；26 tahoe 路径行为不变
+        // （dischargeControlClientLocked 同一 client 同字节）。
+        if let client = dischargeControlClientLocked {
             let restoreError = DischargeAdapterControl.restoreEnabled(
-                backend: backend, attempts: Discharge.terminalRestoreAttempts
+                client: client, attempts: Discharge.terminalRestoreAttempts
             )
             if let restoreError {
                 events.append(LogEvent(
@@ -456,9 +534,11 @@ extension DaemonCore {
         // 30min ∧ 适配器翻转，两门皆过才可（R1 P1-2 修订）。
         noteDischargeTerminatedLocked(now: Date())
         let literal = actionTrack.cancelLatched() ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
-        if let backend, backend.adapterControlSupported {
+        // 0.20 M1a §2.2 #8：同 #6 门控改造——恢复写经控制面（27 经 CHIE 探测连接
+        // 真实还原；26 tahoe 行为不变）。
+        if let client = dischargeControlClientLocked {
             let restoreError = DischargeAdapterControl.restoreEnabled(
-                backend: backend, attempts: Discharge.sleepNowRestoreAttempts
+                client: client, attempts: Discharge.sleepNowRestoreAttempts
             )
             if let restoreError {
                 events.append(LogEvent(
@@ -479,5 +559,43 @@ extension DaemonCore {
         }
         lastStatus?.lastAction = literal
         deleteActionFileLocked(events: &events)
+    }
+
+    /// 27 观测段自动放电插桩（0.20 M1a——autoDischarge 能力诚实化）：autoTriggerReady
+    /// 判定与启动序列在执法段（DaemonCore.swift 自动触发臂）于 27 不可达，观测段
+    /// 承接同款判定（判定链输入/优先序照执法段钉死：巡检命中 > 自动触发 > 编排链
+    /// ——编排链对在轨动作本就静默，assertionRequest 规则 2 actionActive → none）。
+    /// 判定链全过 → 锁内启动（locked 内部不 tick）；catch 记 warn 后返回（编排链
+    /// 照常评估——失败臂无半启动态，残留无约束窗口 ≤1 tick，下 tick 全量收敛）。
+    /// ⚠️ internal：performTickLocked（DaemonCore.swift）观测段跨文件调用——
+    /// executable internal 模块外不可达，单一属主不变量不破。
+    func autoDischargeObservationLocked(
+        now: Date, snapshot: BatterySnapshot, client: SMCClient, events: inout [LogEvent]
+    ) {
+        guard Discharge.autoTriggerReady(
+            enabled: policy.autoDischargeEnabled,
+            mode: policy.mode,
+            externalConnected: snapshot.externalConnected,
+            percent: snapshot.percent,
+            upperLimit: policy.upperLimit,
+            actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
+            dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
+            now: now,
+            lastAutoCompletion: lastAutoDischargeCompletedAt,
+            adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion
+        ) else { return }
+        do {
+            if try dischargeToLimitLocked(now: now, initiator: .auto, events: &events) == .started {
+                let actionName = maintainDischargeLocked(
+                    now: now, snapshot: snapshot, client: client, events: &events
+                )
+                lastStatus?.lastAction = actionTrack.effectiveLastAction(actionName)
+            }
+        } catch {
+            events.append(LogEvent(
+                category: .control, level: .warn,
+                message: "自动放电触发失败：\(error)"
+            ))
+        }
     }
 }
