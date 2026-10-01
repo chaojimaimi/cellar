@@ -188,8 +188,11 @@ struct DoctorCommand: ParsableCommand {
 
         // 检查 9：BTM 注册态（launchctl print 子进程；非 root 亦可读基本字段——
         // 2026-09-02 spike 实证；解析纯函数在 CellarCore，评审 P2-1 分层）。
+        // 0.20.1 §3.2：同一份输出再解析安装路线（DaemonRoute.route）——spawnFailed
+        // 按路线再分流（App 托管 BTM 损坏形态），零新增子进程调用。
         let btmOutput = runProcessCapture("/bin/launchctl", ["print", "system/com.cellar.daemon"]).output
         let btmState = BTMState.parseLaunchctlPrint(btmOutput)
+        let daemonRoute = DaemonRoute.route(fromPrintOutput: btmOutput)
 
         // 检查 15：原生限充共存（/Library powerd 策略 plist 只读——0644 用户态可读，
         // D4；wire 映射与 daemon getStatus 同源 `NativeChargeLimit.wireStatus`——
@@ -234,6 +237,7 @@ struct DoctorCommand: ParsableCommand {
             processHits: processHits,
             btmState: btmState,
             btmProbeAttempted: true,
+            daemonRoute: daemonRoute,
             versionMatrix: versionMatrix,
             dischargeProbe: dischargeProbe,
             fanProbe: FanDoctorProbe(

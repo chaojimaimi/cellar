@@ -404,6 +404,11 @@ struct Main {
         // ——纯函数面，FlowDiagramDomain）。0.19.4 §5：+6 场景（flowModel(of:)
         // 等价性 ×2 + currentDirection(kind:) 四态 ×4），总数 578 → 584。
         try runFlowDiagramDomainScenarios()
+        // 0.20.1 健壮性热修批场景域（方案 §2.1/§2.2/§3.1/§3.2/§3.3/§4：watchdog
+        // 阈值纯函数/放电事件落盘枚举（挂钩表六行）/install BTM 幽灵指引分流/
+        // doctor 检查 9 路线再分流 + 检查 8/9 口径统一 + 检查 3 身份分流——纯函数
+        // 面，RobustnessDomain）。
+        runRobustnessDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

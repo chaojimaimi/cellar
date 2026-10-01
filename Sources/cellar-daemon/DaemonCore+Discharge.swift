@@ -90,6 +90,9 @@ extension DaemonCore {
                 category: .control, level: .error,
                 message: "dischargeToLimit 拒绝：放电控制面不可用（capabilityUnavailable）"
             ))
+            // 0.20.1 §2.1 事件落盘（挂钩表第二行·拒绝臂）：LogEvent 环随进程消失
+            // 不可溯源，持久轨迹直写 stderr（同 topoff 惯例，锁内调用）。
+            Self.persistLog(DischargePersistEvent.rejected(reason: "能力不可用（capabilityUnavailable）").message)
             throw DischargeStartRejection.capabilityUnavailable
         }
         // 前置快照（新鲜优先；失败回落上次已知值；均未知 → 前置拒绝，不无据启动）。
@@ -112,6 +115,8 @@ extension DaemonCore {
             percent: percent,
             targetPercent: target
         ) {
+            // 0.20.1 §2.1 事件落盘（挂钩表第二行·拒绝臂）：前置拒绝（mode/外接/电量）。
+            Self.persistLog(DischargePersistEvent.rejected(reason: "\(rejection)").message)
             throw rejection
         }
         // 合盖拒绝闸（0.20 M1a §2.2 合盖管道；mini-spike 结论见 ClamshellProbe；
@@ -129,6 +134,10 @@ extension DaemonCore {
                 category: .control, level: .warn,
                 message: "dischargeToLimit 拒绝：合盖状态（防合盖放电黑屏——\(clamshellClosed == nil ? "弱检查" : "强检查")命中）"
             ))
+            // 0.20.1 §2.1 事件落盘（挂钩表第二行·拒绝臂）：合盖拒绝闸。
+            Self.persistLog(DischargePersistEvent.rejected(
+                reason: "合盖状态（防合盖放电黑屏——\(clamshellClosed == nil ? "弱检查" : "强检查")命中）"
+            ).message)
             throw DischargeStartRejection.clamshellClosed
         }
 
@@ -193,12 +202,21 @@ extension DaemonCore {
                 category: .control, level: .error,
                 message: "dischargeToLimit 启动失败：action.json 写入失败（\(error)）"
             ))
+            // 0.20.1 §2.1 事件落盘（挂钩表第二行·拒绝臂）：persistenceFailed。
+            Self.persistLog(DischargePersistEvent.rejected(reason: "action.json 写入失败（persistenceFailed）").message)
             throw DischargeStartRejection.persistenceFailed
         }
         events.append(LogEvent(
             category: .control, level: .info,
             message: "dischargeToLimit 已启动：目标 \(target)%（2 小时超时）"
         ))
+        // 0.20.1 §2.1 事件落盘（挂钩表第一行·启动）：成功臂——manual/autostart
+        // 发起方 + 目标 + 启动时电量（快照失败回落上次已知值，均未知 = 未知）。
+        Self.persistLog(DischargePersistEvent.started(
+            initiator: initiator == .manual ? "manual" : "auto",
+            target: target,
+            percent: percent
+        ).message)
         if initiator == .auto {
             // 自动启动必须锁存（App 轮询必见 autostart → 通知必发；M3 判例同取消）。
             actionTrack.latchAutoStart(OneShotLiteral.autoStart(kind: Discharge.dischargeToLimitKind))
@@ -236,6 +254,8 @@ extension DaemonCore {
                 category: .control, level: .warn,
                 message: "放电运行中止：检出合盖（防黑屏与不可见耗电）——已恢复适配器使能，取消终态锁存待 App 轮询通知"
             ))
+            // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：daemon 发起的中止。
+            Self.persistLog(DischargePersistEvent.cancelled(reason: "合盖检出中止").message)
             return literal
         }
         // ① CHIE 保活（tick 判定链输入；轨道的保活失败计数经本结果推进）：
@@ -262,6 +282,9 @@ extension DaemonCore {
             chieStatus = .failed
         }
 
+        // 历时计算输入（0.20.1 §2.1 挂钩表第三行）：tickDischarge 终态臂会清空动作，
+        // startedAt 必须在推进前捕获。
+        let startedAt = actionTrack.action?.startedAt
         let outcome = actionTrack.tickDischarge(
             now: now,
             percent: snapshot.percent,
@@ -283,6 +306,11 @@ extension DaemonCore {
             case .safetyTerminated(let reason): terminal = "安全终止(\(reason))"
             default: terminal = "终态"
             }
+            // 0.20.1 §2.1 事件落盘（挂钩表第三行·maintain 终态）：outcome + 历时。
+            Self.persistLog(DischargePersistEvent.terminal(
+                outcome: terminal,
+                durationSeconds: startedAt.map { max(0, Int(now.timeIntervalSince($0))) } ?? -1
+            ).message)
             restoreDischargeAdapterLocked(client: client, terminal: terminal, events: &events)
             // 审查 M2：终态必须**即时** enforce CHTE——启动序列曾写 CHTE=0 放行充电，
             // 若只恢复 CHIE，通知说「限充已恢复」但最长 30s 存在无约束充电
@@ -298,6 +326,9 @@ extension DaemonCore {
             // 统一完成记录（五落点之一）：取消即记——修复「用户取消后被立即重触发」
             // 漏洞（R1 P1-2；过度抑制无害：完成后 percent ≤ 目标本就不满足触发门）。
             noteDischargeTerminatedLocked(now: now)
+            // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：轨道异常取消
+            //（keepAliveFailure/extRestored）。
+            Self.persistLog(DischargePersistEvent.cancelled(reason: reason).message)
             // 统一取消：恢复 CHIE（重试阶梯 + 告警）→ enforce CHTE（恢复限充语义）。
             restoreDischargeAdapterLocked(client: client, terminal: "取消(\(reason))", events: &events)
             enforceLimitChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
@@ -482,7 +513,9 @@ extension DaemonCore {
     /// （dischargeToLimit）或校准放电相（calibration ∧ phase==discharge）× backend/
     /// 采样/控制键读取早退 → 连续 ≥3 tick（90s）→ 安全终止 + 告警（恢复尽力；
     /// 失败交 §2.4 不变量）。performTickLocked 步骤 1/2/3 早退路径调用。
-    func noteDischargeMonitoringLossLocked(events: inout [LogEvent]) {
+    /// 0.20.1 §2.1：`reason` = 早退成因（调用方注入——观测路径/采样失败/控制键读取
+    /// 失败等），终止臂随事件落盘（挂钩表第四行）。
+    func noteDischargeMonitoringLossLocked(events: inout [LogEvent], reason: String = "未知") {
         guard actionTrack.action?.kind == Discharge.dischargeToLimitKind
             || (actionTrack.action?.kind == Calibration.kind
                 && actionTrack.action?.phase == Calibration.Phase.discharge.rawValue) else { return }
@@ -496,6 +529,9 @@ extension DaemonCore {
         guard let literal = actionTrack.terminateMonitoringLoss() else { return }
         // 统一完成记录（五落点之四）：监护缺失终止即记冷却（R1 P1-2 全集成员）。
         noteDischargeTerminatedLocked(now: Date())
+        // 0.20.1 §2.1 事件落盘（挂钩表第四行）：监护缺失终止——置于恢复尝试之前，
+        // 恢复写失败也不丢终止事件。
+        Self.persistLog(DischargePersistEvent.monitoringLoss(reason: reason).message)
         // 0.20 M1a §2.2 #6：恢复写经控制面——27 经 DischargeAdapterControl 写
         // CHIE=0x00（终止必须真实还原，防适配器禁用泄漏）；26 tahoe 路径行为不变
         // （dischargeControlClientLocked 同一 client 同字节）。
@@ -534,6 +570,8 @@ extension DaemonCore {
         // 30min ∧ 适配器翻转，两门皆过才可（R1 P1-2 修订）。
         noteDischargeTerminatedLocked(now: Date())
         let literal = actionTrack.cancelLatched() ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
+        // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：睡眠取消。
+        Self.persistLog(DischargePersistEvent.cancelled(reason: "系统睡眠").message)
         // 0.20 M1a §2.2 #8：同 #6 门控改造——恢复写经控制面（27 经 CHIE 探测连接
         // 真实还原；26 tahoe 行为不变）。
         if let client = dischargeControlClientLocked {

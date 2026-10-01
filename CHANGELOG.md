@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.20.1-alpha] - 2026-10-02
+
+### Fixed
+
+- **守护进程整体挂起两连（P0 死锁根治）**：域写/通知的子进程等待 `waitUntilExit` 会在调用线程内嵌 RunLoop——主线程心跳回调重入持锁路径造成 psynch 死锁（真机两次复现：违规重申与放电收尾拍，sample 线程栈定谳），表现为 App/CLI 全部失联。子进程捕获全面改用 terminationHandler + 信号量（内部 GCD 线程回调，不触碰调用方 RunLoop），配 read-to-EOF 先行与 10 秒看门狗；CLI 侧 launchctl 调用同款纪律。
+- **手工路线守护进程被系统反复顶掉（BTM 损坏记录）**：ad-hoc 签名 App 的托管注册记录可能生成即损坏（spawn 永远失败），系统后台项管理周期性对账（10 分钟～1 小时）反复以同名 label 重新提交——顶掉手工 daemon 并使 `sudo cellar install` 报 Input/output error。install 失败时自动检测该形态并给出确定性恢复指引（面板卸载 → `sfltool resetbtm` → 重跑 install）；重试改为 3s/10s/30s 退避。doctor 同步识别该形态（原「重启或 install 恢复」指引在此形态下是死循环）。
+- **doctor 检查口径矛盾**：「daemon 未运行」（XPC 探测）与「已注册且运行中」（注册检查）并存——XPC 无响应时注册项如实注明（可能挂起/版本不符）并给出 `kickstart` 恢复命令。
+
+### Added
+
+- **心跳停摆自愈**：daemon 内置独立看门狗——主循环停摆超过 150 秒自动落盘遗言并以非零码退出，launchd 立即重拉（此前挂起形态需人工 kickstart）。睡眠唤醒后的一次无害重启属预期（秒级恢复）。
+- **放电关键事件持久落盘**：启动/拒绝/终态/监护缺失终止/取消/崩溃恢复全部直写 daemon.log——此前只进内存环，进程消失后不可溯源。
+
+### Changed
+
+- **文案诚实化**：topoff 通道执法中时「原生限充注册残留 N%」改判「现行执法（上限 N%）」（旧语义来自编排时代）；macOS 27 上后端行改为「27 通道：充电执法经 topoff 域 · 放电经 CHIE」（通道正常时不再显示「不可用」）；doctor 探测措辞按运行身份分流。
+
 ## [0.20.0-alpha] - 2026-09-30
 
 ### Added

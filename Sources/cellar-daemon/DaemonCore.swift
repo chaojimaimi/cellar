@@ -154,6 +154,11 @@ final class DaemonCore: @unchecked Sendable {
     /// 计数 warn；写成功即清零）。锁内内存态（纯日志面，不持久化）。⚠️ internal：
     /// DaemonCore+Topoff.swift 跨文件访问——executable internal 模块外不可达。
     var topoffWriteFailureStreak = 0
+    /// 0.20.1 §2.2 心跳 watchdog 的 tick 活性时间戳（**独立小锁**保护——与主状态
+    /// 锁无嵌套、无锁序倒置；watchdog 线程只取本锁，主线程持主锁楔死时照常可读）。
+    /// 更新点钉在 performTickLocked 入口首行（R2-P1：尾部在 27 观测路径不可达）。
+    private var lastTickAt: Date?
+    private let tickClockLock = NSLock()
 
     // MARK: - 生命周期
 
@@ -226,16 +231,19 @@ final class DaemonCore: @unchecked Sendable {
                 // 0.20 M1a §2.2 #9（DaemonCore.swift:188-189 处置）：恢复写经控制面
                 // ——26 tahoe 路径行为不变（同一 client）；27 经 CHIE 探测直挂写
                 // 0x00（终止必须真实还原，防适配器禁用泄漏）。
+                var restoreOutcome = "无控制后端，CHIE 恢复不可执行"
                 if let client = dischargeControlClientLocked {
                     let restoreError = DischargeAdapterControl.restoreEnabled(
                         client: client, attempts: Discharge.terminalRestoreAttempts
                     )
                     if let restoreError {
+                        restoreOutcome = "CHIE 恢复失败（残留禁用交 §2.4 巡检兜底）"
                         events.append(LogEvent(
                             category: .control, level: .error,
                             message: "崩溃恢复：放电动作残留，CHIE 恢复失败（\(restoreError)）——残留禁用交 §2.4 残留不变量巡检兜底"
                         ))
                     } else {
+                        restoreOutcome = "已恢复 CHIE=0x00"
                         events.append(LogEvent(
                             category: .control, level: .warn,
                             message: "崩溃恢复：放电动作残留，已恢复 CHIE=0x00（限制充电由启动后常规 enforce/编排收敛）"
@@ -247,6 +255,11 @@ final class DaemonCore: @unchecked Sendable {
                         message: "崩溃恢复：放电动作残留但无控制后端——CHIE 恢复不可执行（残留交 §2.4 不变量）"
                     ))
                 }
+                // 0.20.1 §2.1 事件落盘（挂钩表第六行）：启动崩溃恢复——LogEvent 环
+                // 随前进程消失，持久轨迹直写 stderr 才可溯源（同 topoff 惯例，锁内调用）。
+                Self.persistLog(DischargePersistEvent.crashRecovery(
+                    detail: "kind=\(pending.kind) 残留已取消，\(restoreOutcome)"
+                ).message)
             }
             if pending.kind == Calibration.kind {
                 // WP3：校准残留按相位恢复 CHIE（discharge 在场/相位缺失未知 → 无条件
@@ -437,7 +450,7 @@ final class DaemonCore: @unchecked Sendable {
         // WP2 门控：动作活跃 → 隐式取消（恢复限充语义）→ 再设新限并立即 enforce。
         // 审查 M3：daemon 发起取消 → 锁存 cancel 字面量（App 轮询必见终态/通知必发）。
         if actionTrack.isActive {
-            cancelActionLocked(events: &events, latchCancelled: true)
+            cancelActionLocked(events: &events, latchCancelled: true, reason: "设置新上限（隐式取消）")
         } else {
             // 用户动作清除终态锁存（P0-2：setLimits/enable/disable/fullOnce 重启）。
             actionTrack.clearUserActionLatch()
@@ -481,7 +494,7 @@ final class DaemonCore: @unchecked Sendable {
         // WP2 门控：动作活跃 → 先走统一 cancel（落终态 + 恢复限充语义）再执行 disable 原义。
         // 审查 M3：daemon 发起取消 → 锁存（同上，disable 通知必发）。
         if actionTrack.isActive {
-            cancelActionLocked(events: &events, latchCancelled: true)
+            cancelActionLocked(events: &events, latchCancelled: true, reason: "停用限充（隐式取消）")
         } else {
             // 用户动作清除终态锁存（P0-2）。
             actionTrack.clearUserActionLatch()
@@ -582,7 +595,7 @@ final class DaemonCore: @unchecked Sendable {
         // WP2 门控：动作活跃 → 先走统一 cancel（落终态 + 恢复限充语义）再恢复默认充电。
         // 审查 M3：SIGTERM 亦为 daemon 发起取消 → 锁存。
         if actionTrack.isActive {
-            cancelActionLocked(events: &events, latchCancelled: true)
+            cancelActionLocked(events: &events, latchCancelled: true, reason: "退出恢复（SIGTERM/SIGINT 隐式取消）")
         }
         // Phase 5 v1.1：退出恢复风扇（boost 中 → Tg→原值 + Md=0，方案 §6.4 路口①）。
         releaseFanLocked(events: &events)
@@ -647,7 +660,7 @@ final class DaemonCore: @unchecked Sendable {
         // 否则动作存活——deadline（start 时绝对 Date）与完成判定不重算（轨道未触碰）。
         if loaded.mode == "disabled" && actionTrack.isActive {
             // 审查 M3：SIGHUP-disabled 为 daemon 发起取消 → 锁存。
-            cancelActionLocked(events: &events, latchCancelled: true)
+            cancelActionLocked(events: &events, latchCancelled: true, reason: "SIGHUP 切停用（隐式取消）")
         } else if loaded.mode == "active" {
             // 动作存活分支：仅记日志（状态照旧），不重算 deadline。
             if actionTrack.isActive {
@@ -688,10 +701,25 @@ final class DaemonCore: @unchecked Sendable {
         emit(events)
     }
 
+    /// watchdog 专用读口（0.20.1 §2.2）：只取 tick 时钟小锁，**绝不触碰主状态锁**
+    /// ——无锁序倒置，主线程持主锁楔死（wedge 形态）时 watchdog 线程照常读到
+    /// 停摆时间戳并自杀重拉（main.swift scheduleHeartbeatWatchdog 消费）。
+    func lastTickAtSnapshot() -> Date? {
+        tickClockLock.lock()
+        defer { tickClockLock.unlock() }
+        return lastTickAt
+    }
+
     /// 锁内 tick（调用方负责解锁与 emit；WP2 起 internal——DaemonCore+OneShot.swift 的
     /// fullOnce 启动后调用；WP2' 放电维护分支在 DaemonCore+Discharge.swift）：
     /// backend 保证 → 采样 → 控制键读取 → 电量变化事件 → active 模式 enforce → lastStatus。
     func performTickLocked(events: inout [LogEvent]) {
+        // 0.20.1 §2.2 watchdog tick 时钟：**入口首行钉死**（R2-P1——27 观测路径
+        // backend 缺席/采样失败/控制键读取失败臂全部 early-return，钉尾部不可达会
+        // 致每 150s 误杀重启循环）。独立小锁与主状态锁无嵌套（HeartbeatWatchdog）。
+        tickClockLock.lock()
+        lastTickAt = Date()
+        tickClockLock.unlock()
         // 0.20 M1a 合盖拒绝闸：合盖状态只读探测（每 tick 一次缓存——DaemonStatus.
         // clamshellClosed 数据源 + 运行中止判定输入；读取失败 → nil 诚实缺席，
         // mini-spike 结论与弱检查局限见 ClamshellProbe/DEVICES.md）。
@@ -735,7 +763,7 @@ final class DaemonCore: @unchecked Sendable {
                     // 防御分支：路由已判可写，client 理论恒在位（chieControlPlane
                     // 置值拍 smcClient 同拍保留）——仅传输故障重建窗可达，照防御
                     // 纪律落监控缺失计数，不静默。
-                    noteDischargeMonitoringLossLocked(events: &events)
+                    noteDischargeMonitoringLossLocked(events: &events, reason: "观测段防御分支：控制面 client 或快照缺席")
                 }
             case .patrolResidual:
                 // §2.2 #7：27 残留巡检兜底（防崩溃/恢复失败泄漏 CHIE=0x8 致电池
@@ -755,7 +783,10 @@ final class DaemonCore: @unchecked Sendable {
                     )
                 }
             case .noteMonitoringLoss:
-                noteDischargeMonitoringLossLocked(events: &events)
+                noteDischargeMonitoringLossLocked(
+                    events: &events,
+                    reason: snapshot == nil ? "电池快照缺席" : "CHIE 控制面不可写"
+                )
             }
             // v0.19.20 编排链（R2 P2 门控钉死：仅 27 终态驱动——26 瞬态窗口保持
             // sample+publish 原样，不落地 limit 转移）。前置日程转移 + assertionRequest
@@ -784,7 +815,7 @@ final class DaemonCore: @unchecked Sendable {
                 category: .control, level: .error,
                 message: "电池采样失败：\(error)（保留上次状态）"
             ))
-            noteDischargeMonitoringLossLocked(events: &events)
+            noteDischargeMonitoringLossLocked(events: &events, reason: "电池采样失败")
             return
         }
 
@@ -794,7 +825,7 @@ final class DaemonCore: @unchecked Sendable {
             chargingEnabled = try backend.chargingEnabled()
         } catch {
             noteControlFailureLocked(error, events: &events, context: "控制键读取")
-            noteDischargeMonitoringLossLocked(events: &events)
+            noteDischargeMonitoringLossLocked(events: &events, reason: "控制键读取失败")
             return
         }
 

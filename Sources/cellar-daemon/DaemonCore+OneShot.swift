@@ -115,7 +115,9 @@ extension DaemonCore {
 /// 终态、通知必发）；XPC cancelAction（用户点击取消）默认 false 不锁存（App 即时
 /// 反馈路径）。fullOnce 不受本参数影响（恒走 cancel() 旧语义——cancel 不通知，
 /// 锁存无消费面）。
-    func cancelActionLocked(events: inout [LogEvent], latchCancelled: Bool = false) {
+/// `reason`（0.20.1 §2.1）：取消成因（用户/设置新上限/停用/退出/SIGHUP）——放电
+/// 分支随事件落盘（挂钩表第五行；LogEvent 环随进程消失，持久轨迹才可溯源）。
+    func cancelActionLocked(events: inout [LogEvent], latchCancelled: Bool = false, reason: String = "用户取消") {
         // kind 预取：cancel 会清空动作，分流判断必须在取消之前；
         // calibration 相位同理由：第三分支需要 phase 判定 CHIE 恢复；
         // calibration startedAt 同理由（v1.4 UD-5 第①点：终态补写取在手值——
@@ -137,6 +139,8 @@ extension DaemonCore {
             // SIGTERM 隐式取消一律记冷却 + 关翻转门（R1 P1-2——取消后被下一 tick
             // 立即重触发的漏洞修复）。
             noteDischargeTerminatedLocked(now: Date())
+            // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：用户/隐式取消。
+            Self.persistLog(DischargePersistEvent.cancelled(reason: reason).message)
             // 放电统一取消：恢复 CHIE（重试阶梯）+ enforce CHTE（恢复限充语义）。
             // 0.20 M1a §2.2 #9（:142 处置）：恢复写经控制面——26 tahoe 行为不变
             // （同一 client 同字节）；27 经 CHIE 探测连接真实还原，enforce 交 27

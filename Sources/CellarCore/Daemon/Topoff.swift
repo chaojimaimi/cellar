@@ -31,6 +31,9 @@ public enum Topoff {
     public static let degradedLimit = 80
     /// 关断清理域随写值（§3.7——先值后态+通知）。
     public static let shutdownLimit = 100
+    /// 0.20.1 热修：topoff 子进程看门狗超时（秒）——真机 wedge 事件（走查②：strike
+    /// 路径子进程挂起持全局锁→daemon 整体楔死）的修复常量。
+    public static let subprocessTimeoutSeconds = 10
 
     /// 域路径 / 通知名 / 键名（SMC-NOTES §11.5/§11.5.1 实测；0.19.20 实验期同域）。
     public static let domainPath = "/var/root/Library/Preferences/com.apple.smartcharging.topoffprotection"

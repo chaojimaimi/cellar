@@ -47,6 +47,10 @@ final class DaemonInstaller: ObservableObject {
     @Published private(set) var hasLegacyPlist = false
     /// 嵌入 plist 缺失但 XPC 可达（多副本先后注册的异常形态，§2.6）。
     @Published private(set) var anomaly = false
+    /// 损坏 BTM 记录形态（0.20.1 §3.2）：App 托管 ∧ 反复 spawn 失败（smd 周期
+    /// 对账会以同 label 顶掉手工 job）——独立呈现行，**不进 MigrationGuidance
+    /// 四象限**（golden 影响最小化）。
+    @Published private(set) var btmCorrupted = false
     @Published private(set) var busy = false
     @Published private(set) var lastError: String?
     /// 首次 refresh 回包已置位（WP5 P1-3 竞态守卫）：引导门在 loaded == false 时
@@ -86,14 +90,17 @@ final class DaemonInstaller: ObservableObject {
         hasLegacyPlist = legacy
         Task.detached { [weak self] in
             let registration = RegistrationStatus(SMAppService.daemon(plistName: Self.plistName).status)
-            let route = Self.queryRoute()
+            let (route, btmState) = Self.queryRouteAndBTM()
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.loaded = true   // P1-3：首次回包置位（引导门守卫）
                 self.refreshRetries = 0
                 self.registration = registration
                 self.route = route
-                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public)")
+                // 0.20.1 §3.2：同形态检出（appManaged ∧ spawn failed——与 doctor
+                // 检查 9 的路线再分流同源解析）。
+                self.btmCorrupted = route == .appManaged && btmState == .spawnFailed
+                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public)")
                 self.guidance = migrationGuidance(
                     legacyPlistExists: legacy,
                     registration: registration
@@ -248,12 +255,13 @@ final class DaemonInstaller: ObservableObject {
 
     // MARK: - 路由 / 文件探测
 
-    /// 路由来源（防线 c）：launchctl print system/com.cellar.daemon 输出 → route 纯函数。
+    /// 路由 + BTM 注册态一次采集（防线 c；0.20.1 §3.2：损坏 BTM 记录形态检出——
+    /// appManaged ∧ spawn failed，与 doctor 检查 9 的路线再分流同源解析纯函数）。
     /// 非 root 亦可读已加载系统服务（2026-09-01 实测）；同时识别手工格式与
     /// SMAppService/BTM 托管格式（后者无 program 行，managed_by 行归因）。
-    private nonisolated static func queryRoute() -> DaemonRoute {
+    private nonisolated static func queryRouteAndBTM() -> (route: DaemonRoute, btmState: BTMState?) {
         let output = runLaunchctl(["print", "system/com.cellar.daemon"])
-        return DaemonRoute.route(fromPrintOutput: output)
+        return (DaemonRoute.route(fromPrintOutput: output), BTMState.parseLaunchctlPrint(output))
     }
 
     private static var embeddedPlistExists: Bool {

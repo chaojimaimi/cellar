@@ -457,10 +457,13 @@ func runDoctorExtendedDomainScenarios() {
     }
     // 用例 119 臂二：osMajorVersion=26 → 既有 detail 零变化（逐字断言，既有断言
     // 语义可测化）；缺省构造（约 40 处既有构造点形态）同样零附注。
+    // 0.20.1 §4 文案诚实化：noneAvailable 限定语按运行身份分流（root 探测 = 确定
+    // 性事实）——本 fixture isRoot: true，逐字断言同步为 root 措辞（非 root 原文
+    // 由 RobustnessDomain 热修-医生-6 钉死）。
     do {
         let report = DoctorReportGenerator.generate(readOnlyInputs(osMajorVersion: 26))
-        check(report.checks[2].detail == "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）",
-              "用例119", "26：后端 noneAvailable detail 逐字不变")
+        check(report.checks[2].detail == "只读模式：未探测到可用控制后端（root 身份探测，结论确定）",
+              "用例119", "26：后端 noneAvailable detail 逐字不变（0.20.1 §4 root 措辞）")
         check(report.checks[3].detail == "控制键状态未知（读取异常）",
               "用例119", "26：控制键 FAIL detail 逐字不变")
         // 缺省臂（R 复审 P3-1 加固）：与 readOnlyInputs 同形态（noneAvailable +
@@ -472,7 +475,7 @@ func runDoctorExtendedDomainScenarios() {
             snapshot: snapshot, snapshotError: nil,
             conflict: ConflictScanResult(exact: [], generic: [])
         ))
-        check(defaulted.checks[2].detail == "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）"
+        check(defaulted.checks[2].detail == "只读模式：未探测到可用控制后端（root 身份探测，结论确定）"
                 && !defaulted.checks[2].detail.contains("macOS 27"),
               "用例119", "osMajorVersion 缺省（默认 26）→ noneAvailable detail 逐字零附注（既有构造点零改动）")
     }

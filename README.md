@@ -47,6 +47,7 @@
 
 - **托管路线（面板安装）**：先在面板「卸载守护进程」→ 替换 Cellar.app → 打开 → 面板「安装守护进程」。**直接用 rm/cp 覆盖 App 可能导致守护进程无法启动**（系统注册缓存失效，表现为守护进程反复启动失败）；若已发生：重启 Mac 后重新安装，或按下方矩阵切换手工路线恢复限充（面板 pending 态另有「移除残留注册」出口）。
 - **手工路线（CLI 安装）**：替换 Cellar.app 不影响守护进程；但 daemon 升级需重跑 `sudo .build/release/cellar install`。
+- **手工路线 daemon 反复被顶掉 / install 报 Input/output error（0.20.1 新增检测）**：ad-hoc 签名 App 的托管注册记录可能生成即损坏，系统会周期性（10 分钟～1 小时）以同名 label 重新提交它——顶掉手工 daemon、并让手工 install 的 bootstrap 反复失败。`cellar install` 已能识别此形态并给出指引；手动恢复序列：App 面板「卸载守护进程」→ `sudo sfltool resetbtm`（一次性代价：全系统登录项批准记录清空，其他 App 需要时会重新弹批准）→ 重跑 `sudo cellar install`。
 - 两种路线并存时面板会给出迁移指引；`cellar doctor` 第 9 项可查看守护进程注册态。
 
 **双路线选择矩阵**：

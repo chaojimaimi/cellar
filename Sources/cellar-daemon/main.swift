@@ -34,6 +34,9 @@ nonisolated(unsafe) private var signalSources: [DispatchSourceSignal] = []
 /// 跨进程互斥锁 fd（防线 b）：进程生命周期全局持有，从不关闭——文件锁随进程退出自动释放。
 nonisolated(unsafe) private var daemonLockFD: Int32 = -1
 
+/// 0.20.1 §2.2 心跳 watchdog 定时器强引用（释放即失效）。
+nonisolated(unsafe) private var watchdogTimer: DispatchSourceTimer?
+
 private let lifecycleLog = Logger(subsystem: "com.cellar.daemon", category: "lifecycle")
 
 // MARK: - 入口
@@ -100,6 +103,12 @@ installSignal(SIGHUP) {
 // 5. 心跳：30 秒主 RunLoop 定时器（percent 整数变化即 batteryLevelChanged；
 //    periodicTick 兜底——WP4 触发词表内，规格 §0.5）。
 scheduleHeartbeat(core: core)
+
+// 5.25 0.20.1 §2.2 心跳停摆自杀 watchdog（真机 wedge 一/二修复形态——KeepAlive
+//    只管退出不管挂起；独立 GCD 队列，主 RunLoop 冻结时照常检出，exit(42) 自杀
+//    → KeepAlive SuccessfulExit:false 重拉。装配在 startup 之后：active 模式首
+//    tick 已落 lastTickAt，disabled 模式以装配时刻为参照——HeartbeatWatchdog）。
+scheduleHeartbeatWatchdog(core: core, startedAt: Date())
 
 // 5.5 Phase 5 v1.1：风扇 tick（10 秒；与心跳错峰，锁内短临界区——方案 §3 锁纪律）。
 scheduleFanTick(core: core)
@@ -179,6 +188,35 @@ private func scheduleFanTick(core: DaemonCore) {
         &context
     )
     CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+}
+
+// MARK: - 0.20.1 §2.2 心跳停摆自杀 watchdog（独立 GCD 队列）
+
+/// 每 30s 检查 `lastTickAt`（专用小锁读口，**永不取主状态锁**——无锁序倒置，
+/// 主线程持锁楔死时本线程照常运行）：超过 150s（3×30s tick + 60s 余量）→
+/// persistLog 遗言 → exit(42) 自杀（KeepAlive 重拉）。遗言与主线程 persistLog
+/// 并发写 stderr：一次性、退出前，最坏一条交错行——可接受（方案 §2.2 注记）。
+private func scheduleHeartbeatWatchdog(core: DaemonCore, startedAt: Date) {
+    let timer = DispatchSource.makeTimerSource(
+        queue: DispatchQueue(label: "com.cellar.daemon.watchdog", qos: .utility)
+    )
+    timer.schedule(
+        deadline: .now() + HeartbeatWatchdog.checkInterval,
+        repeating: HeartbeatWatchdog.checkInterval
+    )
+    timer.setEventHandler { [weak core] in
+        guard let core else { return }
+        let now = Date()
+        let lastTick = core.lastTickAtSnapshot()
+        guard HeartbeatWatchdog.shouldSelfTerminate(
+            lastTickAt: lastTick, watchdogStart: startedAt, now: now
+        ) else { return }
+        let age = Int(now.timeIntervalSince(lastTick ?? startedAt))
+        DaemonCore.persistLog("心跳停摆，自杀重启（lastTick 距今 \(age)s）——KeepAlive 将重拉")
+        exit(HeartbeatWatchdog.suicideExitCode)
+    }
+    timer.resume()
+    watchdogTimer = timer
 }
 
 // MARK: - 电源通知（逐消息 ack 纪律，规格 §3 表；评审 D-1：kIOPMNoneLastCall 不存在）

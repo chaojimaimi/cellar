@@ -169,7 +169,20 @@ struct DashboardView: View {
             }
             // 注记行（口径 = manualSocLimit，仅手动策略；nil 不显示）。
             if native.active, let manual = native.manualSocLimit {
-                NativeLimitNoteRow(socLimit: manual, residual: Self.osMajorVersion >= 27)
+                // 0.20.1 §4 文案诚实化（零 wire）：topoff 通道承载中（daemon 上报
+                // capabilities 含 sub80 ∧ sub80State == .active——仅 27 可达）时
+                // plist 值即现行执法目标 → 「现行执法（上限 N%）」，N 取 daemon
+                // 上报 upperLimit；其余形态保持残留检测原文案（26 语义零变化）。
+                // 域值≠target 的外部篡改角点由 strike/降级流接管，显示语义仍成立。
+                if let status = statusController.daemonStatus,
+                   status.capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+                   status.sub80State == .active {
+                    NativeLimitNoteRow(
+                        socLimit: manual, residual: false, enforcingLimit: status.upperLimit
+                    )
+                } else {
+                    NativeLimitNoteRow(socLimit: manual, residual: Self.osMajorVersion >= 27)
+                }
             }
         }
     }

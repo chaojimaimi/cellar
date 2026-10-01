@@ -20,35 +20,54 @@ import SwiftUI
 /// residual（v0.19.20 WP-6）：27 上 plist = 「任务注册残留」非「现行上限」（S4
 /// 实证）→ 渲染「注册残留 N%（非现行上限）」INFO 形态（l10n 承载——不走风格
 /// 词汇表，避免三风格词条表扩面）。
+/// enforcingLimit（0.20.1 §4 文案诚实化，零 wire）：topoff 通道承载中（daemon
+/// 上报 capabilities 含 sub80 ∧ sub80State == .active——仅 27 可达）时 plist 值
+/// 即现行执法目标 → 渲染「现行执法（上限 N%）」，N 取 daemon 上报 upperLimit
+/// （既有字段，零 wire 变更）；其余形态保持残留检测原文案。
 public struct NativeLimitNoteRow: View {
     /// 手动策略限充值（daemon 注册态 manualSocLimit；仅作展示参数，判定在调用方）。
     public let socLimit: Int
     /// 27 残留形态（osMajorVersion >= 27 时由调用方传入；默认 false = 26- 现行
     /// 语义零变化）。
     public let residual: Bool
+    /// topoff 通道现行执法上限（daemon 上报 upperLimit；nil = 其余形态）。
+    public let enforcingLimit: Int?
 
     @Environment(\.cellarTheme) private var theme
 
-    public init(socLimit: Int, residual: Bool = false) {
+    public init(socLimit: Int, residual: Bool = false, enforcingLimit: Int? = nil) {
         self.socLimit = socLimit
         self.residual = residual
+        self.enforcingLimit = enforcingLimit
     }
 
     public var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: residual ? "clock.arrow.circlepath" : "bolt.circle")
+            Image(systemName: iconName)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.accent)
-            // 残留形态走 l10n 单源（%lld 占位与词汇表同形消费）；现行形态保持
-            // 词汇表通路（三风格差异化语汇保留）。
-            Text(residual
-                 ? CellarL10n.s("dashboard.nativeLimit.residualNote", socLimit)
-                 : String(format: theme.word(.nativeLimitNote), socLimit))
+            // 残留/执法形态走 l10n 单源（%lld 占位与词汇表同形消费）；现行形态
+            // 保持词汇表通路（三风格差异化语汇保留）。
+            Text(rowText)
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    private var iconName: String {
+        if enforcingLimit != nil { return "bolt.circle" }
+        return residual ? "clock.arrow.circlepath" : "bolt.circle"
+    }
+
+    private var rowText: String {
+        if let enforcingLimit {
+            return CellarL10n.s("dashboard.nativeLimit.enforcing", enforcingLimit)
+        }
+        return residual
+            ? CellarL10n.s("dashboard.nativeLimit.residualNote", socLimit)
+            : String(format: theme.word(.nativeLimitNote), socLimit)
     }
 }
 

@@ -37,6 +37,9 @@ extension DaemonCore {
             healProbeActive: topoffState.healProbeActive
         )
         guard sub80Capable else { return route.orchestrationDesired }   // 非 sub80 机：零行为（26 回归锚）
+        // 0.20.1 观测性：每 tick 一行持久轨迹（wedge 事件教训——LogEvent 内存环随进程
+        // 消失致事后不可溯源；本行落 daemon.log，卡死时最后一行即 wedge 现场）。
+        Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) desired=\(route.orchestrationDesired.map(String.init) ?? "nil") percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
         // §3.7 关断清理状态不变量（P3-3 评审修法——从事件驱动补成状态判定）：
         // mode 非 active ∨（编排开关关断 ∧ 汇聚目标 ≥80）→ 域随写 100 + off（幂等，
         // 守卫允许带 off 重试直至写成功）。覆盖：disable/SIGHUP/退出恢复事件路径、
@@ -113,14 +116,17 @@ extension DaemonCore {
             topoffWriteFailureStreak = 0
             topoffState.lastWrittenLimit = limit
             topoffState.lastWriteAt = now
+            let notifyText = notified ? "已发" : "发送失败"
+            Self.persistLog("topoff 域已写：mclLimitValue=\(limit)（通知\(notifyText)）\(recoveryNote)")
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "topoff 域已写：mclLimitValue=\(limit)（MCLFeatureState=1，先值后态；通知\(notified ? "已发" : "发送失败——agent 分钟级跟随兜底")）\(recoveryNote)"
+                message: "topoff 域已写：mclLimitValue=\(limit)（MCLFeatureState=1，先值后态；通知\(notifyText)——agent 分钟级跟随兜底）\(recoveryNote)"
             ))
             return true
         case .failed(let detail):
             topoffWriteFailureStreak += 1
             let firstFailure = topoffWriteFailureStreak == 1
+            Self.persistLog("topoff 域写入失败第 \(topoffWriteFailureStreak) 次：\(detail)")
             events.append(LogEvent(
                 category: .control, level: firstFailure ? .error : .warn,
                 message: firstFailure
@@ -154,8 +160,28 @@ extension DaemonCore {
         ))
     }
 
+    /// 持久可观测（0.20.1 P0——wedge 事件教训）：关键执法动作直写 stderr（plist 重定向
+    /// → /Library/Logs/Cellar/daemon.log）。LogEvent 内存环随进程消失（wedge 后事件
+    /// 不可溯源的直接成因），关键动作必须落持久文件。调用方持锁串行（写入原子性足够）。
+    static func persistLog(_ message: String) {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+    }
+
     /// 子进程捕获（stdout+stderr 合并 + 退出码；DoctorCommand 同款实现——daemon root
     /// 上下文运行 defaults/notifyutil）。
+    /// 0.20.1 P0 健壮性（真机 wedge 事件——走查②）：
+    /// ①**先 read-to-EOF 后收尸**（原实现先 wait 后读——子进程输出塞满 64KB 管道
+    ///   缓冲时子进程阻塞写、父进程阻塞等退出，互等死锁形态；read-to-EOF
+    ///   在子进程退出/关闭 stdout 时自然返回，顺序不可倒置）；
+    /// ②**10s 看门狗 terminate**（子进程挂起不永久持锁楔死 daemon）。
+    /// 0.20.1 P0 死锁根治（真机 wedge 事件二——放电收尾拍，sample 线程栈实证）：
+    /// ③**禁用 waitUntilExit——它在调用线程内嵌 RunLoop 等待**，等待期间主线程
+    ///   心跳 timer 回调重入 performTickLocked，对同一线程已持有的状态锁
+    ///   psynch 死锁（XPC handlePeerEvent 等锁全灭=daemon 整体失联）。改用
+    ///   terminationHandler 信号 DispatchSemaphore——Foundation 在内部 GCD 线程
+    ///   回调，不触碰调用方 RunLoop，重入路径不存在；wait 带 5s 兜底（EOF 后
+    ///   信号通常已先行到达；超时再补 terminate 并短等，保证 terminationStatus
+    ///   只在退出后读取）。
     static func runProcessCapture(
         _ executablePath: String, _ arguments: [String]
     ) -> (output: String, exitCode: Int32) {
@@ -165,13 +191,27 @@ extension DaemonCore {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        // R3-P3 纪律：terminationHandler 前置于 run()——run 与赋值间隙退出的窄窗
+        // 不再依赖 Foundation 追溯回调行为。
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do {
             try process.run()
         } catch {
             return ("", -1)
         }
-        process.waitUntilExit()
+        let watchdog = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(Topoff.subprocessTimeoutSeconds), execute: watchdog)
+        // 先读至 EOF（子进程退出或被看门狗 terminate 时返回），再等退出信号收尸
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return (String(data: data, encoding: .utf8) ?? "", process.terminationStatus)
+        if exited.wait(timeout: .now() + .seconds(5)) == .timedOut {
+            if process.isRunning { process.terminate() }
+            _ = exited.wait(timeout: .now() + .seconds(5))
+        }
+        watchdog.cancel()
+        let exitCode = process.terminationStatus
+        return (String(data: data, encoding: .utf8) ?? "", exitCode)
     }
 }

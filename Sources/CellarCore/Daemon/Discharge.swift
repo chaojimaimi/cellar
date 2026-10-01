@@ -476,3 +476,43 @@ public enum DischargeAdapterControl {
         }
     }
 }
+// MARK: - 放电关键事件持久轨迹（0.20.1 方案 §2.1）
+
+/// 放电关键事件（持久落盘枚举）。缺口（走查实证）：放电启动/中止/完成事件只进
+/// LogEvent 内存环，进程消失后不可溯源——「放电到底有没有短暂启动过」无法从事后
+/// 日志回答。**case 全集 = 方案 §2.1 挂钩表六行**（本枚举即事件边界，CellarCoreCheck
+/// 场景域钉死文案格式）；daemon 侧在挂钩点组装参数后经 `DaemonCore.persistLog`
+/// （锁内调用，同 topoff 惯例——写入原子性足够）直写 stderr → daemon.log。
+public enum DischargePersistEvent: Equatable, Sendable {
+    /// 启动（manual/autostart）——`dischargeToLimitLocked` 成功臂。
+    case started(initiator: String, target: Int, percent: Int?)
+    /// 前置拒绝——`dischargeToLimitLocked` 各拒绝臂（能力不可用/mode/外接/电量/
+    /// 合盖闸/持久化失败；快照失败回落上次已知值仍可启动，不属拒绝臂）。
+    case rejected(reason: String)
+    /// maintain 终态（完成/超时/安全终止）——`maintainDischargeLocked` 各终态臂。
+    case terminal(outcome: String, durationSeconds: Int)
+    /// 监护缺失终止——`noteDischargeMonitoringLossLocked` 终止臂。
+    case monitoringLoss(reason: String)
+    /// 取消（睡眠/合盖中止/用户/隐式/保活失败/外接恢复）——对应各取消臂。
+    case cancelled(reason: String)
+    /// 启动崩溃恢复——startup 崩溃恢复路径的放电残留处置。
+    case crashRecovery(detail: String)
+
+    /// 持久轨迹行文案（单行；与 topoff persistLog 同流，落 daemon.log）。
+    public var message: String {
+        switch self {
+        case .started(let initiator, let target, let percent):
+            return "放电启动：initiator=\(initiator) target=\(target)% percent=\(percent.map { "\($0)%" } ?? "未知")"
+        case .rejected(let reason):
+            return "放电拒绝：原因=\(reason)"
+        case .terminal(let outcome, let durationSeconds):
+            return "放电终态：outcome=\(outcome) 历时=\(durationSeconds)s"
+        case .monitoringLoss(let reason):
+            return "放电监护缺失终止：缺失原因=\(reason)"
+        case .cancelled(let reason):
+            return "放电取消：原因=\(reason)"
+        case .crashRecovery(let detail):
+            return "放电崩溃恢复：\(detail)"
+        }
+    }
+}

@@ -191,15 +191,35 @@ public struct TopoffDomainDoctorProbe: Equatable, Sendable {
 
 extension DoctorReportGenerator {
     /// 检查 9：daemon 注册态。已探测（btmProbeAttempted）才渲染：
-    /// running=PASS；spawnFailed=FAIL（附 README「更新 App」节恢复指引）；
-    /// unregistered=INFO（双路线文案：手工路线正常形态 / 托管路线注册掉落）；
-    /// 解析失败=INFO（不误报）。
+    /// running=PASS（XPC 探测失败 → WARN 注明「注册在位但 XPC 无响应」+ kickstart
+    /// 指引，0.20.1 §3.3 检查 8/9 口径统一）；spawnFailed=FAIL 并按路线再分流
+    /// （0.20.1 §3.2：App 托管 BTM 损坏形态 → 面板卸载 + resetbtm；手工/未知保持
+    /// 原 README 指引——该指引在托管损坏形态下恰是死循环）；unregistered=INFO
+    /// （双路线文案：手工路线正常形态 / 托管路线注册掉落）；解析失败=INFO（不误报）。
     static func btmRegistration(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard inputs.btmProbeAttempted else { return nil }
         switch inputs.btmState {
         case .running:
+            // 检查 8/9 口径统一（0.20.1 §3.3）：XPC 探测失败时检查 8 判「未安装或
+            // 未运行」与本检查「已注册且运行中」矛盾——launchd 报 running 而 XPC
+            // 无响应 = daemon 可能挂起（wedge 形态）或版本不符，WARN + kickstart。
+            guard inputs.daemonStatus != nil else {
+                return DoctorCheck(
+                    name: "守护进程注册", status: .warn,
+                    detail: "注册在位但 XPC 无响应（daemon 可能挂起或版本不符）——恢复：sudo launchctl kickstart -k system/com.cellar.daemon"
+                )
+            }
             return DoctorCheck(name: "守护进程注册", status: .pass, detail: "daemon 已注册且运行中")
         case .spawnFailed:
+            // 0.20.1 §3.2：旧 spawnFailed 分支按路线再分流（复用 DaemonRoute 解析，
+            // 与 btmState 同一份 print 输出）——「重启或 sudo cellar install」在
+            // App 托管 BTM 损坏形态下恰是死循环（smd 周期对账反复顶掉手工 job）。
+            if inputs.daemonRoute == .appManaged {
+                return DoctorCheck(
+                    name: "守护进程注册", status: .fail,
+                    detail: "App 托管 BTM 记录损坏且反复 spawn 失败（会周期性顶掉手工 daemon）——修复：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 install"
+                )
+            }
             return DoctorCheck(
                 name: "守护进程注册", status: .fail,
                 detail: "daemon 注册存在但启动失败（更新 App 后 BTM 缓存失效的典型形态）——见 README「更新 App」节：重启或 sudo cellar install 恢复"

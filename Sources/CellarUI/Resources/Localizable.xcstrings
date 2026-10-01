@@ -3741,6 +3741,23 @@
         }
       }
     },
+    "panel.daemon.btmCorrupted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app-managed daemon repeatedly fails to spawn (corrupted BTM record — it periodically evicts a manually installed daemon). Fix: uninstall from the Cellar panel → run sudo sfltool resetbtm → reinstall"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App 托管守护进程反复启动失败（BTM 记录损坏——会周期性顶掉手工 daemon）。修复：在本面板卸载注册 → sudo sfltool resetbtm → 重新安装"
+          }
+        }
+      }
+    },
     "panel.daemon.appManaged": {
       "extractionState": "manual",
       "localizations": {
@@ -7681,6 +7698,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "原生最低 80%"
+          }
+        }
+      }
+    },
+    "dashboard.nativeLimit.enforcing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Currently enforced by Cellar (limit %lld%%)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "现行执法（上限 %lld%%）"
           }
         }
       }

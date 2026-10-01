@@ -101,6 +101,9 @@ public struct DoctorInputs: Sendable {
     public let btmState: BTMState?
     /// 检查 9 是否已探测（解析失败亦渲染 INFO——不静默；未探测不渲染）。
     public let btmProbeAttempted: Bool
+    /// 检查 9 的安装路线（0.20.1 §3.2：spawnFailed 按路线再分流——App 托管 BTM
+    /// 损坏形态指引面板卸载 + resetbtm）。与 btmState 同源（同一份 print 输出）；nil = 未探测。
+    public let daemonRoute: DaemonRoute?
     /// 检查 10：版本矩阵（CLI/daemon/App 三方；nil = 未探测不渲染）。
     public let versionMatrix: VersionMatrix?
     /// 检查 11：放电能力探测（nil = 未探测不渲染）。
@@ -164,6 +167,7 @@ public struct DoctorInputs: Sendable {
         processHits: [String]? = nil,
         btmState: BTMState? = nil,
         btmProbeAttempted: Bool = false,
+        daemonRoute: DaemonRoute? = nil,
         versionMatrix: VersionMatrix? = nil,
         dischargeProbe: DischargeProbe? = nil,
         fanProbe: FanDoctorProbe? = nil,
@@ -195,6 +199,7 @@ public struct DoctorInputs: Sendable {
         self.processHits = processHits
         self.btmState = btmState
         self.btmProbeAttempted = btmProbeAttempted
+        self.daemonRoute = daemonRoute
         self.versionMatrix = versionMatrix
         self.dischargeProbe = dischargeProbe
         self.fanProbe = fanProbe
@@ -371,9 +376,12 @@ public enum DoctorReportGenerator {
             }
             return DoctorCheck(name: "后端探测", status: .pass, detail: detail)
         case .noneAvailable:
+            // 0.20.1 §4 文案诚实化：「非 root 时结论仅供参考」在 root 运行下过时
+            // ——按运行身份分流措辞（root 探测 = 确定性事实，不附加限定语）。
+            let qualifier = inputs.isRoot ? "root 身份探测，结论确定" : "非 root 时结论仅供参考"
             return DoctorCheck(
                 name: "后端探测", status: .info,
-                detail: "只读模式：未探测到可用控制后端（非 root 时结论仅供参考）"
+                detail: "只读模式：未探测到可用控制后端（\(qualifier)）"
                     + macOS27Note(inputs)
             )
         case .serviceUnavailable:

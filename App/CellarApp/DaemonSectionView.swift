@@ -34,6 +34,15 @@ struct DaemonSectionView: View {
                     .foregroundStyle(theme.warning)
             }
 
+            // 0.20.1 §3.2：损坏 BTM 记录形态（App 托管 ∧ 反复 spawn 失败）——独立
+            // 引导行（独立 @Published 检出，不动 MigrationGuidance 四象限枚举）。
+            if installer.btmCorrupted {
+                Text(CellarL10n.s("panel.daemon.btmCorrupted"))
+                    .font(.caption)
+                    .foregroundStyle(theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let error = installer.lastError {
                 Text(error)
                     .font(.caption)

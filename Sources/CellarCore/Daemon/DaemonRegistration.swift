@@ -98,6 +98,42 @@ public func daemonRoute(programPath: String) -> DaemonRoute {
     return .manual
 }
 
+// MARK: - install bootstrap 终败的 BTM 幽灵检测（0.20.1 方案 §3.1）
+
+/// bootstrap 终败后的指引分流（纯函数判定——CellarCoreCheck 场景域钉死；CLI 侧只做
+/// 子进程采集与文案渲染）。背景（真机定谳）：BTM 数据库中损坏记录（ad-hoc 签名 App
+/// 的 LWCR cdhash 空集 → spawn 永远 EX_CONFIG）+ smd 周期性对账（10min–1h）反复以
+/// 同 label 重新提交 → 手工 job 被顶、手工 bootstrap EIO——盲目重试 install 是死循环。
+public enum BootstrapFailureGuidance: Equatable, Sendable {
+    /// BTM 损坏记录：输出含 `managed_by = com.apple.xpc.ServiceManagement`
+    /// ∧ `last exit code = 78`（EX_CONFIG）→ 指引 App 面板卸载 + `sudo sfltool resetbtm`。
+    case btmCorruptedRecord
+    /// 无 managed_by（bootout 后 launchd 清理竞态——真机实证：等 60s 重跑 install
+    /// 幂等，bootout no-op 后 bootstrap 即成功）→ 指引等待重跑。
+    case cleanupRace
+    /// 其余形态：不附 BTM 指引（防误导），原始错误透传。
+    case other
+
+    /// `launchctl print system/com.cellar.daemon` 输出 → 指引分流（宽松匹配，
+    /// 缺字段不崩；行扫描纪律与 DaemonRoute.route/BTMState.parseLaunchctlPrint 同款）。
+    public static func classify(fromPrintOutput output: String) -> BootstrapFailureGuidance {
+        var managedBySMD = false
+        var lastExit78 = false
+        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("managed_by = "), line.contains("com.apple.xpc.ServiceManagement") {
+                managedBySMD = true
+            }
+            if line.contains("last exit code = 78") {
+                lastExit78 = true
+            }
+        }
+        if managedBySMD && lastExit78 { return .btmCorruptedRecord }
+        if !managedBySMD { return .cleanupRace }
+        return .other
+    }
+}
+
 // MARK: - 跨进程互斥常量（防线 b）
 
 /// daemon 跨进程互斥锁路径。daemon main 中 flock 为第一条可执行逻辑（Logger 之后、

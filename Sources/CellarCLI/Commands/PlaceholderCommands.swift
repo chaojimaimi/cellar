@@ -339,23 +339,37 @@ enum DaemonInstaller {
 
         // 5. 先容忍清理旧实例，再 bootstrap。⚠️ bootout 后必须留出 launchd 清理
         // 间隔（真机 2026-09-04 实证：teardown 后立即 bootstrap 报 EIO "Bootstrap
-        // failed: 5"，竞态非确定——成功过多次后偶发一次）；失败再等 3s 重试一次，
-        // 仍失败 → 中止并打印 launchctl 原始错误。
+        // failed: 5"，竞态非确定——成功过多次后偶发一次）。0.20.1 §3.1：smd 对账
+        // 竞态窗口实测分钟级 → 重试 3s×1 升级为 **3s/10s/30s 三次退避**；终败后跑
+        // launchctl print 做 BTM 幽灵分流指引（损坏记录形态下盲目重试 install 是
+        // 死循环——smd 周期对账反复以同 label 顶掉手工 job）。
         let cleanup = runLaunchctl(["bootout", "system/com.cellar.daemon"])
         if cleanup.status != 0 {
             print("launchctl bootout 提示（容忍，旧实例不存在）：\(cleanup.errorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "退出码 \(cleanup.status)" : cleanup.errorText.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
         Thread.sleep(forTimeInterval: 1.5)
         var bootstrap = runLaunchctl(["bootstrap", "system", plistPath])
-        if bootstrap.status != 0 {
-            print("launchctl bootstrap 首试失败（\(bootstrap.errorText.trimmingCharacters(in: .whitespacesAndNewlines))），等 3s 重试一次……")
-            Thread.sleep(forTimeInterval: 3)
+        for backoffSeconds in [3.0, 10.0, 30.0] where bootstrap.status != 0 {
+            print("launchctl bootstrap 失败（\(bootstrap.errorText.trimmingCharacters(in: .whitespacesAndNewlines))），等 \(Int(backoffSeconds))s 重试……")
+            Thread.sleep(forTimeInterval: backoffSeconds)
             bootstrap = runLaunchctl(["bootstrap", "system", plistPath])
         }
         guard bootstrap.status == 0 else {
             print("❌ launchctl bootstrap 失败（原始输出）：")
             let raw = bootstrap.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
             print(raw.isEmpty ? "（launchctl 无输出，退出码 \(bootstrap.status)）" : raw)
+            // 0.20.1 §3.1 BTM 幽灵检测：注册态分流指引（解析/分流纯函数在
+            // CellarCore.BootstrapFailureGuidance——CellarCoreCheck 场景域钉死）。
+            let printOutput = runLaunchctl(["print", "system/com.cellar.daemon"]).outputText
+            switch BootstrapFailureGuidance.classify(fromPrintOutput: printOutput) {
+            case .btmCorruptedRecord:
+                print("   检出 BTM 损坏记录（App 托管注册生成即损坏 + smd 周期对账会反复顶掉手工 daemon）：")
+                print("   修复：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 sudo cellar install")
+            case .cleanupRace:
+                print("   未检出托管注册（疑似 bootout 后 launchd 清理竞态）：等 60s 后重跑 sudo cellar install（幂等——bootout no-op 后 bootstrap 即成功）")
+            case .other:
+                break
+            }
             throw ExitCode(1)
         }
         print("✅ launchctl bootstrap 成功")
@@ -475,6 +489,11 @@ enum DaemonInstaller {
 
     /// 运行 launchctl 并返回退出码 + stdout（print 走此通道）+ stderr 原文
     /// （bootstrap/bootout 失败必须打印原始错误）。DaemonCommandHelpers.queryDaemonRoute 共用。
+    /// 0.20.1 §3.1 顺手修复（与 DaemonCore+Topoff.runProcessCapture 同款纪律）：
+    /// ①弃 waitUntilExit（调用线程内嵌 RunLoop 等待形态）→ terminationHandler 信号
+    ///   DispatchSemaphore；②**先 read-to-EOF 后收尸**（launchctl print 输出塞满
+    ///   64KB 管道时先 wait 后读 = 互等死锁形态）；③10s watchdog terminate（子进程
+    ///   挂起不永久阻塞 install）。
     static func runLaunchctl(_ arguments: [String]) -> (status: Int32, outputText: String, errorText: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -483,14 +502,29 @@ enum DaemonInstaller {
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+        // R3-P3 纪律：terminationHandler 前置于 run()——run 与赋值间隙退出的窄窗
+        // 不再依赖 Foundation 追溯回调行为。
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do {
             try process.run()
         } catch {
             return (-1, "", "launchctl 无法执行：\(error)")
         }
-        process.waitUntilExit()
+        let watchdog = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + .seconds(Topoff.subprocessTimeoutSeconds), execute: watchdog
+        )
+        // 先读至 EOF（子进程退出或被看门狗 terminate 时返回），再等退出信号收尸
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        if exited.wait(timeout: .now() + .seconds(5)) == .timedOut {
+            if process.isRunning { process.terminate() }
+            _ = exited.wait(timeout: .now() + .seconds(5))
+        }
+        watchdog.cancel()
         return (
             process.terminationStatus,
             String(data: outputData, encoding: .utf8) ?? "",

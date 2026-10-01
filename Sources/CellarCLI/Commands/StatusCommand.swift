@@ -29,12 +29,14 @@ struct StatusCommand: ParsableCommand {
             ? "root（具备写入能力）"
             : "非 root（读取可用；写入需 root，限充控制经 daemon）"
         print("运行身份：\(identity)")
-        printDaemonSection()
+        let daemonStatus = printDaemonSection()
 
         // 本地只读段：任一失败 → 退出码 1（daemon 缺失时本地成功仍 0——降级视图）。
         var localFailed = false
         do {
-            try printBackendSection()
+            try printBackendSection(
+                sub80Capable: daemonStatus?.capabilities?.contains(DaemonXPC.capabilitySub80) == true
+            )
         } catch {
             localFailed = true
         }
@@ -143,8 +145,10 @@ struct StatusCommand: ParsableCommand {
 
     /// XPC 失败不抛错：打印固定指引（spec §5 失败矩阵与 set/enable/disable 同文案）。
     /// WP2 双路由化（§2.7）：XPC 可达 → 附加路由行；不可达 → 按手工 plist 是否存在分支
-    /// （已安装未运行 / 未安装 + 双路由安装指引）。
-    private func printDaemonSection() {
+    /// （已安装未运行 / 未安装 + 双路由安装指引）。返回 daemon 回包（nil = 不可达，
+    /// 0.20.1 §4 后端行 27 分流消费——capabilities 含 sub80 时切「27 通道」文案）。
+    @discardableResult
+    private func printDaemonSection() -> DaemonStatus? {
         do {
             let status = try DaemonXPCClient().getStatus()
             DaemonCommandHelpers.printStatus(status)
@@ -152,6 +156,7 @@ struct StatusCommand: ParsableCommand {
             printNativeLine(status)
             printMagSafeLedLine(status)
             printRouteLine()
+            return status
         } catch DaemonClientError.timeout, DaemonClientError.connectionFailed {
             if FileManager.default.fileExists(atPath: DaemonInstaller.plistPath) {
                 print("daemon：已安装未运行（手工路线）")
@@ -160,10 +165,13 @@ struct StatusCommand: ParsableCommand {
                 print("daemon：未安装")
                 print("安装指引：sudo cellar install（手工路线），或从 Cellar 菜单栏面板安装（托管）")
             }
+            return nil
         } catch DaemonClientError.daemonError(let message) {
             print("daemon 状态查询失败：\(message)")
+            return nil
         } catch {
             print("daemon 状态查询失败：\(error)")
+            return nil
         }
     }
 
@@ -290,7 +298,10 @@ struct StatusCommand: ParsableCommand {
     // MARK: - 后端与控制键（SMC 路径）
 
     /// 读失败（连接/探测/控制键）→ 打印对应错误并抛 ExitCode(1)。
-    private func printBackendSection() throws {
+    /// 0.20.1 §4 文案诚实化（零 wire）：daemon 上报 capabilities 含 sub80（仅 27
+    /// 终态——26 恒不含）时，本地探测 noBackendAvailable 是 27 平台事实而非故障，
+    /// 「不可用（只读模式…）」文案吓人 → 切「27 通道」分流文案。
+    private func printBackendSection(sub80Capable: Bool = false) throws {
         let client: SMCClient
         do {
             client = try SMCClient.makeDefault()
@@ -304,7 +315,11 @@ struct StatusCommand: ParsableCommand {
         do {
             backend = try RuntimeProbe.probe(client: client)
         } catch BackendError.noBackendAvailable {
-            print("后端：不可用（只读模式：未探测到控制后端，监测仍可用）")
+            if sub80Capable {
+                print("后端：27 通道：充电执法经 topoff 域 · 放电经 CHIE")
+            } else {
+                print("后端：不可用（只读模式：未探测到控制后端，监测仍可用）")
+            }
             return
         } catch {
             print("❌ 后端探测失败：\(error)")
