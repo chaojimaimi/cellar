@@ -355,6 +355,12 @@ extension DoctorReportGenerator {
         if let channelState = inputs.daemonStatus?.sub80State {
             parts.append("通道态=\(channelState.rawValue)")
         }
+        // 0.21.0 §3.2：校准抑制同步行（模式指纹识别态——true 才渲染；nil = 旧
+        // daemon/26 平台缺席不渲染。诚实边界：模式识别有误报/漏报可能，方案 §3.2
+        // 登记——本行仅观测呈现，不参与健康判定（info 恒不抬退出码同款纪律））。
+        if inputs.daemonStatus?.calibrationSuspected == true {
+            parts.append("校准抑制=系统校准中（限充暂缓——校准结束自动恢复）")
+        }
         return DoctorCheck(
             name: "topoff 域", status: .info,
             detail: parts.joined(separator: "；") + "（<80% 限充执法域——0.20 起 daemon 管理）"

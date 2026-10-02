@@ -381,9 +381,17 @@ extension DaemonCore {
     /// dischargeControlClientLocked（26 tahoe 路径同一 client 同字节，行为不变；
     /// 校准能力门控保证 27 不会出现在轨校准，client 缺席臂为防御）。
     /// internal：cancelActionLocked（DaemonCore+OneShot.swift）跨文件调用。
+    /// 0.21.0 §2 code-review P1-1：本函数是校准侧 CHIE 恢复**集中点**——迟滞簿记在
+    /// 此失效（CHHysteresis.noteExternalAdapterWrite；失效先于恢复写——写失败残留
+    /// 0x8 同样自愈。0.21 校准能力门控下 27 无在轨校准，本路径为防御纵深——放电侧
+    /// noteDischargeTerminatedLocked 同款纪律）。
     func restoreCalibrationCHIELocked(
         terminal: String, events: inout [LogEvent]
     ) {
+        if hysteresisState.lastWrittenAdapterEnabled != nil {
+            hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+            Self.persistLog("校准终态（\(terminal)）：CHIE 迟滞簿记已失效（动作轨恢复 0x00 为外部写——下拍按实况重估）")
+        }
         guard let client = dischargeControlClientLocked else {
             events.append(LogEvent(
                 category: .control, level: .error,

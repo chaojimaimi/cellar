@@ -96,6 +96,11 @@ enum DaemonCommandHelpers {
             }
             print("校准：\(phaseWord)")
         }
+        // 0.21.0 §3.2：校准抑制行（模式指纹识别态；nil = 旧 daemon/26 平台未上报
+        // ——缺席不渲染，decodeIfPresent wire 兼容。识别诚实边界见 DaemonStatus 注）。
+        if status.calibrationSuspected == true {
+            print("校准识别：系统校准中（限充暂缓——校准结束自动恢复）")
+        }
         if let percent = status.lastPercent {
             print("最近电量：\(percent)%")
         }

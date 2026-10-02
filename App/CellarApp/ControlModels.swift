@@ -48,6 +48,11 @@ enum ControlAttempt: Equatable {
     /// v0.19.20 充电编排开关（重试 = 重发同值 setOrchestration——幂等，照开关类
     /// 形态）。
     case setOrchestration(Bool)
+    /// 0.21.0 §1.3 恢复限充（重试 = 重发 restoreChargeLimit——daemon 侧幂等置
+    /// pending(policy.upperLimit)，照动作类形态）。
+    case restoreChargeLimit
+    /// 0.21.0 §2.4 CHIE 迟滞备用通道开关（重试 = 重发同值——幂等，照开关类形态）。
+    case setChHysteresisEnabled(Bool)
     // .setMagSafeLed case 已退役（v1.10 M2：LED 切换外迁独立轻路径，不写
     // lastAttempt——失败重试 = 用户重选 Picker，构造点随 runControl 迁出消失）。
 
@@ -81,7 +86,12 @@ enum ControlAttempt: Equatable {
         case .setChargeSchedule:
             return CellarL10n.s("status.summary.setChargeSchedule")
         case .setOrchestration:
-            return CellarL10n.s("status.summary.orchestration")
+            return CellarL10n.sRenamed(
+                "status.summary.execution", fallback: "status.summary.orchestration")
+        case .restoreChargeLimit:
+            return CellarL10n.s("status.summary.restoreLimit")
+        case .setChHysteresisEnabled:
+            return CellarL10n.s("status.summary.setChHysteresis")
         }
     }
 }

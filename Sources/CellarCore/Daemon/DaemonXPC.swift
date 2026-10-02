@@ -78,6 +78,27 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 先例）。三态：active（topoff 承载）/ degraded（重申×3 降级，编排钳 80）/
     /// off（关断清理后）；**26/无 sub80 能力机器不填**（缺席 = 无此特性，R3-P3）。
     public var sub80State: Sub80State?
+    /// 0.21.0 §2.2 CHIE 迟滞执法挂载态（**独立可选字段——不改 Sub80State Codable 枚举**，
+    /// decodeIfPresent 先例，防旧 App 整包解码失败）。true = 迟滞备用通道执法中（面板
+    /// 横幅「实验性备用通道执法中（约 1 循环/天）」数据源）；**仅 sub80 能力机恒填**，
+    /// 26/无能力机器不填（缺席 = 无此特性——与 sub80State 同纪律）。
+    public var sub80Hysteresis: Bool?
+    /// 0.21.0 §2.4 开关回读（policy.chHysteresisEnabled **恒填**——照 orchestration.
+    /// enabled 单一真相先例，App 开关绑定源；可选字段 decodeIfPresent——旧 daemon 回包
+    /// 缺席 → nil 天然兼容，App 按 nil = 关处理）。26 平台照填（UI 侧 capabilities
+    /// 门控不渲染——wire 恒填与渲染门控分层）。
+    public var chHysteresisEnabled: Bool?
+    /// 0.21.0 §3.2 校准抑制态（模式指纹识别——「系统校准中（限充暂缓——校准结束
+    /// 自动恢复）」面板横幅/status/doctor 行数据源）。**27 观测段识别
+    ///（orchestrationTerminal 门内恒填）**；26/旧 daemon 缺席 = 无此特性
+    ///（decodeIfPresent wire 兼容先例）。诚实边界：模式识别有误报/漏报可能
+    ///（方案 §3.2 登记）。
+    public var calibrationSuspected: Bool?
+    /// 0.21.0 §5 GUI sub80 明细——自愈探针进度两键（观察窗进行中 + 拍计数；
+    /// **仅 sub80 能力机恒填**，26/旧 daemon 缺席 = 无此特性）。验证窗总长 =
+    /// `Topoff.verificationTicks`（CellarCore 常量，UI 侧同源引用不重复编码）。
+    public var sub80HealProbeActive: Bool?
+    public var sub80HealProbeTicks: Int?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -108,6 +129,11 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         orchestration: OrchestrationStatus? = nil,
         clamshellClosed: Bool? = nil,
         sub80State: Sub80State? = nil,
+        sub80Hysteresis: Bool? = nil,
+        chHysteresisEnabled: Bool? = nil,
+        calibrationSuspected: Bool? = nil,
+        sub80HealProbeActive: Bool? = nil,
+        sub80HealProbeTicks: Int? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -136,6 +162,11 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.orchestration = orchestration
         self.clamshellClosed = clamshellClosed
         self.sub80State = sub80State
+        self.sub80Hysteresis = sub80Hysteresis
+        self.chHysteresisEnabled = chHysteresisEnabled
+        self.calibrationSuspected = calibrationSuspected
+        self.sub80HealProbeActive = sub80HealProbeActive
+        self.sub80HealProbeTicks = sub80HealProbeTicks
         self.timestamp = timestamp
     }
 }
@@ -218,7 +249,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.20.2-alpha"
+    public static let daemonVersion = "0.21.0-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
@@ -272,7 +303,8 @@ public enum DaemonXPC {
         fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
         thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
         magSafeLedMode: UInt64? = nil, orchestrationEnabled: UInt64? = nil,
-        orchestrationReport: OrchestrationReportWire? = nil
+        orchestrationReport: OrchestrationReportWire? = nil,
+        chHysteresisEnabled: UInt64? = nil
     ) -> xpc_object_t {
         let message = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(message, cmdKey, cmd)
@@ -325,6 +357,10 @@ public enum DaemonXPC {
                 xpc_dictionary_set_string(message, OrchestrationWireKeys.detail, detail)
             }
         }
+        // 0.21.0 §2.4 迟滞开关单键（UINT64 0/1——照编排开关同键型同纪律）。
+        if let chHysteresisEnabled {
+            xpc_dictionary_set_uint64(message, CHHysteresisWireKeys.enabled, chHysteresisEnabled)
+        }
         return message
     }
 
@@ -353,7 +389,8 @@ public enum DaemonXPC {
     ) -> (cmd: String, upper: UInt64, hysteresis: UInt64, auto: UInt64?, fan: FanWire?,
           calSched: CalibrationScheduleWire?, thermal: ThermalWire?,
           schedule: ChargeScheduleWire?, magSafeLedMode: UInt64?,
-          orchestrationEnabled: UInt64?, orchestrationReport: OrchestrationReportWire?)? {
+          orchestrationEnabled: UInt64?, orchestrationReport: OrchestrationReportWire?,
+          chHysteresisEnabled: UInt64?)? {
         // Swift 导入下 xpc_object_t 为非可选；nil 不可能传入，仅需类型判定。
         guard xpc_get_type(msg) == XPC_TYPE_DICTIONARY else { return nil }
 
@@ -472,6 +509,13 @@ public enum DaemonXPC {
             report.detail = String(cString: pointer)
         }
         let anyOrchestrationKeyPresent = report.token != nil || report.ok != nil || report.detail != nil
+        // 0.21.0 §2.4 迟滞开关键：出现即必须 UINT64（类型混淆 → 整包拒绝）；值域
+        // 0/1 白名单由 XPCServer 臂复核（照编排开关同纪律）。
+        var chHysteresisEnabled: UInt64?
+        if let value = xpc_dictionary_get_value(msg, CHHysteresisWireKeys.enabled) {
+            guard xpc_get_type(value) == XPC_TYPE_UINT64 else { return nil }
+            chHysteresisEnabled = xpc_dictionary_get_uint64(msg, CHHysteresisWireKeys.enabled)
+        }
         return (cmd: String(cString: cmdPointer), upper: upper, hysteresis: hysteresis,
                 auto: auto, fan: anyFanKeyPresent ? fan : nil,
                 calSched: anyCalSchedKeyPresent ? calSched : nil,
@@ -479,7 +523,8 @@ public enum DaemonXPC {
                 schedule: anyScheduleKeyPresent ? ChargeScheduleWire(scheduleJson: scheduleJson) : nil,
                 magSafeLedMode: magSafeLedMode,
                 orchestrationEnabled: orchestrationEnabled,
-                orchestrationReport: anyOrchestrationKeyPresent ? report : nil)
+                orchestrationReport: anyOrchestrationKeyPresent ? report : nil,
+                chHysteresisEnabled: chHysteresisEnabled)
     }
 
     /// 成功回包：{"ok": true, "status": <statusJSON>}（ARC 管理生命周期，勿手动 release）。
@@ -512,261 +557,3 @@ public enum DaemonXPC {
     #endif
 }
 
-#if canImport(XPC)
-/// CLI 侧客户端：raw XPC + 异步回包 + 信号量 5 秒等待（评审 E-4——
-/// `send_message_with_reply_sync` 无超时参数，超时必须自行实现）。
-public struct DaemonXPCClient: Sendable {
-    /// 保持 throws 契约（规格 §2）。⚠️ Swift 导入下 `xpc_connection_create_mach_service`
-    /// 返回非可选句柄——连接"建立失败"不可观测，实际失败形态（daemon 未运行）在
-    /// exchange 中经连接无效事件暴露为 .connectionFailed。
-    public init() throws {}
-
-    public func getStatus() throws -> DaemonStatus {
-        try exchange(cmd: "getStatus")
-    }
-
-    /// ⚠️ 60 地板双重复核的一侧：CLI 侧已用 LimitPolicy 构造校验；daemon 侧 setLimits 再核验一次。
-    /// 负数经 clamping 收敛为 0（不会是合法策略，daemon 侧报地板错误；防 UInt64 转换崩溃）。
-    /// autoDischarge：nil = 不发键（daemon 缺席保持——非开关调用点一律传 nil，
-    /// 防 60s 轮询窗口内用旧值覆写 CLI 刚改的限值）。
-    public func setLimits(
-        upperLimit: Int, hysteresis: Int, autoDischarge: Bool? = nil
-    ) throws -> DaemonStatus {
-        try exchange(
-            cmd: "setLimits",
-            upper: UInt64(clamping: upperLimit),
-            hysteresis: UInt64(clamping: hysteresis),
-            auto: autoDischarge.map { $0 ? 1 : 0 }
-        )
-    }
-
-    public func disable() throws -> DaemonStatus {
-        try exchange(cmd: "disable")
-    }
-
-    public func enable() throws -> DaemonStatus {
-        try exchange(cmd: "enable")
-    }
-
-    /// 一次性动作：充满一次（WP2）。前置（外接 && mode=active）不满足 → daemonError
-    /// 原文；动作已在轨 → 幂等回当前状态。
-    public func fullOnce() throws -> DaemonStatus {
-        try exchange(cmd: "fullOnce")
-    }
-
-    /// 取消当前一次性动作（无动作时幂等成功，回当前状态）。
-    public func cancelAction() throws -> DaemonStatus {
-        try exchange(cmd: "cancelAction")
-    }
-
-    /// WP2'：放电到上限（无参数——目标 = daemon 当前策略上限启动时快照）。
-    /// 前置（外接 && mode=active && percent > 目标 && 能力在位）不满足 → daemonError
-    /// 原文；动作已在轨 → 幂等回当前状态。
-    public func dischargeToLimit() throws -> DaemonStatus {
-        try exchange(cmd: "dischargeToLimit")
-    }
-
-    /// WP3：开始校准（手动触发四相状态机；无参数——相位序列由 daemon 执行）。
-    /// 前置拒绝（mode/外接/能力）→ daemonError 原文；校准已在轨 → 幂等回当前状态；
-    /// 其他动作在轨 → actionOccupied 拒绝原文。
-    public func startCalibration() throws -> DaemonStatus {
-        try exchange(cmd: "startCalibration")
-    }
-
-    /// WP3：取消校准（独立命令臂；幂等——无动作亦成功回当前状态）。
-    public func cancelCalibration() throws -> DaemonStatus {
-        try exchange(cmd: "cancelCalibration")
-    }
-
-    /// Phase 5 v1.1：设置风扇策略（可选字段缺席 = daemon 保持现值；策略值域
-    /// 0/2/3 非法值 daemonError 原文回传）。**不改 mode**（与
-    /// setLimits 的「更新即切 active」语义正交）；boost 期立即按新配置重算重写。
-    public func setFan(_ fan: FanWire) throws -> DaemonStatus {
-        try exchange(cmd: FanWireKeys.command, upper: 0, hysteresis: 0, auto: nil, fan: fan)
-    }
-
-    /// Phase 5 v1.4：设置校准调度（可选字段缺席 = daemon 保持现值；**不改 mode**）。
-    /// 旧 daemon → 「未知命令」daemonError（App detectStaleBeforeReject 升级提示
-    /// 既有闭环，UD-7）。
-    public func setCalibrationSchedule(_ schedule: CalibrationScheduleWire) throws -> DaemonStatus {
-        try exchange(
-            cmd: CalibrationScheduleWireKeys.command, upper: 0, hysteresis: 0,
-            auto: nil, fan: nil, calSched: schedule
-        )
-    }
-
-    /// Phase 5 v1.5：设置充电热暂停策略（可选字段缺席 = daemon 保持现值；**不改
-    /// mode**；值域 35-45°C / 滞回 1-8°C，保护不可被配置关闭——UD-2 值域钳制）。
-    /// 旧 daemon → 「未知命令」daemonError（detectStaleBeforeReject 升级提示既有
-    /// 闭环，R-4）。
-    public func setThermal(_ thermal: ThermalWire) throws -> DaemonStatus {
-        try exchange(
-            cmd: ThermalWireKeys.command, upper: 0, hysteresis: 0,
-            auto: nil, fan: nil, calSched: nil, thermal: thermal
-        )
-    }
-
-    /// Phase 5 v1.6：设置充电日程（配置 JSON 字符串键——**协议首个字符串键**，UD-6；
-    /// daemon 侧三级校验长度/JSON/validated，任一失败 → daemonError 原文；**不改
-    /// mode、不取消在轨**，成功即 tick——命中窗口条目 ≤1 tick 生效）。旧 daemon →
-    /// 「未知命令」daemonError（App detectStaleBeforeReject 升级提示既有闭环，R-7）。
-    public func setChargeSchedule(_ json: String) throws -> DaemonStatus {
-        try exchange(
-            cmd: ChargeScheduleWireKeys.command, upper: 0, hysteresis: 0,
-            auto: nil, fan: nil, calSched: nil, thermal: nil,
-            schedule: ChargeScheduleWire(scheduleJson: json)
-        )
-    }
-
-    /// Phase 5 v1.8：设置 MagSafe LED 模式（0=跟随系统 / 1=常灭 / 3=常绿 / 4=常琥珀；
-    /// **不改 mode**；disabled 期 daemon 仅存配置不写灯，enable 后 tick 重申）。
-    /// 旧 daemon → 「未知命令」daemonError（App detectStaleBeforeReject 升级提示
-    /// 既有闭环）。
-    public func setMagSafeLed(_ mode: UInt8) throws -> DaemonStatus {
-        try exchange(
-            cmd: MagSafeLED.commandName, upper: 0, hysteresis: 0,
-            auto: nil, fan: nil, calSched: nil, thermal: nil,
-            magSafeLedMode: UInt64(mode)
-        )
-    }
-
-    /// v0.19.20：设置充电编排开关（UINT64 0/1 键型照既有开关统一，R2 P3；**不改
-    /// mode**）。旧 daemon → 「未知命令」daemonError（App detectStaleBeforeReject
-    /// 升级提示既有闭环）。
-    public func setOrchestration(_ enabled: Bool) throws -> DaemonStatus {
-        try exchange(
-            cmd: OrchestrationWireKeys.command, upper: 0, hysteresis: 0,
-            orchestrationEnabled: enabled ? 1 : 0
-        )
-    }
-
-    /// v0.19.20：编排执行回报（App ShortcutRunner 消费 pending 后调用；token 幂等
-    /// ——不匹配静默丢弃；detail 仅失败时携带）。鉴权同变更类命令门（R1 P1-4）：
-    /// 非管理员回报被拒 → pending 未清 → TTL 过期后 daemon 重发（R2 P1 降级链）。
-    public func reportOrchestration(token: String, ok: Bool, detail: String?) throws -> DaemonStatus {
-        try exchange(
-            cmd: OrchestrationWireKeys.reportCommand, upper: 0, hysteresis: 0,
-            orchestrationReport: OrchestrationReportWire(token: token, ok: ok ? 1 : 0, detail: detail)
-        )
-    }
-
-    // MARK: - 内部
-
-    /// 一次请求-回包交换：发消息 → 等回包（≤5s）→ 解析。
-    /// - 连接无效事件（daemon 未运行/未安装）→ .connectionFailed
-    /// - 超时无回包 → .timeout
-    /// - ok=false → .daemonError(原文)
-    private func exchange(
-        cmd: String, upper: UInt64 = 0, hysteresis: UInt64 = 0, auto: UInt64? = nil,
-        fan: FanWire? = nil, calSched: CalibrationScheduleWire? = nil,
-        thermal: ThermalWire? = nil, schedule: ChargeScheduleWire? = nil,
-        magSafeLedMode: UInt64? = nil, orchestrationEnabled: UInt64? = nil,
-        orchestrationReport: OrchestrationReportWire? = nil
-    ) throws -> DaemonStatus {
-        // Swift 导入下连接句柄非可选（失败经事件暴露，见 init 注释）。
-        // ⚠️ xpc 对象引用计数由 ARC 自动管理：不得手动 xpc_release（双重释放崩溃）。
-        let connection = xpc_connection_create_mach_service(DaemonXPC.machServiceName, nil, 0)
-        let message = DaemonXPC.makeMessage(
-            cmd: cmd, upper: upper, hysteresis: hysteresis, auto: auto,
-            fan: fan, calSched: calSched, thermal: thermal, schedule: schedule,
-            magSafeLedMode: magSafeLedMode, orchestrationEnabled: orchestrationEnabled,
-            orchestrationReport: orchestrationReport
-        )
-        let waiter = ReplyWaiter()
-
-        xpc_connection_set_event_handler(connection) { object in
-            waiter.receive(object)
-        }
-        xpc_connection_set_target_queue(connection, DispatchQueue.global(qos: .userInitiated))
-        xpc_connection_resume(connection)
-        xpc_connection_send_message(connection, message)
-
-        // 异步回包 + 信号量 5 秒超时（reply_sync 无超时参数，评审 E-4）。
-        let outcome = waiter.wait(timeout: .now() + DaemonXPC.replyTimeoutSeconds)
-
-        // 收包/超时/错误事件齐备后关闭连接（连接与消息对象随作用域由 ARC 回收）。
-        xpc_connection_cancel(connection)
-
-        switch outcome {
-        case .timedOut:
-            throw DaemonClientError.timeout
-        case .invalidPeer:
-            throw DaemonClientError.connectionFailed
-        case .reply(let object):
-            return try Self.parse(reply: object)
-        }
-    }
-
-    /// 解析回包字典（对象随参数作用域由 ARC 回收，勿手动 release）。
-    private static func parse(reply object: xpc_object_t) throws -> DaemonStatus {
-        guard xpc_get_type(object) == XPC_TYPE_DICTIONARY else {
-            throw DaemonClientError.connectionFailed
-        }
-        let ok = xpc_dictionary_get_bool(object, DaemonXPC.okKey)
-        if ok {
-            guard let json = xpc_dictionary_get_string(object, DaemonXPC.statusKey) else {
-                throw DaemonClientError.daemonError("daemon 回包缺少状态载荷")
-            }
-            return try DaemonXPC.decodeStatus(String(cString: json))
-        }
-        if let error = xpc_dictionary_get_string(object, DaemonXPC.errorKey) {
-            throw DaemonClientError.daemonError(String(cString: error))
-        }
-        throw DaemonClientError.daemonError("daemon 返回未知错误")
-    }
-}
-
-/// 回包等待盒：事件处理器（全局队列）写入、等待方（调用线程）读取。
-///
-/// ⚠️ 生命周期：handler 参数对象为借用（+0），跨回调持有依赖 Swift ARC——
-/// 存入 `state` 时编译器自动 retain，读取/离开作用域时自动 release；
-/// 本类型不做任何手动 xpc_retain/xpc_release。
-private final class ReplyWaiter: @unchecked Sendable {
-    private enum State {
-        case pending
-        case received(xpc_object_t)
-        case invalidPeer
-    }
-
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private var state: State = .pending
-
-    /// 事件回调（可被多次调用；首个有效结果生效，后续事件被 ARC 回收）。
-    func receive(_ object: xpc_object_t) {
-        lock.lock()
-        if case .pending = state {
-            if xpc_get_type(object) == XPC_TYPE_ERROR {
-                // 连接无效（daemon 未运行等）：错误常量对象不存储（immortal）。
-                state = .invalidPeer
-            } else {
-                state = .received(object)   // 存储时 ARC 自动 retain（跨回调安全）
-            }
-        }
-        lock.unlock()
-        semaphore.signal()
-    }
-
-    /// 等待回包（超时返回 timedOut）。返回 .reply 时对象由 .received 持有，
-    /// 调用方使用期间保持存活（ARC），离开作用域自动回收。
-    func wait(timeout: DispatchTime) -> Outcome {
-        _ = semaphore.wait(timeout: timeout)
-        lock.lock()
-        defer { lock.unlock() }
-        switch state {
-        case .pending:
-            return .timedOut
-        case .received(let object):
-            return .reply(object)
-        case .invalidPeer:
-            return .invalidPeer
-        }
-    }
-
-    enum Outcome {
-        case timedOut
-        case invalidPeer
-        case reply(xpc_object_t)
-    }
-}
-#endif

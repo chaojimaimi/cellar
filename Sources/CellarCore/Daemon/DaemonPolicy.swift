@@ -73,13 +73,21 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
     /// 场景钉死三处透传。合成 Codable decodeIfPresent——旧 policy.json 无本键 →
     /// nil 兼容。
     public var orchestrationEnabled: Bool?
+    /// 0.21.0 §2.4 CHIE 迟滞备用通道开关（nil = 未设置 = 关；开关默认关——§2.3）。
+    /// ⚠️ **F-1 全构造点透传强制条款（0.21.0 扩面，与 orchestrationEnabled 同守）**：
+    /// setLimits/disable/enable 三处显式构造（含 daemon 侧 applySchedulePolicyLocked
+    /// 转移落地段）都必须携带当前值，走 init 默认 nil 会把用户已开启的迟滞开关静默
+    /// 清空并落盘（与 0.4.1 F-1 同型事故）——CellarCoreCheck 场景钉死透传。合成
+    /// Codable decodeIfPresent——旧 policy.json 无本键 → nil 兼容。
+    public var chHysteresisEnabled: Bool?
 
     public init(
         mode: String, upperLimit: Int, hysteresis: Int,
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
         thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil,
-        magSafeLedMode: UInt8? = nil, orchestrationEnabled: Bool? = nil
+        magSafeLedMode: UInt8? = nil, orchestrationEnabled: Bool? = nil,
+        chHysteresisEnabled: Bool? = nil
     ) {
         self.mode = mode
         self.upperLimit = upperLimit
@@ -91,6 +99,7 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         self.schedule = schedule
         self.magSafeLedMode = magSafeLedMode
         self.orchestrationEnabled = orchestrationEnabled
+        self.chHysteresisEnabled = chHysteresisEnabled
     }
 
     public static let `default` = DaemonPolicy(mode: "active", upperLimit: 80, hysteresis: 2)
@@ -106,7 +115,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
         autoDischargeEnabled: Bool? = nil, fan: FanPolicy? = nil,
         calibrationSchedule: CalibrationSchedulePolicy? = nil,
         thermal: ThermalPolicy? = nil, schedule: ChargeScheduleConfig? = nil,
-        magSafeLedMode: UInt8? = nil, orchestrationEnabled: Bool? = nil
+        magSafeLedMode: UInt8? = nil, orchestrationEnabled: Bool? = nil,
+        chHysteresisEnabled: Bool? = nil
     ) -> DaemonPolicy? {
         guard mode == "active" || mode == "disabled" else { return nil }
         guard (try? LimitPolicy(upperLimit: upperLimit, hysteresis: hysteresis)) != nil else {
@@ -116,7 +126,8 @@ public struct DaemonPolicy: Codable, Equatable, Sendable {
             mode: mode, upperLimit: upperLimit, hysteresis: hysteresis,
             autoDischargeEnabled: autoDischargeEnabled, fan: fan,
             calibrationSchedule: calibrationSchedule, thermal: thermal, schedule: schedule,
-            magSafeLedMode: magSafeLedMode, orchestrationEnabled: orchestrationEnabled
+            magSafeLedMode: magSafeLedMode, orchestrationEnabled: orchestrationEnabled,
+            chHysteresisEnabled: chHysteresisEnabled
         )
     }
 }
@@ -247,7 +258,9 @@ public struct PolicyStore: Sendable {
             magSafeLedMode: magSafeLedMode,
             // v0.19.20：编排开关透传（照 autoDischargeEnabled——纯 Bool 无值域
             // 校验块，F-1 持久化回流完整性）。
-            orchestrationEnabled: decoded.orchestrationEnabled
+            orchestrationEnabled: decoded.orchestrationEnabled,
+            // 0.21.0 §2.4：迟滞开关透传（照编排开关——纯 Bool 无值域校验块）。
+            chHysteresisEnabled: decoded.chHysteresisEnabled
         )
     }
 

@@ -133,7 +133,14 @@ public enum OneShotStartRejection: Error, Equatable, Sendable, CustomStringConve
     /// macOS 27 编排终态（v0.19.20 WP-5，R1 P1-2 升格）：27 上执法段不可达 →
     /// fullOnce 维护分支永不推进（轨道永不终态），允许启动 = 永久在轨 = 编排无限期
     /// 暂停——拒绝启动（fail-visible）。Cellar 自家充满语义在 27 = 编排目标 100%。
+    /// **0.21.0 §1.3 语义重定版**：27 分支从拒绝改为置 pending(100)（set 路径复活）
+    /// ——本 case 保留仅为 26 回归锚与 CellarCoreCheck 历史形态对照，生产链路
+    /// 不再产出（fullOnceStartPrecondition 27 臂改判 orchestrationSwitchOff / 放行）。
     case orchestrationTerminal
+    /// 0.21.0 §1.3（R2-P1）：27 编排开关关 → 拒绝（诚实文案，照 modeNotActive
+    /// 先例——App 消费面首门 enabled 不可绕过，绕过即 pending 悬挂 fail-silent）。
+    /// 恢复臂前置拒收同适用（R3-P3-1）。
+    case orchestrationSwitchOff
 
     public var message: String {
         switch self {
@@ -142,6 +149,8 @@ public enum OneShotStartRejection: Error, Equatable, Sendable, CustomStringConve
         case .persistenceFailed: return "「充满一次」启动失败：无法写入动作文件"
         case .orchestrationTerminal:
             return "平台限制：macOS 27 暂不支持充满一次（可用编排目标 100% 替代）"
+        case .orchestrationSwitchOff:
+            return "系统限充执行已停用——请在通用页开启后使用"
         case .nativeChargeLimit(let manual):
             if let manual {
                 return "系统充电上限已激活（\(manual)%），「充满一次」需充满 100%——请先在系统设置中关闭"
@@ -161,10 +170,16 @@ private let nativeLimitGuardLog = Logger(subsystem: "com.cellar", category: "one
 /// externalConnected 为 nil（快照失败且无上次已知值）→ 拒绝（不无据启动）。
 ///
 /// v0.19.20 WP-5（R2 P2 判定输入钉死）：27 终态标记 = `capabilities?.contains(
-/// orchestration) == true` → 拒绝启动。**不得**用 backend == nil（误拒 26 瞬态
-/// 后端缺席窗口）或 capabilities == []（误拒 26 legacy 机型：CH0B 后端在场、
-/// fullOnce 一直可用）。位于原生限充守卫**之前**——27 上 plist 残留策略（S4：
-/// 非现行上限）不得以 nativeChargeLimit 语义误报。
+/// orchestration) == true`。**0.21.0 §1.3 语义重定版（R2-P1/R3-P3-1）**：27 臂从
+/// 拒绝改为「编排开关前置检查」——开关关 → `.orchestrationSwitchOff`（fail-visible，
+/// 文案照 modeNotActive 先例）；开关开 → **放行**（daemon 分支置 pending(100) 交
+/// App set——set 路径复活）。**不得**用 backend == nil（误拒 26 瞬态后端缺席窗口）
+/// 或 capabilities == []（误拒 26 legacy 机型：CH0B 后端在场、fullOnce 一直可用）。
+/// 27 臂位于原生限充守卫**之前**——App set 直接覆写原生 MCL，plist 残留策略
+/// （S4：非现行上限）不再构成阻断语义；26 原生守卫逐值不变（26 红线）。
+///
+/// `orchestrationEnabled` 仅 27 臂消费：nil（调用方未接线）按**开关关**处理
+/// （fail-closed——R2-P1 首门不可绕过；daemon 调用点显式传 policy 真值）。
 ///
 /// Phase 5 v1.7 M2 原生限充守卫（方案 §3.1，挂点之二——校准臂
 /// startCalibrationLocked 平行）：`nativeLimit.blockingPolicies` 非空（未终止且
@@ -176,12 +191,16 @@ public func fullOnceStartPrecondition(
     mode: String,
     externalConnected: Bool?,
     nativeLimit: NativeChargeLimitReading? = nil,
-    capabilities: [String]? = nil
+    capabilities: [String]? = nil,
+    orchestrationEnabled: Bool? = nil
 ) -> OneShotStartRejection? {
     guard mode == "active" else { return .modeNotActive }
     guard externalConnected == true else { return .noExternalPower }
     if capabilities?.contains(DaemonXPC.capabilityOrchestration) == true {
-        return .orchestrationTerminal
+        // 0.21.0 §1.3：27 复活臂——编排开关前置检查（R2-P1），开 → 放行交
+        // daemon 置 pending(100)；关/未接线 → 拒收（fail-visible）。
+        guard orchestrationEnabled == true else { return .orchestrationSwitchOff }
+        return nil
     }
     if let nativeLimit {
         if nativeLimit.detectorError {

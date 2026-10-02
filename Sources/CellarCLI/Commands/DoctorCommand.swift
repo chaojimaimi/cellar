@@ -215,6 +215,11 @@ struct DoctorCommand: ParsableCommand {
         // 禁止移入 daemon 侧组装）；`shortcuts list` 只读列举，零写入面。
         let orchestrationProbe = probeOrchestration()
 
+        // 检查 17 set 分支 + 检查 19/20（0.21.0 §1.2/§1.3/§1.5）：MCL 读回只读
+        // 探测（用户会话 GET——非 root 读级可用，S3 实证；doctor 只读契约，set 面
+        // 不入 doctor；失败结构化落入 probe，不静默）。
+        let mclProbe = MCLReadbackProbe.probe()
+
         // 检查 18：topoffprotection 域状态（0.20 M1a——root 只读展示，仅诊断用
         // 不抬退出码；非 root → 受限形态诚实呈现）。
         let topoffDomain = TopoffDomainDoctorProbe.collect(
@@ -265,6 +270,9 @@ struct DoctorCommand: ParsableCommand {
             // 0.20 M1a 检查 18：topoffprotection 域状态（root 只读展示）。
             topoffDomain: topoffDomain,
             topoffDomainProbeAttempted: true,
+            // 0.21.0 检查 17 set 分支 + 19/20：MCL 读回只读探测（用户会话组装）。
+            mclProbe: mclProbe,
+            mclProbeAttempted: true,
             // v0.19.8 G5：macOS 27 感知附注开关（检查 3/4；DoctorInputs 纯函数消费，
             // CLI 进程收集注入——B4：doctor 报告在 CLI 进程生成，无进程视角分叉）。
             // v0.19.20 WP-6：检查 15 的 27「注册残留」语义同走本开关。

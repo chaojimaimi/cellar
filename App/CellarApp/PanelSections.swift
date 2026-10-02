@@ -30,28 +30,68 @@ struct ActionSectionView: View {
                     fullOnceProgressRow
                 }
             } else if statusController.daemonStatus?.mode == "active" {
-                Button {
-                    statusController.fullOnce()
-                } label: {
-                    Label(theme.word(.actionFullOnce), systemImage: "bolt.fill")
-                }
-                .controlSize(.small)
-                // Phase 5 v1.7 M3：原生限充激活 → 禁用（守卫口径 active，与 daemon
-                // fullOnceStartPrecondition 拒绝行为一致；unknown 态放行 = fail-open）。
-                // v0.19.20 WP-5：27 编排终态连带禁用（daemon 侧前置拒绝同语义——
-                // 27 上维护分支永不推进，允许启动 = 永久在轨 = 编排无限期暂停）。
-                .disabled(statusController.busy || statusController.nativeLimitActive
-                    || statusController.orchestrationTerminal)
-                if let hintWord = statusController.nativeLimitFullOnceHintWord {
-                    Text(theme.word(hintWord))
-                        .font(.caption2)
-                        .foregroundStyle(theme.warning)
-                        .fixedSize(horizontal: false, vertical: true)
+                // 0.21.0 §1.3：27 fullOnce 复活——按钮二态（判定源 = MCL 读回 100 ∧
+                // policy < 100，R2-P2-4 读回驱动）：临时放开期 → 横幅常驻 + 「恢复限充」；
+                // 否则 → 「充满一次」（27 分支改由编排开关门控 + daemon set 路径执行）。
+                if statusController.temporaryFullOpenActive {
+                    fullOnceOpenBanner
+                    restoreLimitButton
+                } else {
+                    fullOnceButton
+                    if let hintWord = statusController.nativeLimitFullOnceHintWord {
+                        Text(theme.word(hintWord))
+                            .font(.caption2)
+                            .foregroundStyle(theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 dischargeSection
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 「充满一次」按钮（二态之一；0.21.0 §1.3 门控重定版）：
+    /// - 26（非编排终态）：busy ∨ nativeLimitActive 禁用——守卫口径与 daemon
+    ///   fullOnceStartPrecondition 拒绝行为一致（unknown 态放行 = fail-open），
+    ///   26 行为零变化；
+    /// - 27（编排终态）：busy ∨ 编排开关关禁用（R2-P1 首门不可绕过——daemon 前置
+    ///   拒收同语义；nativeLimit 残留不再禁用——App set 覆写 MCL，plist 残留非阻断）。
+    private var fullOnceButton: some View {
+        Button {
+            statusController.fullOnce()
+        } label: {
+            Label(theme.word(.actionFullOnce), systemImage: "bolt.fill")
+        }
+        .controlSize(.small)
+        .disabled(statusController.busy
+            || (statusController.orchestrationTerminal
+                ? !statusController.orchestrationEnabled
+                : statusController.nativeLimitActive))
+    }
+
+    /// 0.21.0 §1.3 恢复臂（二态之二）：横幅「已临时放开限充（充满后请点击恢复）」
+    /// ——常驻（无超时/自动恢复，用户显式）；横幅随 temporaryFullOpenActive 判定源
+    /// （读回驱动）陈旧自动收敛（滑杆改值/恢复后读回回落，无悬挂态）。
+    private var fullOnceOpenBanner: some View {
+        Label(CellarL10n.s("panel.action.fullOnceOpen"), systemImage: "bolt.badge.checkmark")
+            .font(.caption)
+            .foregroundStyle(theme.warning)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 「恢复限充」按钮（daemon 置 pending(policy.upperLimit) → App set 回读回；
+    /// 前置拒收（编排开关关）→ daemonError 原文上屏——R3-P3-1；App 侧判定源已含
+    /// 开关开，此处拒收为纵深防御）。
+    private var restoreLimitButton: some View {
+        Button {
+            statusController.restoreChargeLimit()
+        } label: {
+            Label(CellarL10n.s("panel.action.restoreLimit"), systemImage: "arrow.uturn.backward")
+        }
+        .controlSize(.small)
+        .disabled(statusController.busy)
+        .accessibilityLabel(CellarL10n.s("panel.action.restoreLimit"))
     }
 
     /// fullOnce 进行中状态行（WP2 原形态）。

@@ -959,6 +959,18 @@ private func buildCases() -> [SnapshotCase] {
                 ("experimental", Sub80StatusView(experimentalTarget: 75)),
                 ("falling", Sub80StatusView(experimentalTarget: 75, fallingFrom: 82, fallingTarget: 75)),
                 ("degraded", Sub80StatusView(degraded: true)),
+                // 0.21.0 §2.2：迟滞执法横幅（「实验性备用通道执法中（约 1 循环/天）」
+                // ——消费 sub80Hysteresis；新组 6 张全新文件，golden regen 随批次 CI
+                // macos-26 权威对账——M1a Orchestration_embedded 同款流程）。
+                ("hysteresis", Sub80StatusView(hysteresisEnforcing: true)),
+                // 0.21.0 §5：状态明细四态 + 自愈进度（参数驱动，缺省参=既有 4 case
+                // 零 diff；新组 30 张全新文件——golden regen 随批次 CI macos-26 权威
+                // 对账，同上流程）。
+                ("state_active", Sub80StatusView(state: .active)),
+                ("state_degraded", Sub80StatusView(state: .degraded)),
+                ("state_hysteresis", Sub80StatusView(state: .degraded, hysteresisMounted: true)),
+                ("state_off", Sub80StatusView(state: .off)),
+                ("healProgress", Sub80StatusView(state: .active, healProbeActive: true, healProbeTicks: 7)),
             ]
             for (stateName, section) in sub80Sections {
                 cases.append(SnapshotCase(
@@ -971,6 +983,20 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
+            // 0.21.0 §3.2：校准抑制横幅（「系统校准中（限充暂缓——校准结束自动
+            // 恢复）」——消费 daemonStatus.calibrationSuspected；缺省 visible=false
+            // → EmptyView（既有宿主构造零 diff——组件缺省形态即空渲染）；新组 6 张
+            // 全新文件，golden regen 随批次 CI macos-26 权威对账（同上流程）。
+            cases.append(SnapshotCase(
+                name: "CalibrationBanner_suspected_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    CalibrationBanner(visible: true)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
             cases.append(SnapshotCase(
                 name: "Orchestration_readback_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
                 width: 304, height: nil, style: style, scheme: scheme
@@ -980,6 +1006,28 @@ private func buildCases() -> [SnapshotCase] {
                         enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
                         lastError: nil, busy: false,
                         readbackLine: "当前生效上限（读回）：75%", readbackIsWarning: false,
+                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                    ).frame(width: 304, alignment: .leading)
+                })
+            })
+
+            // 0.21.0 M1a 自 390 扩 391——set 可用态 1 组 6 张（全部全新文件，新增非
+            // 扰动；R2-P3-3 两态快照矩阵的另一半）：Orchestration_embedded 钉死
+            // 「embeddedExecutorAvailable=true——快捷指令名输入框隐藏 + setup 指引
+            // 降级为说明性文案（内嵌执行通道接管）+ 读回行」。开关文案诚实化
+            // （「编排」→「系统限充执行」）随 0.21 catalog 新键变化——既有
+            // Orchestration_ready/failed/readback golden 预期 regen（方案 §7.2）。
+            // --regen --only=Orchestration 分组跑。
+            cases.append(SnapshotCase(
+                name: "Orchestration_embedded_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    OrchestrationSectionView(
+                        enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                        lastError: nil, busy: false,
+                        readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
+                        embeddedExecutorAvailable: true,
                         onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
                     ).frame(width: 304, alignment: .leading)
                 })

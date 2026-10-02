@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）+ v0.19.8 macOS 27 温度回退域（113–118 于本文件 + 119 于 DoctorExtendedDomain.swift）；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）+ v0.19.8 macOS 27 温度回退域（113–118 于本文件 + 119 于 DoctorExtendedDomain.swift）+ 0.20 M1b CHIE 迟滞域（CHHysteresisDomain.swift）+ 0.21.0 M2 校准共存域（CalibrationCoexistenceDomain.swift）/ 温度 Pack 层域（PackTemperatureDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -379,6 +379,14 @@ struct Main {
         // 旧 JSON 缺字段容忍/chargingDisabled 在窗 desired=100 真值表路径/doctor
         // 检查 17 + 检查 15 的 27 注册残留语义——纯函数面，OrchestrationDomain）。
         try runOrchestrationDomainScenarios()
+        // 0.21.0 M1a：set 路径场景域（方案 §1 全部：set 分流与拒绝链（≥80 set/
+        // <80 钳 80/Code=4 结构化拒绝文案钉死）/fullOnce 27（编排开关关拒收/开关
+        // 开放行/<80 policy 分支/26 回归由编排-8..10 背书）/执行器抽象（set 优先/
+        // fallback 触发阈值 2/会话驻留/Code=4 中性）/恢复臂判定源（读回驱动）/
+        // 关断残留期望值（R3-P1 拆分规则全矩阵）/convergenceRoute fullOnce 窗
+        // （缺省参数零 diff——26 回归锚）/恢复臂 XPC 通道/doctor 检查 17 set 分支
+        // + 19/20 残留检测——纯函数面，NativeLimitSetDomain）。
+        try runNativeLimitSetDomainScenarios()
         // 0.20 M1b：topoffprotection <80% 限充通道场景域（方案 §3 全部：写入器原子序/
         // 违规与证据判定/channelTick 状态机（幂等写/验证窗/strike 重申/冷却/降级/24h
         // 复位）/healTick 自愈/汇聚点路由真值表（单通道互斥/降级钳 80/编排开关门独立/
@@ -391,6 +399,17 @@ struct Main {
         // 降级跨重启 healTick 照跑/off 兼容/写入点 sub80 门/触发源七组——
         // TopoffStateStore 路径注入缝 + Topoff 纯函数面，TopoffPersistenceDomain）。
         try runTopoffPersistenceDomainScenarios()
+        // 0.21.0 §2：CHIE 迟滞备用后端场景域（方案 §2 全部：迟滞路由三分支/判定
+        // 带宽边界/互斥矩阵四角 + 热第五角/热终止与恢复/挂载门矩阵/wire 双字段/
+        // policy F-1 透传/XPC 通道/26 回归锚——纯函数面，CHHysteresisDomain）。
+        runCHHysteresisDomainScenarios()
+        // 0.21.0 §3：校准共存场景域（M2：指纹判定矩阵/识别窗推进/进入退出边沿/
+        // 三臂抑制计划 + convergenceRoute 扩参矩阵/证据优先序常量/wire 三字段
+        // ——纯函数面，CalibrationCoexistenceDomain）。
+        runCalibrationCoexistenceDomainScenarios()
+        // 0.21.0 §4：温度 Pack 层解析场景域（M2：27 形态/优先级链/26 回退/容错/
+        // Monitor 重试链零 IO 断言——注入缝 mock，PackTemperatureDomain）。
+        try runPackTemperatureDomainScenarios()
         // 0.20.2 §1.3：status「原生限充」行决策纯函数场景域（门控主臂/负臂/既有
         // 三态文案/优先序——NativeLimitStatusLine，NativeLimitLineDomain）。
         runNativeLimitLineDomainScenarios()

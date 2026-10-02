@@ -145,6 +145,11 @@ public struct DoctorInputs: Sendable {
     public let topoffDomain: TopoffDomainDoctorProbe?
     /// 检查 18 是否已探测（DoctorCommand 恒 true——缺省形态零渲染）。
     public let topoffDomainProbeAttempted: Bool
+    /// 检查 19/20 + 检查 17 set 分支（0.21.0 §1.2/§1.3/§1.5）：MCL 读回只读探测
+    /// （用户会话 GET——doctor 只读契约，set 面不入 doctor；nil = 未探测不渲染）。
+    public let mclProbe: MCLDoctorProbe?
+    /// MCL 探测是否已执行（DoctorCommand 恒 true——缺省形态零渲染）。
+    public let mclProbeAttempted: Bool
     /// macOS 大版本（v0.19.8 G5，方案 §3.3）：检查 3/4 的 macOS 27 感知附注开关；
     /// v0.19.20 WP-6 扩面——检查 15 的 27「注册残留」语义开关。收集侧注入
     /// （DoctorCommand 读 `ProcessInfo`；CellarCoreCheck 场景注入 26/27
@@ -183,6 +188,8 @@ public struct DoctorInputs: Sendable {
         orchestrationProbeAttempted: Bool = false,
         topoffDomain: TopoffDomainDoctorProbe? = nil,
         topoffDomainProbeAttempted: Bool = false,
+        mclProbe: MCLDoctorProbe? = nil,
+        mclProbeAttempted: Bool = false,
         osMajorVersion: Int = 26
     ) {
         self.isRoot = isRoot
@@ -215,6 +222,8 @@ public struct DoctorInputs: Sendable {
         self.orchestrationProbeAttempted = orchestrationProbeAttempted
         self.topoffDomain = topoffDomain
         self.topoffDomainProbeAttempted = topoffDomainProbeAttempted
+        self.mclProbe = mclProbe
+        self.mclProbeAttempted = mclProbeAttempted
         self.osMajorVersion = osMajorVersion
     }
 }
@@ -322,6 +331,14 @@ public enum DoctorReportGenerator {
         // 缺省零渲染；info 恒不抬退出码——仅展示/残留诊断）。
         if let topoffCheck = topoffDomain(inputs) {
             checks.append(topoffCheck)
+        }
+        // 0.21.0 §1.3 检查 19：fullOnce 临时放开残留 + §1.5 检查 20：关断残留
+        // （条件渲染同 9-18——mclProbeAttempted 缺省零渲染；info 恒不抬退出码）。
+        if let fullOnceResidualCheck = fullOnceResidual(inputs) {
+            checks.append(fullOnceResidualCheck)
+        }
+        if let shutdownResidualCheck = shutdownResidual(inputs) {
+            checks.append(shutdownResidualCheck)
         }
         return DoctorReport(checks: checks)
     }

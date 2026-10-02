@@ -5,11 +5,14 @@ import SwiftUI
 // CellarCore/CellarUI，App 侧薄桥接 StatusController + OrchestrationSettings；
 // 照 FanSectionView/ThermalSectionView 先例）：
 // - 开关（XPC setOrchestration——daemon 回读 enabled 单一真相，get/set 绑定形态
-//   照 ChargeScheduleListView.enabledToggle 先例）；
+//   照 ChargeScheduleListView.enabledToggle 先例；0.21.0 §1.2 文案诚实化
+//   「编排」→「系统限充执行」，新旧键兼容解析）；
 // - 快捷指令名输入框（值存 App 侧 UserDefaults——R1 P0-2：daemon 只发 target 数字，
 //   名字仅 App 执行时消费；变更经回调回写，组件不持状态）；
 // - 状态行（上次失败：详情 / 就绪；失败详情 = daemon 侧 lastError 回读）；
-// - setup 指引（快捷指令 App 三步创建动作，l10n 承载）。
+// - setup 指引（快捷指令 App 三步创建动作，l10n 承载）；
+// - 0.21.0 §1.2：embeddedExecutorAvailable 参数（R2-P3-3）——set 可用态输入框
+//   隐藏 + setup 指引降级为说明性文案（内嵌执行通道接管，快捷指令备用化）。
 // 显隐判定（capabilities 含 orchestration）在宿主页——组件只做纯展示，快照矩阵
 // 可直接构造（2 态 × 3 风格 × 2 外观）。
 
@@ -33,6 +36,12 @@ public struct OrchestrationSectionView: View {
     /// 首行标题开关（照 ScheduleSectionView showsTitle 先例）：通用页由节头承担
     /// 标题时传 false 防同文重复；默认 true——快照矩阵不传此参。
     public let showsTitle: Bool
+    /// **0.21.0 §1.2 set 可用态**（App 内嵌执行通道接管——R2-P3-3 参数驱动，
+    /// CellarUI 不 import App 层）：true → 快捷指令名输入框隐藏 + setup 三步指引
+    /// 降级为说明性文案（「已由 App 内嵌执行通道接管——快捷指令保留为备用」）；
+    /// false（缺省）→ 原指引（既有构造零 diff）。App 侧判定 = 27 终态 ∧ MCL set
+    /// 通道可用 ∧ 未驻留快捷指令 fallback。
+    public let embeddedExecutorAvailable: Bool
     /// 开关变更回调（宿主页走 XPC setOrchestration）。
     public let onToggleEnabled: (Bool) -> Void
     /// 快捷指令名变更回调（宿主页写 UserDefaults；实时回写无提交按钮——照
@@ -49,6 +58,7 @@ public struct OrchestrationSectionView: View {
         showsTitle: Bool = true,
         readbackLine: String? = nil,
         readbackIsWarning: Bool = false,
+        embeddedExecutorAvailable: Bool = false,
         onToggleEnabled: @escaping (Bool) -> Void,
         onShortcutNameChange: @escaping (String) -> Void
     ) {
@@ -59,6 +69,7 @@ public struct OrchestrationSectionView: View {
         self.showsTitle = showsTitle
         self.readbackLine = readbackLine
         self.readbackIsWarning = readbackIsWarning
+        self.embeddedExecutorAvailable = embeddedExecutorAvailable
         self.onToggleEnabled = onToggleEnabled
         self.onShortcutNameChange = onShortcutNameChange
     }
@@ -66,29 +77,37 @@ public struct OrchestrationSectionView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if showsTitle {
-                Text(CellarL10n.s("settings.section.orchestration"))
+                // 0.21.0 §1.2 文案诚实化：「编排」→「系统限充执行」（新旧键兼容——
+                // 新键优先缺译回落旧键，旧键保留不删）。
+                Text(CellarL10n.sRenamed(
+                    "settings.section.execution", fallback: "settings.section.orchestration"))
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
             }
-            Text(CellarL10n.s("settings.orchestration.desc"))
+            Text(CellarL10n.sRenamed(
+                "settings.execution.desc", fallback: "settings.orchestration.desc"))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
-            Toggle(CellarL10n.s("settings.orchestration.toggle"), isOn: Binding(
+            Toggle(CellarL10n.sRenamed(
+                "settings.execution.toggle", fallback: "settings.orchestration.toggle"), isOn: Binding(
                 get: { enabled },
                 set: { onToggleEnabled($0) }
             ))
             .disabled(busy)
-            HStack(spacing: 12) {
-                Text(CellarL10n.s("settings.orchestration.shortcutName"))
-                    .font(.body)
-                Spacer(minLength: 8)
-                TextField("", text: Binding(
-                    get: { shortcutName },
-                    set: { onShortcutNameChange($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 200)
-                .disabled(busy)
+            // 0.21.0 §1.2：set 可用态 → 名字输入框隐藏（内嵌通道不经名字执行）。
+            if !embeddedExecutorAvailable {
+                HStack(spacing: 12) {
+                    Text(CellarL10n.s("settings.orchestration.shortcutName"))
+                        .font(.body)
+                    Spacer(minLength: 8)
+                    TextField("", text: Binding(
+                        get: { shortcutName },
+                        set: { onShortcutNameChange($0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 200)
+                    .disabled(busy)
+                }
             }
             statusLine
             // 0.20 M2 WP3 读回展示行（宿主页传 nil 即不渲染——既有 golden 零 diff；
@@ -99,10 +118,19 @@ public struct OrchestrationSectionView: View {
                     .foregroundStyle(readbackIsWarning ? theme.warning : theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(CellarL10n.s("settings.orchestration.setup"))
-                .font(.caption)
-                .foregroundStyle(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            // 0.21.0 §1.2：setup 指引二态——set 可用 → 降级说明性文案（快捷指令
+            // 备用化）；set 不可用 → 原三步创建指引（既有文案零变化）。
+            if embeddedExecutorAvailable {
+                Text(CellarL10n.s("settings.execution.embeddedNotice"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(CellarL10n.s("settings.orchestration.setup"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)

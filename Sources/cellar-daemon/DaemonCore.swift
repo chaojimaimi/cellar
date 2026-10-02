@@ -152,6 +152,19 @@ final class DaemonCore: @unchecked Sendable {
     /// 跳变/off 关断）；瞬态字段照 orchestrationState 先例不持久化——重启即重探，
     /// lastWritten 丢失 → 首 tick 幂等重写一次（停机期间域实况漂移的最便宜对账）。
     var topoffState = TopoffChannelState()
+    /// 0.21.0 §2 CHIE 迟滞备用通道运行时态（结构体定义在 CellarCore CHHysteresis.swift；
+    /// 决策全在 CHHysteresis 纯函数，副作用在 DaemonCore+Topoff.swift）。**不持久化**
+    ///（§2.4 钉死——迟滞运行态不入 TopoffPersistedState；重启后 tick 首拍按开关 +
+    /// CHIE 可写性重估；重启窗内 CHIE 残留由 §2.4 巡检兜底——mounted=false 即恢复
+    /// 巡检执法）。lastWrittenAdapterEnabled/flipCount 由 daemon 写成功后回填
+    ///（照 topoffState.lastWrittenLimit 先例——纯函数出意图，daemon 簿记）。
+    var hysteresisState = CHHysteresis.State()
+    /// 0.21.0 §3 校准共存识别态（结构体定义在 CellarCore CalibrationCoexistence.swift；
+    /// 决策全在纯函数，副作用在 DaemonCore+Topoff.swift 的 topoffConvergenceRouteLocked
+    /// 消费段）。**不持久化**（照 orchestrationState 先例——重启即清，重走 10 tick
+    /// 识别窗；strike 有 20 tick 窗 + ×3 封顶兜底，识别空窗不构成执法回归，零新增
+    /// 落盘面）。
+    var calibrationCoexistenceState = CalibrationCoexistence.State()
     /// 0.20.2 §2 topoff 诚实性状态持久化（topoff-state.json；路径注入缝照
     /// calibrationStateStore 先例——可测。写入纪律：主锁内 tmp+rename 直写，
     /// 26 平台不生成状态文件）。
@@ -487,13 +500,24 @@ final class DaemonCore: @unchecked Sendable {
             adapterCycleSinceAutoCompletion = true
             adapterCycleArmed = true
         }
+        // 0.21.0 §1.3：滑杆改值覆盖临时放开（R2-P2-4 交互语义）——清窗后
+        // valueChange 断言按新值重发（lastApplied=100 ≠ 新 target 自然触发），
+        // MCL 读回回落 → App 横幅/按钮态随读回自然消失。
+        if orchestrationState.fullOnceWindowActive {
+            orchestrationState.fullOnceWindowActive = false
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 临时放开窗已随 setLimits 清除（新值覆盖临时放开）"
+            ))
+        }
         applyPolicyLocked(
             DaemonPolicy(
                 mode: "active", upperLimit: upper, hysteresis: hys,
                 autoDischargeEnabled: autoFlag, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
                 schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
-                orchestrationEnabled: policy.orchestrationEnabled
+                orchestrationEnabled: policy.orchestrationEnabled,
+                chHysteresisEnabled: policy.chHysteresisEnabled
             ),
             events: &events
         )
@@ -544,6 +568,15 @@ final class DaemonCore: @unchecked Sendable {
                 message: "disable：无控制后端，仅切换模式（恢复默认充电不可执行）"
             ))
         }
+        // 0.21.0 §1.3/§1.5：mode 关 → 临时放开窗清除（关断补偿期望恒 100——R3-P1
+        // 第一行；窗位残留会破坏「关断态驱动对账」期望派生）。
+        if orchestrationState.fullOnceWindowActive {
+            orchestrationState.fullOnceWindowActive = false
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 临时放开窗已随 disable 清除"
+            ))
+        }
 
         applyPolicyLocked(
             DaemonPolicy(
@@ -551,7 +584,8 @@ final class DaemonCore: @unchecked Sendable {
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
                 schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
-                orchestrationEnabled: policy.orchestrationEnabled
+                orchestrationEnabled: policy.orchestrationEnabled,
+                chHysteresisEnabled: policy.chHysteresisEnabled
             ),
             events: &events
         )
@@ -591,7 +625,8 @@ final class DaemonCore: @unchecked Sendable {
                 autoDischargeEnabled: policy.autoDischargeEnabled, fan: policy.fan,
                 calibrationSchedule: policy.calibrationSchedule, thermal: policy.thermal,
                 schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
-                orchestrationEnabled: policy.orchestrationEnabled
+                orchestrationEnabled: policy.orchestrationEnabled,
+                chHysteresisEnabled: policy.chHysteresisEnabled
             ),
             events: &events
         )
@@ -680,6 +715,15 @@ final class DaemonCore: @unchecked Sendable {
             message: "SIGHUP：已重读策略（mode=\(loaded.mode) upper=\(loaded.upperLimit) hys=\(loaded.hysteresis)）"
         ))
 
+        // 0.21.0 §1.3：SIGHUP 切停用 → 临时放开窗清除（同 disable——R3-P1 期望
+        // 派生；置于动作轨门控之前，原链路结构零变化）。
+        if loaded.mode == "disabled" && orchestrationState.fullOnceWindowActive {
+            orchestrationState.fullOnceWindowActive = false
+            events.append(LogEvent(
+                category: .lifecycle, level: .info,
+                message: "fullOnce 临时放开窗已随 SIGHUP 切停用清除"
+            ))
+        }
         // WP2 门控（规格 §1.1 SIGHUP 行；P1-1）：重载后 mode == "disabled" → 取消动作；
         // 否则动作存活——deadline（start 时绝对 Date）与完成判定不重算（轨道未触碰）。
         if loaded.mode == "disabled" && actionTrack.isActive {
@@ -1366,6 +1410,22 @@ final class DaemonCore: @unchecked Sendable {
             status.sub80State = topoffState.off
                 ? Sub80State.off
                 : (topoffState.degraded ? .degraded : .active)
+            // 0.21.0 §2.2：迟滞执法挂载态（**独立可选字段**——不改 Sub80State 枚举；
+            // sub80 能力机恒填，26 不填缺席 = 无此特性）。
+            status.sub80Hysteresis = hysteresisState.mounted
+            // 0.21.0 §5：自愈探针进度两键（GUI sub80 明细「自愈重探中（i/N 拍）」
+            // 数据源——观察窗进行中 + 拍计数；sub80 门内恒填，decodeIfPresent 兼容；
+            // 窗总长 = Topoff.verificationTicks，UI 侧同源引用）。
+            status.sub80HealProbeActive = topoffState.healProbeActive
+            status.sub80HealProbeTicks = topoffState.healProbeTicks
+        }
+        // 0.21.0 §2.4：迟滞开关回读（policy 单一真相**恒填**——照 orchestration.enabled
+        // 先例；26 平台照填、UI 侧 capabilities 门控不渲染，wire 恒填与渲染门控分层）。
+        status.chHysteresisEnabled = policy.chHysteresisEnabled == true
+        // 0.21.0 §3.2：校准抑制态（27 观测段识别——orchestrationTerminal 门内恒填；
+        // 26/旧 daemon 缺席 = 无此特性，wire 兼容。识别运行态不持久化，重启即清）。
+        if orchestrationTerminalLocked {
+            status.calibrationSuspected = calibrationCoexistenceState.suspected
         }
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action

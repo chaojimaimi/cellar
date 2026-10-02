@@ -8,7 +8,7 @@ import CellarCore
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
 ///   setCalibrationSchedule/setThermal/setChargeSchedule/setMagSafeLed/
-///   setOrchestration/reportOrchestration` 仅
+///   setOrchestration/reportOrchestration/setChHysteresisEnabled` 仅
 ///   **euid==0 或 admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，
 ///   UI 控制需要 admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/
 ///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流；v0.19.20 编排回报
@@ -137,6 +137,12 @@ final class XPCServer: @unchecked Sendable {
 
         case "cancelAction":
             respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
+
+        case NativeLimitSet.restoreCommand:
+            // 0.21.0 §1.3：恢复限充（27 fullOnce 复活配套；鉴权门同变更命令；无
+            // 参数——恢复目标 = daemon 当前策略上限。R3-P3-1 前置拒收（编排开关
+            // 关）在 core.restoreChargeLimit 内上抛原文）。
+            respondChange(peer: peer, operation: NativeLimitSet.restoreCommand, body: { try core.restoreChargeLimit() })
 
         case "startCalibration":
             // WP3 校准（鉴权门同变更命令；无参数——相位序列由 daemon 执行）。
@@ -318,6 +324,22 @@ final class XPCServer: @unchecked Sendable {
                 return
             }
             sendStatus(core.setOrchestrationEnabled(rawEnabled == 1), to: peer)
+
+        case CHHysteresisWireKeys.command:
+            // 0.21.0 §2.4：setChHysteresisEnabled（照 setOrchestration 同款——鉴权
+            // 门同变更命令；单 UINT64 键——类型白名单已在 validateRequest，此处只查
+            // 值域 0/1；语义决策在 core.setChHysteresisEnabled——persist/即时 tick/
+            // 回读单一真相全在 DaemonCore+Orchestration.swift）。
+            guard authorize(peer, operation: "setChHysteresisEnabled") else { return }
+            guard let rawEnabled = request.chHysteresisEnabled else {
+                send(errorReply("setChHysteresisEnabled 缺少开关参数"), to: peer.connection)
+                return
+            }
+            guard CHHysteresisWireKeys.validEnabled(rawEnabled) else {
+                send(errorReply("CHIE 迟滞备用通道开关参数越界（0/1）"), to: peer.connection)
+                return
+            }
+            sendStatus(core.setChHysteresisEnabled(rawEnabled == 1), to: peer)
 
         case OrchestrationWireKeys.reportCommand:
             // v0.19.20：reportOrchestration（鉴权门同变更命令——R1 P1-4；非管理员

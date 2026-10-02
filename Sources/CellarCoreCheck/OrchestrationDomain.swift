@@ -6,7 +6,8 @@
 //    mode/desired 门 → actionActive 不对抗 → outstanding TTL 去抖（R2 P1）→
 //    valueChange 不受冷却 → enforcement 冷却门 → 其余 none
 // ③ WP-5 fullOnce 测试钉 ×2（26 legacy capabilities=[] 可启动 / 26 瞬态 nil 可启动）
-//    + 27 终态拒绝（文案钉死）+ 次序钉（terminal 先于 native——27 残留不误报）
+//    + 0.21.0 §1.3 语义重定版：27 编排开关关拒收（文案钉死）/ 开关开放行（set 路径
+//    复活）/ 未接线 fail-closed + 次序钉（27 臂先于 native——残留不误报）
 // ④ F-1 三处透传钉（setLimits/disable/enable 重建形态往返保真 + 旧 JSON 缺键兼容
 //    + 日程转移落地段形态）——照 FanDomain/ThermalPolicyDomain F-1 先例
 // ⑤ wire 编解码往返 + 旧 daemon JSON 缺字段容忍 + valid* 值域矩阵
@@ -150,32 +151,52 @@ private func runOrchestrationFullOnceGateScenarios() throws {
     check(fullOnceStartPrecondition(mode: "active", externalConnected: true, capabilities: ["discharge"]) == nil,
           "编排-8", "26 discharge 机器 → 放行")
 
-    // 编排-9：27 终态（capabilities 含 orchestration）→ 拒绝 + 文案钉死。
-    let rejected = fullOnceStartPrecondition(
-        mode: "active", externalConnected: true, capabilities: ["orchestration"]
+    // 编排-9（0.21.0 §1.3 语义重定版）：27 终态 + 编排开关关 → .orchestrationSwitchOff
+    // （R2-P1 拒收，文案钉死）；开关开 → **放行**（set 路径复活——daemon 分支置
+    // pending(100)，前置不再拒绝）；开关未接线（nil）→ fail-closed 拒收（R2-P1
+    // 首门不可绕过）。旧 .orchestrationTerminal 形态保留 Equatable 对照（生产链路
+    // 不再产出）。
+    let switchOff = fullOnceStartPrecondition(
+        mode: "active", externalConnected: true, capabilities: ["orchestration"],
+        orchestrationEnabled: false
     )
-    check(rejected == .orchestrationTerminal,
-          "编排-9", "27 终态 → .orchestrationTerminal（fail-visible）")
-    check(rejected?.message == "平台限制：macOS 27 暂不支持充满一次（可用编排目标 100% 替代）",
-          "编排-9", "拒绝文案钉死（可用编排目标 100% 替代）")
+    check(switchOff == .orchestrationSwitchOff,
+          "编排-9", "27 + 编排开关关 → .orchestrationSwitchOff（R2-P1 拒收，fail-visible）")
+    check(switchOff?.message == "系统限充执行已停用——请在通用页开启后使用",
+          "编排-9", "拒收文案钉死（系统限充执行已停用——请在通用页开启后使用）")
+    check(fullOnceStartPrecondition(
+        mode: "active", externalConnected: true, capabilities: ["orchestration"],
+        orchestrationEnabled: true) == nil,
+          "编排-9", "27 + 编排开关开 → 放行（0.21.0 set 路径复活——pending(100) 由 daemon 分支置位）")
+    check(fullOnceStartPrecondition(
+        mode: "active", externalConnected: true, capabilities: ["orchestration"]) == .orchestrationSwitchOff,
+          "编排-9", "27 + 开关未接线（缺省 nil）→ fail-closed 拒收（R2-P1 首门不可绕过）")
+    check(OneShotStartRejection.orchestrationTerminal == OneShotStartRejection.orchestrationTerminal,
+          "编排-9", "旧 case 保留（0.19.20 历史形态对照——生产链路 0.21 起不再产出）")
 
-    // 编排-10：次序钉——terminal 判定先于 nativeLimit（27 上 plist 残留策略不得
-    // 以 nativeChargeLimit 语义误报）；mode/外接门仍最优先。
+    // 编排-10：次序钉——27 臂判定先于 nativeLimit（27 上 plist 残留策略不再阻断
+    // ——App set 覆写 MCL；开关关拒收先于残留误报）；mode/外接门仍最优先。
     do {
         let residual = NativeChargeLimitReading(policies: [
             NativeChargePolicy(socLimit: 85, reason: "manualChargeLimit", terminated: false),
         ], detectorError: false)
         check(fullOnceStartPrecondition(
             mode: "active", externalConnected: true, nativeLimit: residual,
-            capabilities: ["orchestration"]) == .orchestrationTerminal,
-              "编排-10", "27 残留 85 在场 → 仍 .orchestrationTerminal（terminal 先于 native）")
+            capabilities: ["orchestration"], orchestrationEnabled: false) == .orchestrationSwitchOff,
+              "编排-10", "27 残留 85 在场 + 开关关 → .orchestrationSwitchOff（27 臂先于 native）")
         check(fullOnceStartPrecondition(
-            mode: "disabled", externalConnected: true, capabilities: ["orchestration"]) == .modeNotActive,
-              "编排-10", "mode 门先于 terminal 判定（既有前置次序不被新 case 扰动）")
+            mode: "active", externalConnected: true, nativeLimit: residual,
+            capabilities: ["orchestration"], orchestrationEnabled: true) == nil,
+              "编排-10", "27 残留 85 在场 + 开关开 → 放行（App set 覆写 MCL——残留非阻断）")
         check(fullOnceStartPrecondition(
-            mode: "active", externalConnected: false, capabilities: ["orchestration"]) == .noExternalPower,
-              "编排-10", "外接门先于 terminal 判定")
-        check(OneShotStartRejection.orchestrationTerminal == OneShotStartRejection.orchestrationTerminal,
+            mode: "disabled", externalConnected: true, capabilities: ["orchestration"],
+            orchestrationEnabled: true) == .modeNotActive,
+              "编排-10", "mode 门先于 27 臂判定（既有前置次序不被新臂扰动）")
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: false, capabilities: ["orchestration"],
+            orchestrationEnabled: true) == .noExternalPower,
+              "编排-10", "外接门先于 27 臂判定")
+        check(OneShotStartRejection.orchestrationSwitchOff == OneShotStartRejection.orchestrationSwitchOff,
               "编排-10", "新 case Equatable 合成可用（daemon 上抛 → XPC errorReply 原文通道）")
     }
 }

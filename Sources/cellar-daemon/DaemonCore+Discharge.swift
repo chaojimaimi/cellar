@@ -164,6 +164,15 @@ extension DaemonCore {
         // client 直挂——26 上与 TahoeBackend CHIE 路径同源同字节，行为不变）。
         do {
             try DischargeAdapterControl.setAdapterEnabled(false, client: client)
+            // 0.21.0 §2 code-review 复核·窄角：0x8 写成功即为外部写者——**含回读
+            // 校验失败 throw 臂**（动作未注册、终态集中点不可达 → 无其他失效钩，
+            // mounted ∧ 带内时簿记 true vs 实况 0x8 滞留）；正常启动路径同拍失效
+            // 无害（终态集中点失效幂等，挂点全集见 CHHysteresis.
+            // noteExternalAdapterWrite ③）。
+            if hysteresisState.lastWrittenAdapterEnabled != nil {
+                hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+                Self.persistLog("放电启动：CHIE 迟滞簿记已失效（0x8 写成功为外部写——下拍按实况重估）")
+            }
             let state = try DischargeAdapterControl.adapterState(client: client)
             guard state == false else {
                 throw BackendError.verifyFailed(key: "CHIE", desired: false, actual: state ?? true)
@@ -188,6 +197,14 @@ extension DaemonCore {
         do {
             try actionStore.save(actionTrack.action!)
         } catch {
+            // 0.21.0 §2 code-review 复核·遗漏 A：启动回滚恢复 0x00 为外部写者——
+            // 本路径**刻意不经** noteDischargeTerminatedLocked（R2 P2-B 防冷却误记）
+            // → 独立失效钩（挂点全集见 CHHysteresis.noteExternalAdapterWrite ④）。
+            // 失效先于恢复写——恢复写失败残留 0x8 同样自愈（nil → 下拍按实况重估）。
+            if hysteresisState.lastWrittenAdapterEnabled != nil {
+                hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+                Self.persistLog("放电启动回滚：CHIE 迟滞簿记已失效（回滚恢复 0x00 为外部写——下拍按实况重估）")
+            }
             let restoreError = DischargeAdapterControl.restoreEnabled(
                 client: client, attempts: Discharge.terminalRestoreAttempts
             )
@@ -360,12 +377,24 @@ extension DaemonCore {
     /// 取消、睡眠取消、cancelAction 放电分支、监护缺失终止、启动崩溃恢复。
     /// ⚠️ locked 自身 save 失败回滚**不**调用（R2 P2-B：启动失败非「已建立动作的
     /// 终止」——动作从未持久化/可见；误记会退化为每 30min 才重试）。
+    /// 0.21.0 §2 code-review P1-1：本函数是动作轨终态**集中点**（落点全集见上）——
+    /// 终态恢复 CHIE=0x00 的写不经迟滞通道 → 迟滞簿记在此失效
+    ///（CHHysteresis.noteExternalAdapterWrite：lastWritten=nil ≠ 任何带宽意图 → 下拍
+    /// 按实况重写自愈）。修死「终态恢复后簿记仍记 0x8 → 禁用臂被幂等吞掉 → 执法
+    /// 静默卡死（mounted 假活）」失败链。失效在恢复写**之前**——恢复写失败（残留
+    /// 0x8）同样自愈（nil → 下拍恢复臂按带重写）。外部写者挂点全集清单见
+    /// CHHysteresis.noteExternalAdapterWrite 头注释（本点 = ①）。
     func noteDischargeTerminatedLocked(now: Date) {
         lastAutoDischargeCompletedAt = now
         adapterCycleSinceAutoCompletion = false
         // code-review P1：终止同时 disarm——放电后的 ext false→true 回跳是恢复痕迹
         // 而非物理重插，仅重新武装后（disarm 态回跳触发）的后续转移才开门。
         adapterCycleArmed = false
+        // 0.21.0 §2 P1-1：迟滞簿记失效（外部写者——终态恢复 CHIE=0x00）。
+        if hysteresisState.lastWrittenAdapterEnabled != nil {
+            hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+            Self.persistLog("放电终态：CHIE 迟滞簿记已失效（动作轨恢复 0x00 为外部写——下拍按实况重估）")
+        }
     }
 
     /// 终态/取消恢复 CHIE=0x0（写 + 回读校验重试阶梯 —— 取消写失败 ≠ 取消完成，
@@ -476,12 +505,18 @@ extension DaemonCore {
     /// 90s 重建」的永久失败循环。capabilities 含 discharge 的机器 CHIE 必在位。
     /// 0.20 M1a §2.2 #7：backend 参数 → client（CHIE 控制面直挂；执法段两处调用
     /// 点 + 观测段新增调用——27 残留巡检兜底落位）。
+    /// 0.21.0 §2.2：**迟滞执法期豁免**——CHIE 迟滞备用通道挂载中（hysteresisState.
+    /// mounted）时 0x8 为合法驻留（降级稳态第二生命线执法，非放电残留），巡检静默；
+    /// 退出臂自带 0x00 恢复，恢复失败即 unmount → mounted=false → 巡检执法自动恢复
+    /// （兜底闭环）。登记局限：豁免面按 mounted 精确门——迟滞执法期外部写入冲突
+    /// 检测暂停（退出即恢复）。
     @discardableResult
     func patrolCHIEResidualLocked(
         client: SMCClient,
         events: inout [LogEvent]
     ) -> String? {
         guard capabilities?.contains(DaemonXPC.capabilityDischarge) == true else { return nil }
+        guard !hysteresisState.mounted else { return nil }
         let enabled: Bool?
         do {
             enabled = try DischargeAdapterControl.adapterState(client: client)
@@ -500,6 +535,16 @@ extension DaemonCore {
                 message: "CHIE 残留巡检：恢复写失败（\(restoreError)）——残留禁用未清除，继续巡检"
             ))
         } else {
+            // 0.21.0 §2 code-review 复核·遗漏 B：巡检恢复的 0x00 为外部写者——
+            // **!mounted 可达仍需失效**：退出恢复写一次失败（SMC 瞬态）→ unmounted ∧
+            // lastWritten=false ∧ 实况 0x8 → 巡检成功恢复 → 退出条件消退（如热退出
+            // 分钟级滞留窗恰为巡检窗）→ 重挂 → 禁用臂被陈旧簿记幂等吞掉 → 执法永久
+            // 死亡。失效钩闭合（挂点全集见 CHHysteresis.noteExternalAdapterWrite ⑤；
+            // 恢复失败臂不失效——实况仍 0x8，簿记 false 仍准确）。
+            if hysteresisState.lastWrittenAdapterEnabled != nil {
+                hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+                Self.persistLog("CHIE 残留巡检：迟滞簿记已失效（巡检恢复 0x00 为外部写——下拍按实况重估）")
+            }
             events.append(LogEvent(
                 category: .control, level: .warn,
                 message: "CHIE 残留巡检：检测到非使能状态，已清零并回读确认（放电残留恢复）"

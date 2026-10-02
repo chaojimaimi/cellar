@@ -73,6 +73,10 @@ struct PanelView: View {
                     : { statusController.retryLastAttempt() }
             )
 
+            // 0.21.0 §3.2：校准抑制横幅（daemon 回读 calibrationSuspected——模式指纹
+            // 识别态；nil/false = 旧 daemon/26 平台/未识别 → 零渲染）。
+            CalibrationBanner(visible: statusController.daemonStatus?.calibrationSuspected == true)
+
             GaugeView(state: gaugeState)
                 .frame(width: 150, height: 150)
                 .padding(.top, 4)

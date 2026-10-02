@@ -24,6 +24,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                sub80DetailRegion
                 nativeLimitRegion
                 hero
                 tiles
@@ -138,6 +139,26 @@ struct DashboardView: View {
             .overlay(
                 Capsule().strokeBorder(emphasized ? theme.accent.opacity(0.35) : theme.secondaryText.opacity(0.45))
             )
+    }
+
+    // MARK: - sub80 状态明细（0.21.0 §5 功能概览页）
+
+    /// sub80 通道状态明细（功能概览页——参数驱动组件 Sub80StatusView 复用，仅
+    /// 传明细/进度参数：横幅/徽章/回落行留在充电控制页宿主，概览页不重复渲染）。
+    /// **26/无 sub80 能力机器不渲染（capabilities 门——红线：GUI 明细 26 不渲染
+    /// 或按现状渲染）**；旧 daemon（sub80State 缺席）同门收敛不渲染。
+    @ViewBuilder
+    private var sub80DetailRegion: some View {
+        if let status = statusController.daemonStatus,
+           status.capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+           let channelState = status.sub80State {
+            Sub80StatusView(
+                state: channelState,
+                hysteresisMounted: status.sub80Hysteresis == true,
+                healProbeActive: status.sub80HealProbeActive == true,
+                healProbeTicks: status.sub80HealProbeTicks
+            )
+        }
     }
 
     // MARK: - 原生限充区（Phase 5 v1.7 M3 §4.1）

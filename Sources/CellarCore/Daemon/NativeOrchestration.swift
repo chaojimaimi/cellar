@@ -104,16 +104,26 @@ public struct OrchestrationState: Equatable, Sendable {
     public var lastAppliedTarget: Int?
     /// 最近一次失败回报详情（ok=false 写入；ok=true 清空）。
     public var lastError: String?
+    /// 0.21.0 §1.3 fullOnce 27 临时放开窗（R2-P2-4 配套 daemon 侧窗口位）：
+    /// 窗内汇聚目标/断言目标强制 100（等价「完全放开」——域随写 100 防 agent 层
+    /// 对抗 App set；断言防 valueChange 回拉 policy 值致 30-60s 内临时放开坍缩）。
+    /// **内存态不持久化**（照本类型既有纪律）——daemon 重启窗位丢失 → desired 回
+    /// policy 值 → valueChange 重断言 → MCL 读回回落 → App 按钮态/横幅随读回自动
+    /// 消失（「重启自然收敛」，R2-P2-4）。清除点：恢复臂 / setLimits / disable /
+    /// 编排开关 toggle / SIGHUP-disabled。
+    public var fullOnceWindowActive: Bool = false
 
     public init(
         pendingToken: String? = nil, pendingTarget: Int? = nil, lastRequestAt: Date? = nil,
-        lastAppliedTarget: Int? = nil, lastError: String? = nil
+        lastAppliedTarget: Int? = nil, lastError: String? = nil,
+        fullOnceWindowActive: Bool = false
     ) {
         self.pendingToken = pendingToken
         self.pendingTarget = pendingTarget
         self.lastRequestAt = lastRequestAt
         self.lastAppliedTarget = lastAppliedTarget
         self.lastError = lastError
+        self.fullOnceWindowActive = fullOnceWindowActive
     }
 
     /// 空状态（daemon 启动初值）。

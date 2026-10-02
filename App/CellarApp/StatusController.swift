@@ -95,7 +95,10 @@ final class StatusController: ObservableObject {
     private var notificationBaseline: DaemonStatus?
     // MARK: v0.19.20 编排执行通道（WP-2）
     /// Shortcuts 执行器（Process 实现；协议缝为注入预留）。
-    private let shortcutRunner: ShortcutsRunning = ShortcutProcessRunner()
+    /// ⚠️ internal（偏离 private 纪律）——WHY：0.21.0 §1.1 执行器抽象与 §1.5 态驱动
+    /// 对账在外迁 extension 文件 StatusController+LimitExecution.swift，跨文件需读
+    /// （LED extension 同款放宽先例）。
+    let shortcutRunner: ShortcutsRunning = ShortcutProcessRunner()
     /// 已处理的 pending token 集（幂等——daemon 单 pending 槽 → 容量 8 绰绰有余，
     /// FIFO 驱逐防无界增长）。
     private var processedOrchestrationTokens: [String] = []
@@ -104,10 +107,24 @@ final class StatusController: ObservableObject {
     private nonisolated(unsafe) var orchestrationTask: Task<Void, Never>?
 
     // MARK: 0.20 M2 WP3 编排读回（MCLClient 产品化；App 本地 UI 态——wire 零变更）
-    /// 原生限充 GET 读回客户端（只读；类缺席 sticky + 实例自愈——类型头注记）。
-    /// ⚠️ 仅后台线程调用（Task.detached 包裹——dlopen/ObjC 消息派发同步调用，
-    /// 主线程永不阻塞；CpuFanMonitor 先例）。
-    private let mclClient = MCLClient()
+    /// 原生限充 GET/SET 客户端（0.21.0 §1.1 set 面内嵌；类缺席 sticky + 实例自愈
+    /// ——类型头注记）。⚠️ 仅后台线程调用（Task.detached 包裹——dlopen/ObjC 消息
+    /// 派发同步调用，主线程永不阻塞；CpuFanMonitor 先例）。⚠️ internal——WHY：
+    /// StatusController+LimitExecution.swift 执行器抽象跨文件读取（同上先例）。
+    let mclClient = MCLClient()
+    /// MCL 读回采样值（0.21.0 §1.3 面板恢复臂按钮/横幅判定源——R2-P2-4 读回驱动；
+    /// nil = 不可用/未采样）。⚠️ 非 private(set)（LED 先例）——WHY：写入面在
+    /// StatusController+LimitExecution.swift 关断补偿臂（对账一致后顺带刷新）。
+    @Published var mclReadbackValue: Int?
+
+    // MARK: 0.21.0 §1.1 执行器抽象（set 优先 / 快捷指令 fallback）
+    /// 会话驻留快捷指令 fallback（R1-P2-3：set 连续 2 次实例级失败 → 驻留本会话
+    /// 不回切；下次启动重试 set——会话 sticky 语义）。@Published：通用页编排节
+    /// embeddedExecutorAvailable 参数消费（驻留 → 节回退快捷指令指引，需驱动重绘）。
+    @Published private(set) var executorDwellsShortcut = false
+    /// 实例级失败连击（会话内存态——Code=4 结构化拒绝为中性不推进，见
+    /// NativeLimitSet.advancedFailureBookkeeping）。
+    private var embeddedSetFailureStreak = 0
     /// WP3 失配退避（评审 R0-P2）：会话累计失配 ≥3 → 停用读回重跑（转纯行为
     /// 验证）+ 通用页如实展示。会话级（App 进程生命周期）。
     private var readbackMismatchCount = 0
@@ -124,6 +141,13 @@ final class StatusController: ObservableObject {
     /// 属性仅在主 actor 方法或 deinit 中访问（Task.cancel() 本身线程安全——既有
     /// pollTask 同款注记）。
     private nonisolated(unsafe) var mclSampleTask: Task<Void, Never>?
+    /// 通用页可见性（MCL 采样合并门控输入——0.21.0 §1.3 起面板可见也驱动采样，
+    /// 供恢复臂按钮/横幅判定源；私有态，转发点 setGeneralPageVisible）。
+    private var generalPageVisible = false
+    /// 0.21.0 §1.5 关断残留态驱动对账循环（30s 周期；App 进程常驻——覆盖 daemon
+    /// 侧关断（CLI/SIGHUP/restoreAndExit）的 App 重启窗，R3-P2-2 读回驱动无需会话
+    /// 记忆）。⚠️ nonisolated(unsafe)：deinit 取消，同 mclSampleTask 注记。
+    private nonisolated(unsafe) var mclReconcileTask: Task<Void, Never>?
 
     /// 菜单栏图标状态推导（MenuBarIconLabel 观察；纯函数映射见 CellarCore）。
     /// WP5 §2.4：IOPS 实时电源态 override 参与规则 4/5——图标随插拔电即时翻转。
@@ -142,6 +166,15 @@ final class StatusController: ObservableObject {
         refreshCadence()
         powerSourceMonitor.controller = self
         powerSourceMonitor.install()
+        // 0.21.0 §1.5：关断残留态驱动对账循环（App 进程常驻——daemon 侧关断无
+        // 回包事件，唯轮询观察；26 平台循环内 orchestrationTerminal 门 no-op）。
+        mclReconcileTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, !Task.isCancelled else { return }
+                await self.reconcileShutdownResidual()
+            }
+        }
     }
 
     /// IOPS 实时电源态写入（PowerSourceMonitor 回调；图标即时翻转数据源）。
@@ -187,6 +220,7 @@ final class StatusController: ObservableObject {
         telemetryTask?.cancel()
         orchestrationTask?.cancel()
         mclSampleTask?.cancel()
+        mclReconcileTask?.cancel()
     }
 
     // MARK: - 轮询调度（规格 §2.2 + Phase 5 v1.2 §2.3 多表面仲裁）
@@ -200,6 +234,9 @@ final class StatusController: ObservableObject {
         // 0.18 T5：面板观察增强采样门控转发（CPU 表面温度/风扇转速仅面板消费
         // ——主窗可见不采样；弱引用 nil = 尚未回填，静默跳过）。
         cpuFanMonitor?.setPanelVisible(visible)
+        // 0.21.0 §1.3：面板可见也驱动 MCL 读回采样（恢复臂按钮/横幅判定源——
+        // R2-P2-4 读回驱动；合并门控见 refreshMclSampling）。
+        refreshMclSampling()
         refreshCadence()
     }
 
@@ -453,11 +490,18 @@ final class StatusController: ObservableObject {
     }
 
     /// 总开关：mode 驱动「停用限充 / 启用限充」（禁用/启用命令语义相反）。
+    /// 0.21.0 §1.5：**App 自发关断**（面板 XPC 成功回包）→ 按表即时 set 补偿
+    /// （disable 恒 100——R3-P1 第一行；补偿在 extension 关断对账臂执行）。
     func toggleCharging(enabled: Bool) {
         if enabled {
             runControl(attempt: .setChargingEnabled(true), operation: { try DaemonXPCClient().enable() }, successFeedback: CellarL10n.s("status.enabled"))
         } else {
-            runControl(attempt: .setChargingEnabled(false), operation: { try DaemonXPCClient().disable() }, successFeedback: CellarL10n.s("status.disabled"))
+            runControl(
+                attempt: .setChargingEnabled(false),
+                operation: { try DaemonXPCClient().disable() },
+                successFeedback: CellarL10n.s("status.disabled"),
+                onSuccess: { _ in self.reconcileShutdownResidualNow() }
+            )
         }
     }
 
@@ -667,9 +711,13 @@ final class StatusController: ObservableObject {
     }
 
     /// fullOnce（充满一次）按钮辅助文案词汇位（主语「充满一次」，review P2-1）。
+    /// 0.21.0 §1.3：27 复活后 plist 残留不再构成阻断（App set 覆写 MCL——
+    /// fullOnceStartPrecondition 27 臂已跳过原生守卫）——编排终态不出提示，
+    /// 词汇位仅 26 语义保留（防残留误导）。
     var nativeLimitFullOnceHintWord: VocabularyWord? {
-        nativeLimitHintWord(.nativeLimitFullOnceHintManual,
-                            generic: .nativeLimitFullOnceHintGeneric)
+        guard !orchestrationTerminal else { return nil }
+        return nativeLimitHintWord(.nativeLimitFullOnceHintManual,
+                                   generic: .nativeLimitFullOnceHintGeneric)
     }
 
     private func nativeLimitHintWord(_ manual: VocabularyWord,
@@ -723,6 +771,10 @@ final class StatusController: ObservableObject {
             applyChargeSchedule(json)
         case .setOrchestration(let enabled):
             setOrchestration(enabled)
+        case .restoreChargeLimit:
+            restoreChargeLimit()
+        case .setChHysteresisEnabled(let enabled):
+            setChHysteresisEnabled(enabled)
         }
     }
 
@@ -758,19 +810,88 @@ final class StatusController: ObservableObject {
     }
 
     /// 编排开关设置（XPC setOrchestration；旧 daemon 回「未知命令」→
-    /// detectStaleBeforeReject 升级提示既有闭环）。
+    /// detectStaleBeforeReject 升级提示既有闭环）。0.21.0 §1.2：文案诚实化
+    /// （「编排」→「系统限充执行」，新旧键兼容解析）。0.21.0 §1.5：**App 自发
+    /// 关断**（编排开关关 XPC 成功回包）→ 按表即时 set 补偿（R3-P1 第二行：
+    /// target ≥80 → 100 / target <80 → 80——补偿在 extension 关断对账臂执行，
+    /// onSuccess 于 ingest 刷新 daemonStatus 后触发，期望派生读到新开关态）。
     func setOrchestration(_ enabled: Bool) {
         runControl(
             attempt: .setOrchestration(enabled),
             operation: { try DaemonXPCClient().setOrchestration(enabled) },
-            successFeedback: CellarL10n.s(enabled
-                ? "status.orchestrationOn"
-                : "status.orchestrationOff")
+            successFeedback: CellarL10n.sRenamed(
+                enabled ? "status.executionOn" : "status.executionOff",
+                fallback: enabled ? "status.orchestrationOn" : "status.orchestrationOff"),
+            onSuccess: { _ in
+                // 三元 + 闭包字面量组合触发 Swift 表达式诊断崩溃（实测）——
+                // 用 if 形态承载「仅关断臂补偿」。
+                if !enabled { self.reconcileShutdownResidualNow() }
+            }
+        )
+    }
+
+    /// 0.21.0 §1.2 set 通道可用（通用页编排节参数——内嵌执行通道接管态）：
+    /// 27 终态 ∧ MCL 通道在位（类在位——实例级失败可重建自愈不降格）∧ 未驻留
+    /// 快捷指令 fallback（驻留 = 本会话 set 事实上不可用，回退快捷指令指引）。
+    var embeddedExecutorAvailable: Bool {
+        orchestrationTerminal && mclClient.readbackAvailable && !executorDwellsShortcut
+    }
+
+    // MARK: - 0.21.0 §2.4 CHIE 迟滞备用通道（开关 + 执法横幅消费）
+
+    /// 迟滞开关（daemon 回读单一真相——policy.chHysteresisEnabled 恒填 wire；
+    /// nil = 旧 daemon = 关处理）。开关绑定源，与执法态 sub80Hysteresis 分立。
+    var chHysteresisEnabled: Bool {
+        daemonStatus?.chHysteresisEnabled == true
+    }
+
+    /// 迟滞执法挂载态（daemon 回读 sub80Hysteresis——面板横幅「实验性备用通道
+    /// 执法中」数据源；nil = 旧 daemon / 26 无能力机器 = 不渲染）。
+    var sub80HysteresisEnforcing: Bool {
+        daemonStatus?.sub80Hysteresis == true
+    }
+
+    /// 迟滞开关设置（XPC setChHysteresisEnabled；旧 daemon 回「未知命令」→
+    /// detectStaleBeforeReject 升级提示既有闭环）。daemon 侧 persist + 即时 tick
+    /// ——挂载/退出 ≤1 tick 评估。
+    func setChHysteresisEnabled(_ enabled: Bool) {
+        runControl(
+            attempt: .setChHysteresisEnabled(enabled),
+            operation: { try DaemonXPCClient().setChHysteresisEnabled(enabled) },
+            successFeedback: CellarL10n.s("status.summary.setChHysteresis")
+        )
+    }
+
+    /// 0.21.0 §1.3 恢复臂判定源（R2-P2-4 读回驱动，非本地态——重启与滑杆变更
+    /// 自然收敛）：MCL 读回 100 ∧ policy < 100，叠加 27 终态 ∧ mode active ∧
+    /// 编排开关开（开关关 = 恢复臂前置拒收 R3-P3-1——按钮隐藏 + 引导重开，重开后
+    /// valueChange 断言自然恢复 target 亦是自愈路径）。面板横幅与恢复按钮共用本
+    /// 判定（陈旧同步收敛，无悬挂态）。
+    var temporaryFullOpenActive: Bool {
+        guard orchestrationTerminal,
+              orchestrationEnabled,
+              daemonStatus?.mode == "active",
+              let upperLimit = daemonStatus?.upperLimit else { return false }
+        return NativeLimitSet.fullOnceRestoreAvailable(
+            mclReadback: mclReadbackValue, policyUpperLimit: upperLimit)
+    }
+
+    /// 「恢复限充」（0.21.0 §1.3 恢复臂）：daemon 置 pending(`policy.upperLimit`)
+    /// → App 消费 set 回读回（<80 policy 分支执行体钳 set 80——§1.3）。前置拒收
+    /// （编排开关关）→ daemonError 原文上屏（R3-P3-1 恢复臂前置拒收同适用）。
+    func restoreChargeLimit() {
+        runControl(
+            attempt: .restoreChargeLimit,
+            operation: { try DaemonXPCClient().restoreChargeLimit() },
+            successFeedback: CellarL10n.s("status.summary.restoreLimit")
         )
     }
 
     /// pending 消费入口（ingest 单一入口内调用；全部前置门不过即静默——轮询驱动
-    /// 下拍重评，绝不猜测重试）。
+    /// 下拍重评，绝不猜测重试）。0.21.0 §1.2：链骨架（pending/token/单飞/读回校验
+    /// /stale 丢弃）全部复用，**仅执行体替换**——`LimitExecutor` 抽象（set 优先，
+    /// fallback 快捷指令——§1.1 触发条件）；两路执行结果回报链（detail/读回校验）
+    /// 同构，daemon 侧零改动（执行体对 daemon 透明）。
     private func consumeOrchestrationPending(_ orchestration: OrchestrationStatus) {
         guard orchestrationTerminal,
               orchestration.enabled,   // 评审 P3-2：关编排后悬挂 pending 不尾随执行
@@ -782,10 +903,14 @@ final class StatusController: ObservableObject {
         if processedOrchestrationTokens.count > 8 {
             processedOrchestrationTokens.removeFirst(processedOrchestrationTokens.count - 8)
         }
+        // 0.21.0 §1.3/§1.1：执行值钳制（<80 → set 80——恢复臂分支；编排链目标
+        // 恒 ≥80 时为恒等）+ 执行体路由（set 优先 / 驻留 fallback）。
+        let setValue = NativeLimitSet.setTarget(for: percent)
+        let flavor = NativeLimitSet.executorFlavor(dwellingShortcut: executorDwellsShortcut)
         // 名字执行时读 UserDefaults（static 读取——规避 @StateObject 临时实例接线
         // 陷阱；OrchestrationSettings 输入框与执行侧同键）。
         let name = OrchestrationSettings.currentShortcutName()
-        let runner = shortcutRunner   // 评审 P3-3：注入缝真实接线（协议缝可 mock）
+        let executor = makeLimitExecutor(flavor: flavor, name: name)
         // WP3 读回校验输入（MainActor 门态捕获——detached 闭包不得触碰主 actor 态）。
         let client = mclClient
         let rerunAllowed = !readbackRerunDisabled
@@ -793,21 +918,26 @@ final class StatusController: ObservableObject {
         readbackProgressGeneration += 1
         let progressGeneration = readbackProgressGeneration
         orchestrationTask = Task.detached { [weak self] in
-            // 执行（内部再 detached——runner 阻塞语义，主 actor 永不等待）。
+            // 执行（内部再 detached——executor 阻塞语义，主 actor 永不等待）。
+            // verifyTarget = 实际写入值（set 路径 = 钳制后值；快捷指令路径 = 同值）。
             let detail: String?
+            var verifyTarget: Int?
+            var setFailure: MCLSetFailure?
             do {
-                try await runner.run(name: name, percent: percent)
+                verifyTarget = try await executor.execute(target: setValue)
                 detail = nil
             } catch {
                 detail = String(describing: error)
+                setFailure = error as? MCLSetFailure
             }
-            // 0.20 WP3 读回校验（§4）：执行成功才校验——== target 即时确认；
+            // 0.20 WP3 读回校验（§4）：执行成功才校验——== verifyTarget 即时确认；
             // 失配有界重跑（2 次，间隔 5s）；App 本地 UI 态（wire 零变更——daemon
-            // 行为验证回路不变，回报语义照旧）。后台执行（MCL/runner 全阻塞调用）。
+            // 行为验证回路不变，回报语义照旧）。0.21.0 §1.2：重跑臂同步走同一
+            // 执行器抽象（R1-P2-3——原硬编码 runner.run 移除）。后台执行。
             var readback: MCLReadbackResult = .skipped
-            if detail == nil {
+            if let verifyTarget {
                 readback = await StatusController.performReadbackVerification(
-                    target: percent, name: name, runner: runner, client: client,
+                    verifyTarget: verifyTarget, executor: executor, client: client,
                     rerunAllowed: rerunAllowed,
                     onProgress: { [weak self] line, warning in
                         // 进度上屏（校验中/重跑中——最长 2×5s 重跑窗的可观察性）；
@@ -827,11 +957,15 @@ final class StatusController: ObservableObject {
                 self.orchestrationTask = nil
                 if let detail {
                     // 失败上屏（WP-2：controlFeedback + daemon 侧 lastError 经回报
-                    // 落 orchestration.lastError → 通用页状态行）。
+                    // 落 orchestration.lastError → 通用页状态行。0.21.0 §1.1：Code=4
+                    // 结构化拒绝原文随 detail 上屏——「系统原生限充最低 80……」如实
+                    // 提示，不静默）。
                     self.controlFeedback = .daemonRejected(
                         CellarL10n.s("settings.orchestration.failed", detail)
                     )
                 }
+                // 0.21.0 §1.1 fallback 簿记（仅 set 味道参与——实例级失败连击/驻留）。
+                self.noteEmbeddedSetOutcome(flavor: flavor, failure: setFailure)
                 // 读回校验态落地（App 本地 UI 态；失配退避计数在此推进）。
                 self.applyReadbackOutcome(readback, target: percent)
                 // 回报确认链（XPC 后台；鉴权拒/超时不重试——daemon TTL 过期重发收敛，
@@ -848,6 +982,22 @@ final class StatusController: ObservableObject {
         }
     }
 
+    /// 0.21.0 §1.1 fallback 簿记（主 actor；纯决策在 NativeLimitSet.
+    /// advancedFailureBookkeeping——CellarCoreCheck 场景域钉死）：仅 set 味道参与；
+    /// 实例级失败连击达 2 → 驻留快捷指令（本会话不回切，下次启动重试 set）；
+    /// 成功清零连击；Code=4 结构化拒绝为中性（值级拒绝与通道健康无关）。
+    private func noteEmbeddedSetOutcome(flavor: NativeLimitSet.ExecutorFlavor, failure: MCLSetFailure?) {
+        guard flavor == .embeddedSet else { return }
+        let advanced = NativeLimitSet.advancedFailureBookkeeping(
+            streak: embeddedSetFailureStreak, outcome: failure
+        )
+        embeddedSetFailureStreak = advanced.streak
+        if advanced.dwell != executorDwellsShortcut {
+            executorDwellsShortcut = advanced.dwell
+            Self.log.info("set 路径实例级失败连击 \(advanced.streak)——会话驻留快捷指令 fallback（下次启动重试 set）")
+        }
+    }
+
     // MARK: 0.20 M2 WP3 读回校验（MCLClient 产品化）
 
     /// 读回校验结果（App 本地 UI 态输入；skipped = 退避停用/执行失败不校验）。
@@ -859,14 +1009,15 @@ final class StatusController: ObservableObject {
     }
 
     /// 校验流（nonisolated 静态——detached 上下文调用；全部阻塞调用经内层
-    /// Task.detached 承载）：读回 == target → 即时确认；失配 → 有界重跑（2 次，
-    /// 间隔 5s——重跑 = 重发快捷指令）；仍不符 → 如实失配。读回通道 sticky 停用
-    /// （类缺席）→ .unavailable；退避停用（调用方已捕获 rerunAllowed=false）→
-    /// .skipped（转纯行为验证——daemon 行为验证回路不变）。
+    /// Task.detached 承载）：读回 == verifyTarget → 即时确认；失配 → 有界重跑
+    /// （2 次，间隔 5s——**0.21.0 §1.2：重跑 = 重走执行器抽象**（R1-P2-3，原硬编码
+    /// runner.run 移除——失配重跑臂与首跑同一执行体））；仍不符 → 如实失配。读回
+    /// 通道 sticky 停用（类缺席）→ .unavailable；退避停用（调用方已捕获
+    /// rerunAllowed=false）→ .skipped（转纯行为验证——daemon 行为验证回路不变）。
     /// onProgress：校验中/重跑中进度行即时上屏（重跑窗可观察性；主 actor 侧
     /// 代际防护，陈旧进度不覆盖终态）。
     nonisolated private static func performReadbackVerification(
-        target: Int, name: String, runner: ShortcutsRunning, client: MCLClient,
+        verifyTarget: Int, executor: LimitExecuting, client: MCLClient,
         rerunAllowed: Bool,
         onProgress: @escaping @Sendable (_ line: String, _ warning: Bool) -> Void
     ) async -> MCLReadbackResult {
@@ -878,7 +1029,7 @@ final class StatusController: ObservableObject {
         guard let first = await Task.detached(operation: { client.readLimit() }).value else {
             return .unavailable
         }
-        if first == target { return .confirmed(limit: first) }
+        if first == verifyTarget { return .confirmed(limit: first) }
         var lastValue = first
         for attempt in 1...2 {
             // 重跑进度上屏（mismatch 已发生 → warning 色标）。
@@ -886,7 +1037,9 @@ final class StatusController: ObservableObject {
                 CellarL10n.s("settings.orchestration.readback.rerunning", UInt(attempt)), true)
             try? await Task.sleep(for: .seconds(5))
             do {
-                try await runner.run(name: name, percent: target)
+                // 返回值 = 写入值（== verifyTarget 恒等——重跑不换值）；读回校验
+                // 在下方 readLimit 承担，显式弃用消警告。
+                _ = try await executor.execute(target: verifyTarget)
             } catch {
                 continue   // 重跑失败计一次，重试窗继续（有界 2 次封顶）
             }
@@ -894,7 +1047,7 @@ final class StatusController: ObservableObject {
                 return .unavailable
             }
             lastValue = value
-            if value == target { return .confirmed(limit: value) }
+            if value == verifyTarget { return .confirmed(limit: value) }
         }
         return .mismatched(lastValue: lastValue)
     }
@@ -912,6 +1065,7 @@ final class StatusController: ObservableObject {
             orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.unavailable")
             orchestrationReadbackWarning = false
         case .confirmed(let limit):
+            mclReadbackValue = limit   // 0.21.0 §1.3：确认值同步发布（面板恢复臂判定源）
             orchestrationReadbackLine = CellarL10n.s(
                 "settings.orchestration.readback.current", "\(limit)")
             orchestrationReadbackWarning = false
@@ -940,11 +1094,20 @@ final class StatusController: ObservableObject {
 
     /// 通用页可见性换档（GeneralSections onAppear/onDisappear 转发——编排节所在
     /// 表面私有态，转发点唯一；照 setPanelVisible 先例）。读回采样门控：通用页
-    /// 可见才轮询（避免常驻采样——CpuFanMonitor panelVisible 先例）。
+    /// 或面板可见才轮询（避免常驻采样——CpuFanMonitor panelVisible 先例）。
     func setGeneralPageVisible(_ visible: Bool) {
+        generalPageVisible = visible
+        refreshMclSampling()
+    }
+
+    /// MCL 读回采样合并门控（0.21.0 §1.3 改造：通用页 **或** 面板可见即 30s 循环
+    /// ——读回行（通用页）与恢复臂按钮/横幅判定源（面板，R2-P2-4）共用采样；
+    /// 26/非终态机循环内 orchestrationTerminal 门 no-op，零行为增量）。
+    private func refreshMclSampling() {
+        let shouldRun = panelVisible || generalPageVisible
         let running = mclSampleTask != nil
-        guard visible != running else { return }
-        if visible {
+        guard shouldRun != running else { return }
+        if shouldRun {
             Task { await sampleMCLOnce() }   // 翻档可见即补一跳（CpuFanMonitor 先例）
             mclSampleTask = Task { [weak self] in
                 while !Task.isCancelled {
@@ -960,21 +1123,25 @@ final class StatusController: ObservableObject {
     }
 
     /// 读回采样单跳（编排终态机才采样；退避停用态展示停用行；失配告警展示期间
-    /// 周期采样不覆盖——WP3 校验态优先，30s 后自然刷新）。
+    /// 周期采样不覆盖——WP3 校验态优先，30s 后自然刷新）。0.21.0 §1.3：采样值
+    /// 同步发布 mclReadbackValue（面板恢复臂判定源）。
     private func sampleMCLOnce() async {
         guard orchestrationTerminal else {
             orchestrationReadbackLine = nil
             orchestrationReadbackWarning = false
+            mclReadbackValue = nil
             return
         }
+        let client = mclClient
+        let limit = await Task.detached { client.readLimit() }.value
+        guard !Task.isCancelled else { return }
+        mclReadbackValue = limit
         if readbackRerunDisabled {
             orchestrationReadbackLine = CellarL10n.s("settings.orchestration.readback.disabled")
             orchestrationReadbackWarning = true
             return
         }
-        let client = mclClient
-        let limit = await Task.detached { client.readLimit() }.value
-        guard !Task.isCancelled, !orchestrationReadbackWarning else { return }
+        guard !orchestrationReadbackWarning else { return }
         orchestrationReadbackLine = formatReadbackLine(limit: limit)
     }
 

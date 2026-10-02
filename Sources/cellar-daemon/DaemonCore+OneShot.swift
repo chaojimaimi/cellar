@@ -51,13 +51,34 @@ extension DaemonCore {
         let nativeReading = NativeChargeLimit.load(
             rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
         )
-        // v0.19.20 WP-5：capabilities 注入（27 终态标记 = 含 orchestration → 拒绝
-        // 启动；判定输入钉死在纯函数——26 瞬态（nil）/26 legacy（[]）照常放行）。
+        // v0.19.20 WP-5：capabilities 注入。0.21.0 §1.3 语义重定版：27 臂从拒绝
+        // 改为「编排开关前置检查」（R2-P1——关 → .orchestrationSwitchOff 拒收；
+        // 开 → 放行）；26 瞬态（nil）/26 legacy（[]）照常放行（26 行为零变化）。
         if let rejection = fullOnceStartPrecondition(
             mode: policy.mode, externalConnected: external, nativeLimit: nativeReading,
-            capabilities: capabilities
+            capabilities: capabilities, orchestrationEnabled: policy.orchestrationEnabled
         ) {
             throw rejection
+        }
+        // 0.21.0 §1.3：27 复活分支——**不启动动作轨**（26 语义保留），置
+        // pending(100) 交 App set（免 root 免快捷指令）+ 开临时放开窗 + 即时 tick
+        // （域随写 100——等价「完全放开」，防 agent 层对抗 App set；断言链经
+        // hasOutstanding 去抖不重签）。policy.upperLimit < 80 分支同样合法——
+        // pendingTarget=100 可 set（NativeLimitSet.setTarget 钳制面在 App 执行体）。
+        if orchestrationTerminalLocked {
+            let now = Date()
+            actionTrack.clearUserActionLatch()   // 用户动作清除终态锁存（P0-2 对齐）
+            let token = UUID().uuidString
+            orchestrationState.pendingToken = token
+            orchestrationState.pendingTarget = NativeLimitSet.fullOnceTarget
+            orchestrationState.lastRequestAt = now
+            orchestrationState.fullOnceWindowActive = true
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 27 复活：临时放开窗开启——pending(100) 待 App set（免 root），恢复经恢复臂 pending(\(policy.upperLimit))；无超时/自动恢复（用户显式）"
+            ))
+            performTickLocked(events: &events)
+            return buildStatusLocked()
         }
         _ = actionTrack.startIfIdle(now: Date())
         // idle→active 原子持久化：写失败 → 动作不启动（上抛，App 原文上屏）。

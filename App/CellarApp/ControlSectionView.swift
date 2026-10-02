@@ -92,8 +92,21 @@ struct ControlSectionView: View {
                     degraded: statusController.daemonStatus?.sub80State == .degraded,
                     experimentalTarget: Int(upperLimit) < 80 ? Int(upperLimit) : nil,
                     fallingFrom: fallingFrom,
-                    fallingTarget: fallingTarget
+                    fallingTarget: fallingTarget,
+                    // 0.21.0 §2.2：迟滞执法横幅（daemon 回读 sub80Hysteresis）。
+                    hysteresisEnforcing: statusController.sub80HysteresisEnforcing
                 )
+                // 0.21.0 §2.4：CHIE 迟滞备用通道开关（实验性——仅 sub80 能力机渲染，
+                // 26 平台 capabilities 门不渲染，红线）。开关绑定 daemon 回读单一真相
+                // （policy.chHysteresisEnabled）；旁注成本告知在开关文案内（约 1 循环/
+                // 天，§2.3）；disabled 态禁用（限充总开关已停——迟滞链随关断清理退出，
+                // 重新启用后 tick 首拍按开关 + CHIE 可写性重估）。
+                Toggle(CellarL10n.s("panel.sub80.hysteresis.toggle"), isOn: Binding(
+                    get: { statusController.chHysteresisEnabled },
+                    set: { statusController.setChHysteresisEnabled($0) }
+                ))
+                .disabled(isModeDisabled || statusController.busy)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else if statusController.orchestrationActive, Int(upperLimit) < 80 {
                 Text(CellarL10n.s("panel.orchestration.minNative"))
                     .font(.caption)

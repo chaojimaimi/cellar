@@ -186,6 +186,26 @@ extension Topoff {
     /// ≥80 → 编排原样（0.19.20 链，sub80 机加 §3.6 域随写卫生）。
     /// **26/无 sub80 能力机器（sub80Capable=false）→ 0.19.20 既有链逐值不变**
     ///（topoffOwned 恒 false——26 行为零变化回归锚）。
+    /// **0.21.0 §1.3 fullOnce 窗（fullOnceWindow，缺省 false = 既有构造零 diff）**：
+    /// 窗内汇聚目标/断言目标强制 100（等价「完全放开」——语义同 chargingDisabled
+    /// 窗：域随写 100 防 agent 层对抗 App set；断言目标 100 防 valueChange 按
+    /// policy 值回拉，临时放开不坍缩）。窗位仅 27 fullOnce 复活臂置位。
+    /// **0.21.0 §2.1 迟滞路由（R1-P1-4 定版；hysteresisEnabled/active 缺省 false =
+    /// 既有构造零 diff——26 回归锚第二把）**：迟滞执法期（opt-in ∧ CHIE 可写已由
+    /// daemon 挂载门过滤，路由只消费 active 结论）desired = **nil（编排静默）**——
+    /// 消除编排钳 80 与迟滞压 75 互搏臂（降级现行 desired=80 分支在迟滞 active 时
+    /// 不触达）。迟滞退出（热终止/持续合盖/开关关/自愈恢复）→ active=false → 回落
+    /// 既有降级钳 80 分支（现状）。off/关断语义不变（全链清理含迟滞退出）。
+    /// **0.21.0 §3.1 校准共存（R1-P1-5 定版；calibrationSuspected 缺省 false =
+    /// 既有构造零 diff——26 回归锚第三把）**：校准抑制态 desired = **nil（App set
+    /// 断言静默——抑制臂②）**，置于 fullOnce 窗之后、其余全部分支（含 chargingDisabled
+    /// 日程窗）之前——降级钳 80 断言与 80-90 主力区间 enforcement 断言（规则 5 set
+    /// 对抗校准，R1 指正）一并静默。**两窗断言臂不同权（P3-1 注记）**：fullOnce 窗
+    ///（用户显式放开）**先于**校准分支 → 窗内断言 100 保持；日程窗**后于**校准分支
+    /// → 日程窗 ∧ 校准态 desired=nil（断言让位）。该角良性自洽：suspected 要求
+    /// percent ≥95 持续充电——MCL 若 <100 则电池回落 95 以下嫌疑自消、窗断言 100
+    /// 随后恢复；MCL 已被校准推至 100 时窗语义本就满足（域随写 100 两窗同权放行
+    /// ——suppressionPlan 窗豁免）。场景 校准共存-11 扩臂钉死。
     public static func convergenceRoute(
         modeActive: Bool,
         orchestrationEnabled: Bool,
@@ -194,12 +214,20 @@ extension Topoff {
         sub80Capable: Bool,
         actionActive: Bool,
         degraded: Bool,
-        healProbeActive: Bool
+        healProbeActive: Bool,
+        fullOnceWindow: Bool = false,
+        hysteresisEnabled: Bool = false,
+        hysteresisActive: Bool = false,
+        calibrationSuspected: Bool = false
     ) -> (convergenceTarget: Int?, orchestrationDesired: Int?, topoffOwned: Bool) {
-        // 汇聚目标（mode 门 → chargingDisabled 窗强制 100（等价「完全放开」）→ 上限）。
+        // 汇聚目标（mode 门 → fullOnce 窗 / chargingDisabled 窗强制 100（等价
+        //「完全放开」）→ 上限）。校准抑制态不改汇聚目标——topoff 臂静默由 daemon
+        // 早退承接（域随写卫生暂停臂③），域值/簿记冻结不漂移。
         let convergenceTarget: Int?
         if !modeActive {
             convergenceTarget = nil
+        } else if fullOnceWindow {
+            convergenceTarget = shutdownLimit
         } else if chargingDisabledWindow {
             convergenceTarget = shutdownLimit
         } else {
@@ -209,12 +237,23 @@ extension Topoff {
         //（动作活跃 → 放电/校准维护分支掌权，双通道静默——执法总开关）。
         let topoffOwned = sub80Capable && modeActive && !actionActive
             && (convergenceTarget.map { $0 < degradedLimit } ?? false)
-        // 编排断言目标（0.19.20 链 + M1b 分流；次序即契约勿重排）。
+        // 编排断言目标（0.19.20 链 + 0.20 M1b 分流 + 0.21.0 §2.1 迟滞分流 + §3.1
+        // 校准分流；次序即契约勿重排）。
         let desired: Int?
         if !modeActive || !orchestrationEnabled {
             desired = nil
+        } else if fullOnceWindow {
+            desired = shutdownLimit                          // fullOnce 窗 → 断言 100（防回拉）
+        } else if calibrationSuspected {
+            // §3.1 臂②断言静默；先于 chargingDisabled 窗分支——日程窗 ∧ 校准态
+            // desired=nil（两窗断言臂不同权，见方法头注 P3-1 注记）。识别/退出由
+            // daemon 侧 CalibrationCoexistence.tick 纯函数驱动（CellarCoreCheck 场景
+            // 域钉死）。
+            desired = nil
         } else if topoffOwned && !degraded {
             desired = nil                                    // topoff 承载 → 编排静默（互斥）
+        } else if topoffOwned && degraded && hysteresisEnabled && hysteresisActive {
+            desired = nil                                    // 迟滞执法 → 编排静默（§2.1 R1-P1-4——消 80 钳与迟滞互搏）
         } else if topoffOwned && degraded && !healProbeActive {
             desired = degradedLimit                          // 降级稳态 → 编排钳 80
         } else if topoffOwned && degraded && healProbeActive {

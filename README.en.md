@@ -12,7 +12,7 @@
 
 ## Features
 
-- **Any charge limit (60–100%)**: on macOS 26 via the control backend; on macOS 27, ≥80% via the system Shortcuts orchestration channel and sub-80% (experimental) genuinely enforced via the system-native charge-limit channel (relies on a system private preferences domain and may break with a macOS update — automatic fallback to 80% with a banner, plus hourly self-healing probes)
+- **Any charge limit (60–100%)**: on macOS 26 via the control backend; on macOS 27, 80–100% via the App's built-in rootless limit execution (no shortcut needed, immediate read-back verification; the Shortcuts orchestration channel becomes a fallback) and sub-80% (experimental) genuinely enforced via the system-native charge-limit channel (relies on a system private preferences domain and may break with a macOS update — automatic fallback to 80% with a banner, plus hourly self-healing probes)
 - **Hysteresis**: charging stops at the limit and only resumes after self-discharge down to the recovery threshold (default: limit −2%), avoiding frequent on/off cycling
 - **Charge-side thermal pause**: by default charging pauses automatically at battery ≥ 40 °C and resumes below 37 °C (hysteresis debounce), with thresholds configurable on the General page; no hot restart of charging after a thermally terminated discharge
 - **Smart fan cooling** (new in v1.1, off by default): automatically boosts the fan when the temperature exceeds a configurable threshold (adjustable threshold/speed; constant-speed, two-stage and full-speed strategies; since v1.12 both left and right fans are taken over in sync on dual-fan machines, single-fan machines unchanged); exiting or any anomaly restores system fan control automatically, with write-read-back verification and runtime capability checks (auto-disables on unsupported machines)
@@ -146,15 +146,15 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 671 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 785 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (700+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
                             # pure logic, ≥80% · currently 91.25%)
-swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 354
-                            # authoritative + 36 new 0.20 forms) + localization gate (465 keys × en/zh-Hans)
+swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 390
+                            # authoritative + 0.21-batch new forms landing via CI regen) + localization gate (487 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.
@@ -189,6 +189,10 @@ Hardware-in-the-loop acceptance (install → limit → discharge recovery → sl
 - ✅ **Hotfix (0.19.9-alpha)**: macOS 27 compatibility completion — parser cross-dictionary fallback (DesignCapacity/NominalChargeCapacity and the gauge field family moved into the BatteryData sub-dictionary on macOS 27); monitoring fully restored on macOS 27 (released)
 - ✅ **Maintenance batches (0.19.10–0.19.20-alpha)**: macOS 27 capability honesty + the charge orchestration channel (Shortcuts enforcement for ≥80%) + a series of menu-bar and power-flow polish rounds (released)
 - ✅ **Phase 5 · macOS 27 capability restore (0.20.0-alpha)**: discharge control plane revived (CHIE backend + clamshell rejection gate), sub-80% limiting genuinely enforced via the system-native charge-limit channel (experimental; automatic fallback to 80% + hourly self-healing), orchestration readback verification (immediate read-back confirmation + mismatch backoff), and “Stopped” rendering for 0 rpm panel fans (released)
+- ✅ **Robustness hotfix (0.20.1-alpha)**: subprocess reaping discipline eliminating the main-thread RunLoop reentrancy deadlock (real-hardware wedge events, sample-stack diagnosed) + heartbeat-stall self-restart watchdog + discharge events persisted to disk + install/doctor BTM corrupted-registration guidance (released)
+- ✅ **Observation consistency & recovery (0.20.2-alpha)**: topoff state honesty persistence (degraded/strikes/off across restarts) + over-band lightweight reassertion (5 min cooled notify) + doctor/status current-enforcement wording alignment + package-release migrated to the built-in mount layout gate (released)
+- 🚧 **Rootless execution & backup backend batch (0.21.0-alpha, this batch, in progress)**: charge-limit execution moved to the App-side rootless set path (80–100% without building a shortcut; the shortcut becomes a fallback; fullOnce revived + shutdown-residual reconciliation) + CHIE hysteresis backup backend (second lifeline when topoff fails; experimental opt-in, off by default) + calibration coexistence (pattern fingerprint “≥95% ∧ external ∧ charging ∧ target ≤90 sustained 5 min” → three-arm suppression — strikes/lightweight reassertion/App set assertions/domain follow-write hygiene all paused; auto-resume when calibration ends) + temperature Pack-layer parsing (macOS 27 GA exposes Temperature only at the Pack layer — parse chain “top level → Pack → SMC” defense-in-depth fallback) + GUI sub80 status detail (overview page four states + self-heal progress)
+- 🎯 **v1.0 (graduation bar, not yet due)**: all three artifacts (CLI / daemon / App GUI) pass real-hardware walkthroughs + 30 days of observation without regression — upon passing, the feature surface freezes and the release cadence stabilizes
 
 The full roadmap and design documents are published in the release notes.
 

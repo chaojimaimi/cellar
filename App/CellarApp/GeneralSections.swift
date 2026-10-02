@@ -73,6 +73,14 @@ struct GeneralSections: View {
             .foregroundStyle(theme.secondaryText)
     }
 
+    /// 节头（0.21.0 §1.2 新增成品串形态——编排节文案诚实化走新旧键兼容解析，
+    /// 成品串直入；样式与 sectionHeader 一致）。
+    private func sectionHeaderText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(theme.secondaryText)
+    }
+
     /// 标签:内容行（行栅格统一：标签列固定 150pt leading——全部标签行同起点，
     /// 治 Form 时代行起始 x 参差；firstTextBaseline 对齐——标签与内容首行基线
     /// 一致，多行内容不吊顶）。
@@ -271,9 +279,12 @@ struct GeneralSections: View {
     /// ——CellarUICheck 可独立渲染）。开关绑定 daemonStatus 单一真相（daemon 确认
     /// 后回传翻转，照自动放电开关同构）；输入框走 OrchestrationSettings
     /// （UserDefaults——daemon 只发 target 数字，名字仅 App 消费，R1 P0-2）。
+    /// 0.21.0 §1.2：节头文案诚实化（「编排」→「系统限充执行」，新旧键兼容）；
+    /// embeddedExecutorAvailable 传递（set 可用态输入框隐藏 + 指引降级）。
     private var orchestrationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("settings.section.orchestration")
+            sectionHeaderText(CellarL10n.sRenamed(
+                "settings.section.execution", fallback: "settings.section.orchestration"))
             OrchestrationSectionView(
                 enabled: statusController.orchestrationEnabled,
                 shortcutName: orchestrationSettings.shortcutName,
@@ -284,6 +295,9 @@ struct GeneralSections: View {
                 // 不渲染——sticky 停用前未采样的首帧自然缺席，不渲染占位）。
                 readbackLine: statusController.orchestrationReadbackLine,
                 readbackIsWarning: statusController.orchestrationReadbackWarning,
+                // 0.21.0 §1.2：set 可用态（27 终态 ∧ MCL 通道在位 ∧ 未驻留 fallback）
+                // ——内嵌执行通道接管，输入框隐藏 + setup 指引降级。
+                embeddedExecutorAvailable: statusController.embeddedExecutorAvailable,
                 onToggleEnabled: { statusController.setOrchestration($0) },
                 onShortcutNameChange: { orchestrationSettings.updateShortcutName($0) }
             )

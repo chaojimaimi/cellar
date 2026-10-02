@@ -32,6 +32,18 @@ public enum CellarL10n {
         return String(format: format, arguments: args)
     }
 
+    /// 新旧键兼容解析（0.21.0 §1.2 文案诚实化——「编排」→「系统限充执行」）：
+    /// 优先新键；新键缺译（结果回显 key 本身 = Foundation miss 语义）→ 回落旧键。
+    /// 旧键保留在 catalog（兼容纪律——不删除），双形态构建链路（lproj/原始
+    /// catalog）语义一致。
+    public static func sRenamed(_ newKey: String, fallback oldKey: String, _ args: CVarArg...) -> String {
+        let locale = preferredLocaleIdentifier
+        let newValue = value(forKey: newKey, localeIdentifier: locale)
+        let format = newValue == newKey ? value(forKey: oldKey, localeIdentifier: locale) : newValue
+        guard !args.isEmpty else { return format }
+        return String(format: format, arguments: args)
+    }
+
     /// 显式语言的解析（--l10n 门禁专用：逐 key × 逐语言断言，不依赖进程语言）。
     /// 常规解析走 `s(_:)`（按进程偏好语言）。
     public static func value(forKey key: String, localeIdentifier: String) -> String {

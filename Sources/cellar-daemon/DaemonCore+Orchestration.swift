@@ -95,6 +95,15 @@ extension DaemonCore {
             emit(events)
         }
         policy.orchestrationEnabled = enabled
+        // 0.21.0 §1.3：开关 toggle 重基线——fullOnce 临时放开窗随之清除（窗内
+        // 关 → §1.5 关断补偿按表接管；重开 → valueChange 按新 target 重断言）。
+        if orchestrationState.fullOnceWindowActive {
+            orchestrationState.fullOnceWindowActive = false
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 临时放开窗已随编排开关 toggle 清除"
+            ))
+        }
         if !enabled,
            capabilities?.contains(DaemonXPC.capabilitySub80) == true,
            policy.upperLimit >= Topoff.degradedLimit {
@@ -104,6 +113,71 @@ extension DaemonCore {
         events.append(LogEvent(
             category: .lifecycle, level: .info,
             message: "充电编排已\(enabled ? "开启" : "关闭")（即时 tick——27 终态下断言 ≤1 tick 发布）"
+        ))
+        performTickLocked(events: &events)
+        return buildStatusLocked()
+    }
+
+    // MARK: - setChHysteresisEnabled XPC（0.21.0 §2.4 R2-P2-3）
+
+    /// CHIE 迟滞备用通道开关（照 setOrchestration 完整先例——policy 单字段直写 +
+    /// persist + 即时 performTickLocked + 回读单一真相；**不改 mode**）。开关默认关
+    ///（§2.3）；**迟滞运行态不入 TopoffPersistedState**（重启后 tick 首拍按开关 +
+    /// CHIE 可写性重估）。关 → 即时 tick 内迟滞退出臂承接（unmount + CHIE 0x00 恢复
+    /// ——off/关断语义不变，全链清理含迟滞退出）；事件路径（disable/restoreAndExit/
+    /// 编排开关关断 ≥80）由 topoffShutdownCleanupLocked 的迟滞退出幂等兜底。
+    func setChHysteresisEnabled(_ enabled: Bool) -> DaemonStatus {
+        var events: [LogEvent] = []
+        lock.lock()
+        defer {
+            lock.unlock()
+            emit(events)
+        }
+        policy.chHysteresisEnabled = enabled
+        persistPolicyLocked(events: &events)
+        events.append(LogEvent(
+            category: .lifecycle, level: .info,
+            message: "CHIE 迟滞备用通道已\(enabled ? "开启" : "关闭")（即时 tick——挂载/退出 ≤1 tick 评估；实验性，约 1 循环/天）"
+        ))
+        performTickLocked(events: &events)
+        return buildStatusLocked()
+    }
+
+    // MARK: - restoreChargeLimit XPC（0.21.0 §1.3 恢复臂）
+
+    /// 恢复臂（27 fullOnce 复活配套）：置 pending(`policy.upperLimit`) 交 App set 回
+    /// + 清临时放开窗 + 即时 tick（域重申 target——topoff 承载 <80 时 channelTick
+    /// 幂等重写，≥80 时 §3.6 域随写卫生收敛）。
+    /// **前置拒收同适用（R3-P3-1）**：编排开关关 → `.orchestrationSwitchOff`
+    /// （照 fullOnce 27 前置同文案——fail-visible；App 侧按钮隐藏 + 引导重开，
+    /// 重开后 valueChange 断言自然恢复 target，亦是自愈路径）。幂等：无窗时点击
+    /// 同样置 pending（回当前态语义——App 按钮判定源为读回，见位才可点）。
+    func restoreChargeLimit() throws -> DaemonStatus {
+        var events: [LogEvent] = []
+        lock.lock()
+        defer {
+            lock.unlock()
+            emit(events)
+        }
+        guard policy.orchestrationEnabled == true else {
+            throw OneShotStartRejection.orchestrationSwitchOff
+        }
+        actionTrack.clearUserActionLatch()   // 用户动作清除终态锁存（P0-2 对齐）
+        let now = Date()
+        let token = UUID().uuidString
+        orchestrationState.pendingToken = token
+        orchestrationState.pendingTarget = policy.upperLimit
+        orchestrationState.lastRequestAt = now
+        if orchestrationState.fullOnceWindowActive {
+            orchestrationState.fullOnceWindowActive = false
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 临时放开窗已随恢复臂关闭"
+            ))
+        }
+        events.append(LogEvent(
+            category: .control, level: .info,
+            message: "恢复限充：pending(\(policy.upperLimit)) 待 App set（免 root）——即时 tick 重申域 target"
         ))
         performTickLocked(events: &events)
         return buildStatusLocked()

@@ -20,10 +20,16 @@ public enum BatterySnapshotParser {
     /// `temperatureFallbackCentiC`（v0.19.8 macOS 27 兼容，方案 §3.1.1）：ioreg 顶层
     /// `Temperature` 键缺失时的回退值（调用方经 SMC TB1T/TB2T 供给）；缺省 nil →
     /// 既有行为零变化（键缺失 → `.missingRequiredField`，既有调用/场景零改动）。
+    ///
+    /// `packProperties`（0.21.0 §4 温度 Pack 层解析，方案 §4）：`AppleSmartBatteryPack`
+    /// 子节点的注册表属性字典（S4 实证 27 GA 上 `Temperature` 仅 Pack 层可见——
+    /// 顶层与 AppleSmartBattery.BatteryData 均无）。取值链「顶层 → Pack 层 → SMC
+    /// 回退」（§4 优先级钉死：Pack > SMC）；缺省 nil → 既有调用/场景零改动。
     public static func parse(
         _ props: [String: Any],
         timestamp: Date,
-        temperatureFallbackCentiC: Int? = nil
+        temperatureFallbackCentiC: Int? = nil,
+        packProperties: [String: Any]? = nil
     ) throws -> BatterySnapshot {
         let batteryData = props["BatteryData"] as? [String: Any]
         // ChargerData 子字典（v1.7 原生限充运行态签名 NotChargingReason 的来源；
@@ -33,7 +39,7 @@ public enum BatterySnapshotParser {
         // RemainingCapacity 等）自顶层迁入 BatteryData 子字典——查找顺序恒「顶层优先
         // （macOS 26 语义零变化）→ BatteryData 回退（27）」，对全部必需/相关可选字段
         // 生效，防后续迁移再断。Temperature 不在节点 BatteryData（spike 0/10），
-        // 走独立的 SMC TB1T/TB2T 回退链（v0.19.8）。
+        // 走独立的回退链（Pack 层 → SMC TB1T/TB2T，0.21.0 §4 扩链）。
         let dicts: [[String: Any]] = batteryData.map { [props, $0] } ?? [props]
         return BatterySnapshot(
             percent: try requiredInt(dicts, "CurrentCapacity"),
@@ -41,7 +47,8 @@ public enum BatterySnapshotParser {
             externalConnected: try requiredBool(dicts, "ExternalConnected"),
             voltageMV: try requiredInt(dicts, "Voltage"),
             amperageMA: try requiredInt(dicts, "Amperage"),
-            temperatureCentiC: try temperature(props, fallback: temperatureFallbackCentiC),
+            temperatureCentiC: try temperature(
+                props, packProperties: packProperties, fallback: temperatureFallbackCentiC),
             cycleCount: try requiredInt(dicts, "CycleCount"),
             designCapacityMAh: try requiredInt(dicts, "DesignCapacity"),
             maxCapacityPercent: intValue(props["MaxCapacity"]),
@@ -88,21 +95,43 @@ public enum BatterySnapshotParser {
         throw BatteryMonitorError.missingRequiredField(key)
     }
 
-    /// 温度取值三分支（v0.19.8 macOS 27 兼容，方案 §3.1.1——Temperature 是唯一
-    /// 带回退面的必需字段，故不走 requiredInt 通径）：
-    /// - 键在位（经既有 `intValue` 助手）→ 用之（macOS 26 主路，G2）；
-    /// - 键缺失且 fallback 非 nil → 用 fallback（macOS 27 回退，G1——顶层
-    ///   `Temperature` 键消失，SMC TB1T/TB2T 承接）；
-    /// - 键缺失且 fallback nil → `.missingRequiredField`（G3 错误原文不变）。
-    /// ⚠️ 键在位但类型不符保持既有 `.invalidFieldType` 抛出——回退仅覆盖
-    /// 「键缺失」，不吞类型错误（R2 P3）。
-    private static func temperature(_ props: [String: Any], fallback: Int?) throws -> Int {
+    /// 温度取值四分支链（v0.19.8 引入回退面 + 0.21.0 §4 扩 Pack 层——方案 §4
+    /// 优先级钉死「顶层 > Pack 层 > SMC 回退」；Temperature 是唯一带回退面的
+    /// 必需字段，故不走 requiredInt 通径）：
+    /// 1. 顶层键在位（经既有 `intValue` 助手）→ 用之（macOS 26 主路，零变化）；
+    /// 2. 键缺失 ∧ Pack 层命中（Pack 顶层或其 BatteryData 子字典——S4 实证 27 GA
+    ///    主回退层）→ 用之（Pack 层为尽力而为回退面：键在位但类型不符按该层缺席
+    ///    处理继续降级——不吞顶层路径的类型错误语义，仅约束回退层）；
+    /// 3. 键缺失 ∧ Pack 未命中 ∧ fallback 非 nil → 用 fallback（v0.19.8 SMC
+    ///    TB1T/TB2T 既有回退，保留）；
+    /// 4. 全部缺席 → `.missingRequiredField`（G3 错误原文不变）。
+    /// ⚠️ 顶层键在位但类型不符保持既有 `.invalidFieldType` 抛出——回退仅覆盖
+    /// 「顶层键缺失」，不吞顶层类型错误（R2 P3 语义保持）。
+    private static func temperature(
+        _ props: [String: Any], packProperties: [String: Any]?, fallback: Int?
+    ) throws -> Int {
         guard let raw = props["Temperature"] else {
+            // 0.21.0 §4：Pack 层（其顶层 → BatteryData 子字典，跨字典查找语义照
+            // intValueAcross——可选回退面无错误面可掩，类型不符按缺席继续降级）。
+            if let packProperties,
+               let packValue = intValueAcross(
+                packDicts(packProperties), "Temperature") {
+                return packValue
+            }
             guard let fallback else { throw BatteryMonitorError.missingRequiredField("Temperature") }
             return fallback
         }
         guard let value = intValue(raw) else { throw BatteryMonitorError.invalidFieldType("Temperature") }
         return value
+    }
+
+    /// Pack 层查找字典序（Pack 节点顶层 → 其 BatteryData 子字典；S4 实证 27 GA
+    /// Temperature 位于 BatteryData 子字典——spike-ga 工具读取形态同源）。
+    private static func packDicts(_ packProperties: [String: Any]) -> [[String: Any]] {
+        if let batteryData = packProperties["BatteryData"] as? [String: Any] {
+            return [packProperties, batteryData]
+        }
+        return [packProperties]
     }
 
     /// 可选 Int 跨字典查找（v0.19.9）：顶层优先；键缺失**与类型不符**均回退

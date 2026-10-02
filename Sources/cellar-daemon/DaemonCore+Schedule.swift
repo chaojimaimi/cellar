@@ -189,7 +189,9 @@ extension DaemonCore {
             schedule: policy.schedule, magSafeLedMode: policy.magSafeLedMode,
             // v0.19.20 F-1：编排开关透传（本函数是 daemon 侧第四个显式构造点——
             // 漏带 = 日程转移把用户已开启的编排静默清空并落盘）。
-            orchestrationEnabled: policy.orchestrationEnabled
+            orchestrationEnabled: policy.orchestrationEnabled,
+            // 0.21.0 §2.4 F-1：迟滞开关透传（同上——漏带 = 日程转移清空用户开关）。
+            chHysteresisEnabled: policy.chHysteresisEnabled
         ) else {
             events.append(LogEvent(
                 category: .control, level: .warn,
