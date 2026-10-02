@@ -12,6 +12,15 @@ import CellarCore
 // 26 及更早零触及（26 行为零变化红线）。topoff 同受 mode/actionActive 门（执法总开关），
 // 不受编排开关门（§3.1 门语义）。
 extension DaemonCore {
+    /// chargingDisabled 在窗判定（§3.1 汇聚目标派生输入——等价「完全放开」窗口）。
+    /// ⚠️ 锁内只读谓词（调用方持主锁）；0.21.1 §1.1 门 b 起观测段自动放电共享
+    /// 同一判定（单一真相——原 topoffConvergenceRouteLocked 内联计算原位收编）。
+    var chargingDisabledWindowActiveLocked: Bool {
+        scheduleState.lastAppliedEntryId != nil
+            && policy.schedule?.entries.first(where: { $0.id == scheduleState.lastAppliedEntryId })?
+                .chargingDisabled == true
+    }
+
     /// 汇聚点双通道路由消费（orchestrationTickLocked 内、applyScheduleTransitionLocked
     /// 之后调用——§3.1 路由挂点）。返回编排断言目标 desired（nil = 编排静默）；
     /// topoff 副作用（域写/验证/重申/降级/自愈/卫生/关断清理）在本方法内完成。
@@ -23,9 +32,7 @@ extension DaemonCore {
     ) -> Int? {
         let sub80Capable = capabilities?.contains(DaemonXPC.capabilitySub80) == true
         // chargingDisabled 在窗判定（§3.1 汇聚目标派生输入——等价「完全放开」窗口）。
-        let chargingDisabledWindowActive = scheduleState.lastAppliedEntryId != nil
-            && policy.schedule?.entries.first(where: { $0.id == scheduleState.lastAppliedEntryId })?
-                .chargingDisabled == true
+        let chargingDisabledWindowActive = chargingDisabledWindowActiveLocked
         // 0.21.0 §3.1 校准窗口识别（模式指纹；决策纯函数 CalibrationCoexistence.tick
         // ——CellarCoreCheck 场景域钉死）。本函数调用点在 orchestrationTickLocked
         //（27 终态门控）——26 执法段/瞬态窗口零触及（红线：26 平台正常路径零变化）。
@@ -102,13 +109,17 @@ extension DaemonCore {
         // 0.20.1 观测性：每 tick 一行持久轨迹（wedge 事件教训——LogEvent 内存环随进程
         // 消失致事后不可溯源；本行落 daemon.log，卡死时最后一行即 wedge 现场）。
         Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) desired=\(route.orchestrationDesired.map(String.init) ?? "nil") percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
-        // §3.7 关断清理状态不变量（P3-3 评审修法——从事件驱动补成状态判定）：
-        // mode 非 active ∨（编排开关关断 ∧ 汇聚目标 ≥80）→ 域随写 100 + off（幂等，
-        // 守卫允许带 off 重试直至写成功）。覆盖：disable/SIGHUP/退出恢复事件路径、
-        // **重启 fresh 角点**（编排关 ∧ ≥80 ∧ topoffState fresh → 首拍清理）、事件
-        // 钩子写失败后的逐拍重试——「残留域值不滞留执法」不变量。
-        guard let convergenceTarget = route.convergenceTarget,
-              !(policy.orchestrationEnabled != true && convergenceTarget >= Topoff.degradedLimit) else {
+        // §3.7 关断清理状态不变量（0.21.1 §2.2 重定版——**仅 mode 非 active 臂**）：
+        // mode 非 active → 域随写 100 + off（幂等，守卫允许带 off 重试直至写成功）。
+        // 覆盖：disable/SIGHUP/退出恢复事件路径、**重启 fresh 角点**（mode 非 active
+        // ∧ topoffState fresh → 首拍清理）、事件钩子写失败后的逐拍重试——「残留域值
+        // 不滞留执法」不变量。
+        // 0.21.1 §2.2：**编排关 ∧ target ≥80 清理臂删除**（原第二条件）——域随写
+        // 语义一致化：target 落入下方 §3.6 域随写卫生分支随写 target，编排关不断域
+        // （消除域 100 顶掉用户系统 MCL + 乒乓循环的第①层根因，方案 §0.2/§2.1）。
+        // 26 定谳（方案 §4.5）：本函数 `guard sub80Capable` 先行于本守卫——删除为
+        // 27-only 变更，26 红线无虞。
+        guard let convergenceTarget = route.convergenceTarget else {
             topoffShutdownCleanupLocked(now: now, events: &events)
             return route.orchestrationDesired
         }
@@ -119,8 +130,8 @@ extension DaemonCore {
         // 误降级/误 heal-fail 写 80 对抗校准）∧ 超带轻量重申不发（notifyOnly 随之
         // 静默）；③ 域随写卫生暂停（校准需要充满 100——域值随写会钉住 agent 停充；
         // 退出拍后既有链恢复，首拍幂等重写/断言对账停摆期漂移）。stale pending 撤销
-        // 保留（单通道互斥簿记——防抑制窗内 App 消费陈旧断言对抗校准）。mode/编排
-        // 关断清理（上方不变量）优先级更高——硬关断不受校准抑制影响；**完全放开窗
+        // 保留（单通道互斥簿记——防抑制窗内 App 消费陈旧断言对抗校准）。mode
+        // 关断清理（上方不变量——0.21.1 起仅 mode 臂，编排开关关断不再清理）优先级更高——硬关断不受校准抑制影响；**完全放开窗
         // 豁免**（窗内各臂天然指向 100——抑制会冻结域随写 100 的对账写，纯函数钉面）。
         let suppression = CalibrationCoexistence.suppressionPlan(
             suspected: calibrationCoexistenceState.suspected,
@@ -168,9 +179,11 @@ extension DaemonCore {
         guard !actionTrack.isActive else { return route.orchestrationDesired }
         // ≥80（含 chargingDisabled 窗 100）：§3.6 域随写卫生——域值同步随写至汇聚
         // 目标（先值后态 + 通知；消除稳态互搏 + ≥80 双保险，含 fresh 首 tick 的
-        // 0.19.20 实验期域残留同步）。**可达性 = 编排开关开 ∧ 无动作**（编排关 ∧
-        // ≥80 已被上方关断清理状态不变量截收——§3.7 清理写的 100 不会被本分支
-        // 复活，防「UI 已停用、域值钉 85」不诚实态）。26 平台无此卫生（sub80 门）。
+        // 0.19.20 实验期域残留同步）。**0.21.1 §2.2 起可达性 = mode active ∧ 无动作**
+        // ——域随写覆盖全区间、**不受编排开关门**（本修法把被守卫分支违反的架构
+        // 自述不变量——文件头「topoff 不受编排开关门」——修回对齐；编排关 ∧ ≥80
+        // 不再走关断清理，域随写 target 即「域恢复滞回」根治面，target 100 场景
+        // 域随写 100 与旧清理写 100 同值但语义=随写非退出）。26 平台无此卫生（sub80 门）。
         if topoffState.off { topoffState.off = false }
         if topoffState.lastWrittenLimit != convergenceTarget {
             _ = topoffExecuteWriteLocked(limit: convergenceTarget, now: now, events: &events)
@@ -340,9 +353,10 @@ extension DaemonCore {
     ///（幂等守卫经 Topoff.shutdownCleanupNeeded 纯函数钉面——0.20.2 §2 off 持久化
     /// 跨重启兼容：重启 fresh lastWrittenLimit → 非 (100, off) → 一次幂等重写后
     /// 归位零写稳态）；**P3-2 评审修法：off 置位以写成功为条件**——失败不置位，
-    /// 守卫允许带 off 缺席逐拍重试（「残留域值不滞留执法」不变量）。消费点：汇聚
-    /// 点状态不变量（mode 非 active ∨ 编排关 ∧ 目标 ≥80——P3-3）+ disable/restore
-    /// AndExit 事件路径。0.20.2 §2：off 关断为持久化触发源（命中拍诚实性快照落盘）。
+    /// 守卫允许带 off 缺席逐拍重试（「残留域值不滞留执法」不变量）。消费点（0.21.1
+    /// §2.2 收缩为「真停用」）：汇聚点状态不变量（**仅 mode 非 active**——编排关
+    /// ∧ 目标 ≥80 臂已删除）+ disable/restoreAndExit 事件路径。0.20.2 §2：off
+    /// 关断为持久化触发源（命中拍诚实性快照落盘）。
     func topoffShutdownCleanupLocked(now: Date, events: inout [LogEvent]) {
         // 0.21.0 §2.1：全链清理含迟滞退出（off/关断语义不变；幂等——无挂载无 0x8
         // 驻留即零动作零日志）。事件路径（disable/restoreAndExit）无下拍 tick 兜底，

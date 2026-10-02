@@ -35,11 +35,12 @@ extension DoctorReportGenerator {
         )
     }
 
-    /// 检查 20（§1.5）：关断残留——期望值按 R3-P1 拆分规则派生
-    /// （NativeLimitSet.shutdownExpectation：mode 关恒 100 / 编排关 ∧ target ≥80
-    /// → 100 / 编排关 ∧ target <80 → 80），MCL 读回 ≠ 期望 → INFO 指引。
+    /// 检查 20（§1.5）：关断残留——期望值派生（NativeLimitSet.shutdownExpectation，
+    /// 0.21.1 §2.2 重定版：mode 关恒 100 / 编排关 ∧ target <80 → 80（原生限充
+    /// 兜底保留）/ **编排关 ∧ target ≥80 → nil（编排关不断域——域随写 target
+    /// 覆盖全区间，不再渲染）**），MCL 读回 ≠ 期望 → INFO 指引。
     /// 读回缺席（探测失败/类缺席）→ 不渲染（读通道死态无对账可言——诚实缺席）；
-    /// 期望 nil（正常执行态）→ 不渲染。
+    /// 期望 nil（正常执行态/编排关 ≥80）→ 不渲染。
     static func shutdownResidual(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard inputs.mclProbeAttempted, inputs.osMajorVersion >= 27,
               let mcl = inputs.mclProbe, mcl.readable, let readback = mcl.limit,

@@ -44,23 +44,36 @@ public enum Discharge {
     /// setLimits auto 键值域（0/1 合法；其余拒绝——XPCServer 校验臂与测试同源）。
     public static func validAutoFlag(_ raw: UInt64) -> Bool { raw <= 1 }
 
-    /// WP2' 自动放电触发判定（方案 §2.1 判定链，全部前置 AND；纯函数无记忆——
-    /// 冷却/翻转门状态由 daemon 锁内变量经参数传入）：
+    /// WP2' 自动放电触发判定（0.21.1 §1.1 **三门**重定版，判定链全前置 AND；
+    /// 纯函数无记忆——冷却/翻转/熔断状态由 daemon 锁内变量经参数传入）：
     /// `enabled == true` ∧ active 模式 ∧ 外接 ∧ 无在轨动作 ∧ 放电能力在位
-    /// ∧ `percent ≥ upperLimit + 2` ∧ 冷却（从未完成 ∨ 距完成 ≥ 30min）
-    /// ∧ 重插（从未完成 ∨ 完成后见过适配器翻转）。
+    /// ∧ **门 a `!isCharging`**（agent 尚在充电不放电——放电与充电物理对抗且
+    /// 抢跑于 agent 收敛之前；26 停充 SMC 直控即时生效、过冲拍 charging 通常已
+    /// false，门仅使 26 上「充电未停的瞬间」延迟一拍 30s = 设计意图，方案 §1.1
+    /// 26 影响分析钉边界）∧ `percent ≥ effectiveTarget + 2` ∧ **门 b
+    /// `effectiveTarget != nil`**（nil = fullOnce 临时 100 ∨ chargingDisabled
+    /// 日程 100 窗覆盖静默——显式放开期被放电对抗；26 上两窗结构不可达，执法段
+    /// 传 upperLimit 常量 = 第二重 26 零变化锚）∧ **门 c `!oscillationSuspended`**
+    /// （振荡熔断抑制——2h 滑窗 ≥2 次 autostart 完成后锁存，循环成本硬上界）
+    /// ∧ 冷却（从未完成 ∨ 距完成 ≥ 30min）∧ 重插（从未完成 ∨ 完成后见过适配器
+    /// 翻转）。
     public static func autoTriggerReady(
         enabled: Bool?,
         mode: String,
         externalConnected: Bool,
+        isCharging: Bool,
         percent: Int,
-        upperLimit: Int,
+        effectiveTarget: Int?,
         actionActive: Bool,
         dischargeCapable: Bool,
+        oscillationSuspended: Bool,
         now: Date,
         lastAutoCompletion: Date?,
         adapterCycleSinceCompletion: Bool
     ) -> Bool {
+        // 门 b：窗覆盖静默（nil = 汇聚目标 ≠ policy 上限的显式放开窗——直接沉默，
+        // margin 比较也无从谈起；非 nil 时即当前生效目标）。
+        guard let effectiveTarget else { return false }
         let cooldownPassed = lastAutoCompletion.map {
             now.timeIntervalSince($0) >= autoDischargeCooldown
         } ?? true
@@ -70,9 +83,63 @@ public enum Discharge {
             && externalConnected
             && !actionActive
             && dischargeCapable
-            && percent >= upperLimit + autoDischargeTriggerMarginPercent
+            && !isCharging                                   // 门 a
+            && percent >= effectiveTarget + autoDischargeTriggerMarginPercent
+            && !oscillationSuspended                         // 门 c
             && cooldownPassed
             && replugPassed
+    }
+
+    // MARK: - 0.21.1 §1.1 门 b/c 支撑纯函数（切缝纪律：判定进 CellarCore，daemon 只消费）
+
+    /// 门 b 窗覆盖派生（纯函数）：完全放开窗（fullOnce 临时 100 ∨ chargingDisabled
+    /// 日程 100）→ **nil（窗覆盖静默）**；mode 非 active → nil（mode 门兜底同型）；
+    /// 否则 = policy.upperLimit（无窗时汇聚目标恒等于 policy 上限）。27 观测段消费
+    /// ——26 执法段不经过本函数（传 upperLimit 常量，第二重 26 零变化锚，方案 §1.1）。
+    public static func autoDischargeEffectiveTarget(
+        modeActive: Bool, fullOnceWindow: Bool, chargingDisabledWindow: Bool, upperLimit: Int
+    ) -> Int? {
+        guard modeActive else { return nil }
+        return (fullOnceWindow || chargingDisabledWindow) ? nil : upperLimit
+    }
+
+    /// 门 c 振荡熔断滑窗时长（2h）。
+    public static let oscillationWindow: TimeInterval = 2 * 3600
+    /// 门 c 触发阈值：滑窗内 autostart 放电**完成**次数 ≥2 → 抑制（方案 §1.1 门 c
+    /// 钉面——熔断保证任何滞回假设不成立的降级形态循环成本有硬上界：≤2 次/2h →
+    /// 抑制后 0）。
+    public static let oscillationCompletionLimit = 2
+
+    /// 振荡熔断运行态（daemon 锁内内存态，**不持久化**——重启重置即解除路径①；
+    /// 用户重新 opt-in 清抑制为路径②，照 autoDischarge flag 翻转清两门先例）。
+    public struct OscillationState: Equatable, Sendable {
+        /// 滑窗内 autostart 放电完成时刻（追加序；判定时剔除窗外旧样本）。
+        public var autoCompletions: [Date] = []
+        /// 抑制锁存（触发后恒 true——仅重启/重新 opt-in 清除；抑制期手动「放电到
+        /// 上限」不受影响——熔断只封自动循环成本，用户显式动作优先）。
+        public var suspended = false
+
+        public init() {}
+    }
+
+    /// 门 c autostart 完成记录 + 滑窗判定（纯函数）：append → 剔除窗外旧样本
+    ///（严格 < 2h——恰 2h 时刻的旧样本出窗）→ 达阈值置 suspended。返回新状态 +
+    /// `triggered` 边沿（true 仅触发拍——daemon 据此发横幅/LogEvent/persistLog
+    /// 告警一次；抑制态下后续完成仍滑窗推进但不再重发边沿）。
+    public static func noteOscillationCompletion(
+        state: OscillationState, at now: Date
+    ) -> (state: OscillationState, triggered: Bool) {
+        var s = state
+        s.autoCompletions.append(now)
+        s.autoCompletions = s.autoCompletions.filter {
+            now.timeIntervalSince($0) < oscillationWindow
+        }
+        guard !s.suspended else { return (s, false) }
+        guard s.autoCompletions.count >= oscillationCompletionLimit else {
+            return (s, false)
+        }
+        s.suspended = true
+        return (s, true)
     }
 
     /// v0.19.6 意图降限观察（方案 docs/plans/v0.19.6-auto-discharge-rearm.md §3.2，

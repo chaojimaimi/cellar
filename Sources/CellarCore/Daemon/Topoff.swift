@@ -2,11 +2,14 @@ import Foundation
 
 // MARK: - WP2 topoffprotection <80% 限充通道（方案 §3；CellarCore 决策纯函数 + 域写入器）
 
-/// sub80 通道态（DaemonStatus.sub80State wire 三态，方案 §3.2；R3-P3 off 语义）：
+/// sub80 通道态（DaemonStatus.sub80State wire 三态，方案 §3.2；R3-P3 off 语义；
+/// 0.21.1 §2.2 off 语义**收紧为「真停用」**）：
 /// - `active`：topoff 通道承载中（<80 执法或 ≥80 域随写卫生——域管理面活跃）；
 /// - `degraded`：重申×3 封顶后诚实降级（域随写 80 + 编排钳 80；每小时自愈重探）；
-/// - `off`：两条关断清理路径后（mode→disabled 关断清理 / 编排开关关断且目标 ≥80
-///   域随写 100）——防「UI 已停用、实际钉 75」不诚实态；
+/// - `off`：**真停用（mode 关）清理路径后**（mode→disabled 关断清理 / 退出恢复
+///   restoreAndExit——0.21.1 §2.2 起编排开关关断不再置 off：编排关不断域，域随写
+///   target 覆盖全区间，编排关用户将见 off→active 显示变化）——防「UI 已停用、
+///   实际钉 75」不诚实态；
 /// - 26/无 sub80 能力机器不填（缺席 = 无此特性）。
 public enum Sub80State: String, Codable, Equatable, Sendable {
     case active, degraded, off
@@ -66,7 +69,10 @@ public enum Topoff {
     /// §3.7 关断清理幂等守卫（纯函数钉面——0.20.2 §2 off 持久化跨重启兼容论证）：
     /// `(100, off)` 态 → false（零写恢复）；重启 fresh lastWrittenLimit（nil）→
     /// true（一次幂等重写 100 + off 后归位零写稳态——off 诚实性不因重启丢失，
-    /// 守卫允许带 off 重试直至写成功）。
+    /// 守卫允许带 off 重试直至写成功）。0.21.1 §2.2：**消费面收缩为「真停用」**
+    /// ——mode 非 active（disable/SIGHUP/restoreAndExit 事件路径 + 汇聚点 mode
+    /// nil 臂状态不变量）；编排关 ∧ target ≥80 不再消费（域随写 target 覆盖
+    /// 全区间——off 置位仅剩 mode 关两路，off 语义收紧「真停用」）。
     public static func shutdownCleanupNeeded(lastWrittenLimit: Int?, off: Bool) -> Bool {
         lastWrittenLimit != shutdownLimit || !off
     }

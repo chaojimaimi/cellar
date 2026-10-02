@@ -238,6 +238,9 @@ extension DaemonCore {
             // 自动启动必须锁存（App 轮询必见 autostart → 通知必发；M3 判例同取消）。
             actionTrack.latchAutoStart(OneShotLiteral.autoStart(kind: Discharge.dischargeToLimitKind))
         }
+        // 0.21.1 §1.1 门 c：在轨动作发起方标记（完成计数仅 autostart——振荡循环
+        // 形态 = 自动触发放电完成；manual 起源显式落 false，单一写点防陈旧标记）。
+        activeDischargeWasAutoStart = initiator == .auto
         return .started
     }
 
@@ -313,9 +316,28 @@ extension DaemonCore {
 
         switch outcome {
         case .completed, .timedOut, .safetyTerminated:
+            // 0.21.1 §1.1 门 c：autostart 完成计数（滑窗熔断）——发起方标记须先于
+            // noteDischargeTerminatedLocked 读取（其清标记）；仅 .completed 计入
+            // （振荡循环形态 = 放电到目标完成；timeout/safety 非循环形态，不计）。
+            let wasAutoStart = activeDischargeWasAutoStart
             // 统一完成记录（五落点之一）：终态即记冷却 + 关翻转门（R1 P1-2——
             // 完成/超时/安全终止后不再被下一 tick 立即重触发）。
             noteDischargeTerminatedLocked(now: now)
+            if wasAutoStart, case .completed = outcome {
+                let oscillation = Discharge.noteOscillationCompletion(
+                    state: oscillationState, at: now
+                )
+                oscillationState = oscillation.state
+                if oscillation.triggered {
+                    // 显性告警（边沿一次）：横幅 wire（autoDischargeSuspended，
+                    // buildStatusLocked 透出）+ LogEvent 环 + persistLog 持久轨迹。
+                    Self.persistLog("自动放电已暂停：检测到频繁放电循环（2 小时内 ≥\(Discharge.oscillationCompletionLimit) 次自动放电完成——振荡熔断，后续自动放电静默；关闭后重新开启「自动放电」或重启守护进程解除）")
+                    events.append(LogEvent(
+                        category: .control, level: .warn,
+                        message: "自动放电已暂停：检测到频繁放电循环（振荡熔断触发——自动触发静默，手动「放电到上限」不受影响；重新 opt-in 或重启解除）"
+                    ))
+                }
+            }
             let terminal: String
             switch outcome {
             case .completed: terminal = "完成"
@@ -387,6 +409,9 @@ extension DaemonCore {
     func noteDischargeTerminatedLocked(now: Date) {
         lastAutoDischargeCompletedAt = now
         adapterCycleSinceAutoCompletion = false
+        // 0.21.1 §1.1 门 c：在轨发起方标记随动作清空归零（完成计数消费点在
+        // maintainDischargeLocked——先读后清；新启动臂单一写点重置）。
+        activeDischargeWasAutoStart = false
         // code-review P1：终止同时 disarm——放电后的 ext false→true 回跳是恢复痕迹
         // 而非物理重插，仅重新武装后（disarm 态回跳触发）的后续转移才开门。
         adapterCycleArmed = false
@@ -659,10 +684,25 @@ extension DaemonCore {
             enabled: policy.autoDischargeEnabled,
             mode: policy.mode,
             externalConnected: snapshot.externalConnected,
+            // 门 a（0.21.1 §1.1）：同执法段（观测段承接同款判定链）。
+            isCharging: snapshot.isCharging,
             percent: snapshot.percent,
-            upperLimit: policy.upperLimit,
+            // 门 b（0.21.1 §1.1）：窗覆盖静默——fullOnce 临时放开窗 ∨ chargingDisabled
+            // 日程窗 → nil（显式放开期放电对抗窗意图）；否则 = policy.upperLimit
+            //（= 无窗 convergenceTarget，经纯函数 Discharge.autoDischargeEffectiveTarget
+            // 派生——CellarCoreCheck 场景域钉死）。登记局限：观测段先于
+            // orchestrationTickLocked 的日程转移——进窗边沿一拍陈旧（30s；进窗期
+            // agent 充电中 → 门 a 同拍兜底）。
+            effectiveTarget: Discharge.autoDischargeEffectiveTarget(
+                modeActive: policy.mode == "active",
+                fullOnceWindow: orchestrationState.fullOnceWindowActive,
+                chargingDisabledWindow: chargingDisabledWindowActiveLocked,
+                upperLimit: policy.upperLimit
+            ),
             actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
             dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
+            // 门 c（0.21.1 §1.1）：振荡熔断抑制态。
+            oscillationSuspended: oscillationState.suspended,
             now: now,
             lastAutoCompletion: lastAutoDischargeCompletedAt,
             adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion

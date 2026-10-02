@@ -111,6 +111,22 @@ extension DaemonCore {
         }
 
         if !actionTrack.isActive {
+            // 0.21.1 §3.1（M1a P3-1）：27 fullOnce 复活态取消——临时放开窗 + pending(100)
+            // 清理，语义 = 恢复臂同款恢复 pending(policy.upperLimit)（App set 回 policy
+            // 值，域随写同拍重申；无窗 → 下方既有幂等成功路径零变化——26 恒走本路径）。
+            if orchestrationState.fullOnceWindowActive {
+                orchestrationState.fullOnceWindowActive = false
+                let token = UUID().uuidString
+                orchestrationState.pendingToken = token
+                orchestrationState.pendingTarget = policy.upperLimit
+                orchestrationState.lastRequestAt = Date()
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "fullOnce 临时放开已取消：窗关闭——恢复 pending(\(policy.upperLimit)) 待 App set（免 root，域随写即时 tick 重申）"
+                ))
+                performTickLocked(events: &events)
+                return buildStatusLocked()
+            }
             events.append(LogEvent(
                 category: .control, level: .info,
                 message: "取消动作：无活跃动作（幂等成功）"

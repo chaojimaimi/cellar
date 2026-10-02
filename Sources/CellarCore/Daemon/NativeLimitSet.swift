@@ -77,11 +77,15 @@ public enum NativeLimitSet {
         mclReadback == fullOnceTarget && policyUpperLimit < fullOnceTarget
     }
 
-    /// §1.5 关断残留补偿期望值（R3-P1 拆分规则——两路径 daemon 行为不同，规则不可合并）：
+    /// §1.5 关断残留补偿期望值（0.21.1 §2.2 **重定版**——域随写语义一致化后仅剩
+    /// 两臂；旧「编排关 ∧ target ≥80 → 100」为域 100 顶掉用户系统 MCL 与乒乓循环
+    /// 的第①层根因，已废除）：
     /// - mode 关（面板停用 / CLI / SIGHUP / restoreAndExit）→ **恒 100**（全开语义
     ///   与域 100 对齐；set 80 会重造「UI 已停用实际限 80」残留）；
-    /// - mode active ∧ 编排开关关 → target ≥80 → 100（域清 100 对齐）/ target <80
-    ///   → **80**（原生限充兜底保留——域保持 75，topoff 不受编排开关门）；
+    /// - mode active ∧ 编排开关关 → target <80 → **80**（原生限充兜底保留——域保持
+    ///   75，topoff 不受编排开关门；域通道故障时 MCL 80 兜底，NativeLimitSet.swift
+    ///   原理由不变）∧ target ≥80 → **nil**（编排关不断域——域随写 target 覆盖
+    ///   全区间，无残留可补；App 不再 set 100）；
     /// - mode active ∧ 编排开关开 → nil（正常执行态——编排链 + 读回校验既有机制
     ///   执法，无态驱动补偿；fullOnce 临时放开窗同属本态）。
     /// nil = 无补偿期望（App 侧不做态驱动对账）。
@@ -90,7 +94,7 @@ public enum NativeLimitSet {
     ) -> Int? {
         if !modeActive { return maximumSetLimit }
         guard !orchestrationEnabled else { return nil }
-        return upperLimit >= minimumSetLimit ? maximumSetLimit : minimumSetLimit
+        return upperLimit >= minimumSetLimit ? nil : minimumSetLimit
     }
 }
 

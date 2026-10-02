@@ -158,6 +158,23 @@ struct GeneralSections: View {
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
 
+            // 0.21.1 §1.1 门 c：振荡熔断抑制横幅（daemon wire autoDischargeSuspended
+            // ——2h 滑窗内 ≥2 次自动放电完成后锁存；开关保持开但后续自动触发静默，
+            // 手动放电不受影响）。解除 = 关-开重新 opt-in 或重启守护进程——重置后
+            // wire 回 false，横幅随轮询自然消失。
+            if statusController.daemonStatus?.autoDischargeSuspended == true {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CellarL10n.s("settings.autoDischarge.suspended"))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(theme.warning)
+                    Text(CellarL10n.s("settings.autoDischarge.suspended.desc"))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
             // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
             if let hint = autoDischargeGateHint {

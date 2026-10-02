@@ -457,9 +457,10 @@ func runCalibrationDomainScenarios() throws {
 
     // 校准-32：自动放电触发判定在校准动作活跃下恒 false（actionActive 输入）。
     check(!Discharge.autoTriggerReady(
-        enabled: true, mode: "active", externalConnected: true, percent: 82, upperLimit: 80,
-        actionActive: true, dischargeCapable: true, now: t0,
-        lastAutoCompletion: nil, adapterCycleSinceCompletion: true
+        enabled: true, mode: "active", externalConnected: true, isCharging: false,
+        percent: 82, effectiveTarget: 80,
+        actionActive: true, dischargeCapable: true, oscillationSuspended: false,
+        now: t0, lastAutoCompletion: nil, adapterCycleSinceCompletion: true
     ), "校准-32", "校准动作在轨（actionActive=true）→ 自动放电不触发（互斥，方案 §3.1）")
 
     // 校准-33：Discharge/Calibration 常量独立演化断言（temperatureLimitC 同值不同义；

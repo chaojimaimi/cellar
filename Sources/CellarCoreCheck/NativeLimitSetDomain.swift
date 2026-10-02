@@ -8,8 +8,8 @@
 // ③ 执行器抽象（set 优先 / fallback 触发阈值 2 / 会话驻留 / 成功清零 / Code=4 中性
 //    / 味道路由）
 // ④ 恢复臂判定源（R2-P2-4 读回驱动：读回 100 ∧ policy < 100 矩阵）
-// ⑤ 关断残留检测（R3-P1 拆分规则：disable 恒 100 / 编排关 ≥80→100 <80→80 / 正常
-//    执行态 nil——态驱动读回驱动分支全矩阵）
+// ⑤ 关断残留检测（0.21.1 §2.2 重定版期望派生：disable 恒 100 / 编排关 ≥80→nil
+//    <80→80 / 正常执行态 nil——态驱动读回驱动分支全矩阵）
 // ⑥ convergenceRoute fullOnce 窗（窗内 target/desired 强制 100、topoffOwned 失效、
 //    窗清恢复既有链、缺省参数零 diff——26 回归锚）
 // ⑦ 恢复臂 XPC 命令字面量 + makeMessage/validateRequest 通道
@@ -141,13 +141,16 @@ private func runShutdownExpectationScenarios() throws {
           "set-7", "mode 关 ∧ 编排关 ∧ target 85 → 100（恒 100——R3-P1 第一行不分流）")
     check(NativeLimitSet.shutdownExpectation(modeActive: false, orchestrationEnabled: false, upperLimit: 75) == 100,
           "set-7", "mode 关 ∧ 编排关 ∧ target 75 → 100（第一行优先——不落第二行 80）")
-    // set-8：编排开关关（mode 仍 active）→ target ≥80 → 100 / target <80 → 80。
-    check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 85) == 100,
-          "set-8", "编排关 ∧ target 85（≥80）→ 100（域清 100 对齐——R3-P1 第二行）")
-    check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 80) == 100,
-          "set-8", "编排关 ∧ target 80（边界）→ 100（≥80 判据）")
+    // set-8：编排开关关（mode 仍 active）→ **0.21.1 §2.2 重定版**：target ≥80 → nil
+    //（编排关不断域——域随写 target 覆盖全区间，无残留可补；旧 ≥80→100 为域 100
+    // 顶掉用户系统 MCL + 乒乓循环的第①层根因，废除）/ target <80 → 80（原生限充
+    // 兜底保留——域保持 75，topoff 不受编排开关门；域通道故障时 MCL 80 兜底）。
+    check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 85) == nil,
+          "set-8", "编排关 ∧ target 85（≥80）→ nil（0.21.1 §2.2——编排关不断域，域随写 85，App 不再补偿 set 100）")
+    check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 80) == nil,
+          "set-8", "编排关 ∧ target 80（边界）→ nil（≥80 判据——乒乓根因①废除）")
     check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 75) == 80,
-          "set-8", "编排关 ∧ target 75（<80）→ 80（原生限充兜底保留——域保持 75，topoff 不受编排开关门）")
+          "set-8", "编排关 ∧ target 75（<80）→ 80（原生限充兜底保留——NativeLimitSet.swift 原理由不变）")
     check(NativeLimitSet.shutdownExpectation(modeActive: true, orchestrationEnabled: false, upperLimit: 60) == 80,
           "set-8", "编排关 ∧ target 60（地板）→ 80")
     // set-9：正常执行态（编排开 ∧ mode active）→ nil（无态驱动补偿——编排链 + 读回
@@ -345,7 +348,7 @@ private func runDoctorNativeLimitScenarios() throws {
         check(check19(doctorInputs()) == nil, "医生-17", "mclProbeAttempted 缺省 → 检查 19 不渲染")
     }
 
-    // 医生-18（检查 20 关断残留）：R3-P1 期望派生 × 读回失配矩阵。
+    // 医生-18（检查 20 关断残留）：0.21.1 重定版期望派生 × 读回失配矩阵。
     do {
         // disable（mode 关）→ 期望 100；读回 85 ≠ 100 → INFO。
         let disabledMismatch = check20(doctorInputs(
@@ -354,7 +357,7 @@ private func runDoctorNativeLimitScenarios() throws {
         ))
         check(disabledMismatch?.status == .info && disabledMismatch?.detail.contains("期望值 100%") == true
                   && disabledMismatch?.detail.contains("读回 85%") == true,
-              "医生-18", "mode 关 + 读回 85 → INFO「读回 85% 与关断期望值 100% 不符」（R3-P1 第一行）")
+              "医生-18", "mode 关 + 读回 85 → INFO「读回 85% 与关断期望值 100% 不符」（mode 关恒 100——真停用=放开）")
         // disable 一致 → PASS。
         let disabledMatch = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
@@ -368,13 +371,13 @@ private func runDoctorNativeLimitScenarios() throws {
             daemonUpperLimit: 75, daemonOrchestrationEnabled: false
         ))
         check(orchOffSub80?.status == .info && orchOffSub80?.detail.contains("期望值 80%") == true,
-              "医生-18", "编排关 ∧ target 75 + 读回 100 → INFO 期望 80（R3-P1 第二行——原生兜底保留）")
-        // 编排关 ∧ target ≥80 → 期望 100；读回 100 → PASS。
-        let orchOffGE80 = check20(doctorInputs(
+              "医生-18", "编排关 ∧ target 75 + 读回 100 → INFO 期望 80（<80 兜底行保留——原生限充兜底）")
+        // 编排关 ∧ target ≥80 → 期望 nil → 不渲染（0.21.1 §2.2——编排关不断域，
+        // 域随写 target 覆盖全区间，无态驱动补偿；旧「期望 100 + 读回 PASS」形态废除）。
+        check(check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: false
-        ))
-        check(orchOffGE80?.status == .pass, "医生-18", "编排关 ∧ target 85 + 读回 100 → PASS（期望 100 达成）")
+            daemonUpperLimit: 85, daemonOrchestrationEnabled: false)) == nil,
+              "医生-18", "编排关 ∧ target 85 → 检查 20 不渲染（期望 nil——0.21.1 域语义一致化，不再引导 set 100）")
         // 正常执行态（编排开）→ 期望 nil → 不渲染（fullOnce 窗同态——补偿不对抗）。
         check(check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,

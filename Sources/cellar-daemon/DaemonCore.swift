@@ -140,6 +140,15 @@ final class DaemonCore: @unchecked Sendable {
     /// v0.19.6 意图降限观察（applyPolicyLocked 挂点）：上次观察到的有效上限。
     /// 锁内普通变量不持久化（与冷却/翻转门同款纪律——重启即清，重启本就重置门）。
     var lastObservedAutoDischargeLimit: Int?
+    /// 0.21.1 §1.1 门 c 振荡熔断运行态（判定纯函数 Discharge.noteOscillationCompletion
+    /// ——CellarCoreCheck 场景域钉死；daemon 只做簿记与告警副作用）。锁内内存态
+    /// **不持久化**——重启重置即解除（门 c 解除路径①）；用户重新 opt-in 清抑制
+    /// 为路径②（setLimits flag 翻转清两门先例处一并清本态）。
+    var oscillationState = Discharge.OscillationState()
+    /// 0.21.1 §1.1 门 c：当前在轨放电动作是否 autostart 发起（dischargeToLimitLocked
+    /// 启动成功臂置位；maintainDischargeLocked 完成臂消费——**完成计数仅 autostart**，
+    /// 方案门 c「autostart 放电完成」口径；noteDischargeTerminatedLocked 清零）。
+    var activeDischargeWasAutoStart = false
     /// v0.19.20 编排运行时状态（结构体定义在 CellarCore NativeOrchestration.swift
     /// ——存储属性主体声明惯例；决策/回报逻辑全在 DaemonCore+Orchestration.swift）。
     /// **不持久化（R1 P2 取舍）**：重启后 lastApplied 丢失 → 首 tick valueChange
@@ -495,10 +504,19 @@ final class DaemonCore: @unchecked Sendable {
         // **flag 自非 1 翻转为 1 时清空两门**（R2 P2-A：重新 opt-in = 新意图；解决
         // 常插电设备「一适配器会话只触发一次」的窄口）。置于隐式取消之后（code-review
         // P2：取消会经完成记录重新关门——清门必须后置才能兑现「新意图」语义）。
+        // 0.21.1 §1.1 门 c：重新 opt-in 清振荡抑制（解除路径②——同「新意图」语义；
+        // 滑窗完成历史一并重置，防旧窗样本在 opt-in 后立即再触发）。
         if autoFlag == true && policy.autoDischargeEnabled != true {
             lastAutoDischargeCompletedAt = nil
             adapterCycleSinceAutoCompletion = true
             adapterCycleArmed = true
+            if oscillationState.suspended {
+                oscillationState = Discharge.OscillationState()
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "振荡熔断抑制已随「自动放电」重新开启清除（新意图——2h 滑窗历史一并重置）"
+                ))
+            }
         }
         // 0.21.0 §1.3：滑杆改值覆盖临时放开（R2-P2-4 交互语义）——清窗后
         // valueChange 断言按新值重发（lastApplied=100 ≠ 新 target 自然触发），
@@ -680,7 +698,7 @@ final class DaemonCore: @unchecked Sendable {
                 message: "退出恢复：无控制后端，跳过写使能"
             ))
         }
-        // 0.20 M1b §3.7 关断清理（第三路径）：退出恢复 27 等价路径 → sub80 能力机
+        // 0.20 M1b §3.7 关断清理（0.21.1 起为第二路径——编排开关关断清理臂已删）：退出恢复 27 等价路径 → sub80 能力机
         // 域随写 100 + off（agent 每分钟跟随域值——退出后域值 100 = 无残留执法）。
         // 同步执行（进程即将退出，无下拍兜底）。
         if capabilities?.contains(DaemonXPC.capabilitySub80) == true {
@@ -969,10 +987,22 @@ final class DaemonCore: @unchecked Sendable {
                     enabled: policy.autoDischargeEnabled,
                     mode: policy.mode,
                     externalConnected: snapshot.externalConnected,
+                    // 门 a（0.21.1 §1.1）：agent 尚在充电不放电——26 停充 SMC 直控
+                    // 即时生效，过冲拍 charging 通常已 false；门仅使 26 上「充电未停
+                    // 的瞬间」延迟一拍（30s）= 设计意图（26 回归场景钉边界）。
+                    isCharging: snapshot.isCharging,
                     percent: snapshot.percent,
-                    upperLimit: policy.upperLimit,
+                    // 门 b（0.21.1 §1.1）：effectiveTarget = upperLimit 常量——26 上
+                    // 两窗结构不可达（fullOnce 窗置位仅 27 复活臂 DaemonCore+OneShot.
+                    // swift:68-75；日程 chargingDisabled 进窗走 disable 全路径 mode
+                    // 变非 active 被 mode 门挡）——第二重 26 零变化锚（方案 §1.1，
+                    // 与 §4.5 互证）。
+                    effectiveTarget: policy.upperLimit,
                     actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
                     dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
+                    // 门 c（0.21.1 §1.1）：振荡熔断抑制态（2h ≥2 次 autostart 完成
+                    // 后锁存；解除 = 重启/重新 opt-in）。
+                    oscillationSuspended: oscillationState.suspended,
                     now: tickNow,
                     lastAutoCompletion: lastAutoDischargeCompletedAt,
                     adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion
@@ -1418,15 +1448,22 @@ final class DaemonCore: @unchecked Sendable {
             // 窗总长 = Topoff.verificationTicks，UI 侧同源引用）。
             status.sub80HealProbeActive = topoffState.healProbeActive
             status.sub80HealProbeTicks = topoffState.healProbeTicks
+            // 0.21.1 §2.2：域生效值 wire（App 读回行失配提示数据源——MCL 读回 =
+            // 系统设置现值，域生效值 = 最近成功写入的 mclLimitValue，agent 实际跟随
+            // 值）。fresh 重启首拍写前 nil（App 无提示——诚实缺席，幂等重写后填充）。
+            status.sub80WrittenLimit = topoffState.lastWrittenLimit
         }
         // 0.21.0 §2.4：迟滞开关回读（policy 单一真相**恒填**——照 orchestration.enabled
         // 先例；26 平台照填、UI 侧 capabilities 门控不渲染，wire 恒填与渲染门控分层）。
         status.chHysteresisEnabled = policy.chHysteresisEnabled == true
         // 0.21.0 §3.2：校准抑制态（27 观测段识别——orchestrationTerminal 门内恒填；
-        // 26/旧 daemon 缺席 = 无此特性，wire 兼容。识别运行态不持久化，重启即清）。
+        // 26/旧 daemon 缺席 = 无此特性，wire 兼容）。
         if orchestrationTerminalLocked {
             status.calibrationSuspected = calibrationCoexistenceState.suspected
         }
+        // 0.21.1 §1.1 门 c：振荡熔断抑制态（App 横幅「自动放电已暂停」数据源——
+        // 恒填，内存态随回包透出；false = 未抑制）。
+        status.autoDischargeSuspended = oscillationState.suspended
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

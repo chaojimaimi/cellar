@@ -407,6 +407,12 @@ struct Main {
         // 三臂抑制计划 + convergenceRoute 扩参矩阵/证据优先序常量/wire 三字段
         // ——纯函数面，CalibrationCoexistenceDomain）。
         runCalibrationCoexistenceDomainScenarios()
+        // 0.21.1：放电振荡根治与域语义一致化场景域（方案 §1/§2/§4：门 b 窗互斥派生/
+        // 三门矩阵（门 a 一拍延迟边界钉面/门 b 静默/门 c 熔断/三门叠加）/振荡熔断
+        // 状态机（2h 滑窗边界/边沿一次/opt-in 重置）/乒乓循环回归断链三环/行为矩阵
+        // 六行 × 边界 79/80/81/wire 双字段（sub80WrittenLimit/autoDischargeSuspended）
+        // ——纯函数面，DischargeOscillationDomain）。
+        try runDischargeOscillationDomainScenarios()
         // 0.21.0 §4：温度 Pack 层解析场景域（M2：27 形态/优先级链/26 回退/容错/
         // Monitor 重试链零 IO 断言——注入缝 mock，PackTemperatureDomain）。
         try runPackTemperatureDomainScenarios()

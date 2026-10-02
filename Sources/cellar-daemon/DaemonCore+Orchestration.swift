@@ -84,9 +84,10 @@ extension DaemonCore {
     /// setOrchestration（R1 P0-2：编排开关唯一写入通道；照 setChargeScheduleConfig
     /// 形态——policy 单字段直写（F-1 禁令仅 upperLimit，schedule 直写先例）+ persist
     /// + 即时 performTickLocked（开关生效 ≤1 tick；27 终态下 tick 走观测段编排链）。
-    /// 0.20 M1b §3.7：**关断时 sub80 能力机随写清理**——目标 ≥80（topoff 不承载域）
-    /// → 域随写 100 + off（R3-P3 off 语义第二路径；目标 <80 时 topoff 不受编排开关
-    /// 门、继续承载，无清理）。
+    /// 0.21.1 §2.2：**编排开关关断清理臂删除**（原 sub80 机 target ≥80 → 域随写
+    /// 100 + off）——编排关不断域：域随写 target 覆盖全区间，汇聚点卫生分支在即时
+    /// tick **同拍写回 target**（删臂防域 100 闪写 + off 持久化抖动 + wire 闪变）。
+    /// off 置位仅剩 mode 关两路（disable/restoreAndExit）——off 语义收紧「真停用」。
     func setOrchestrationEnabled(_ enabled: Bool) -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()
@@ -104,11 +105,6 @@ extension DaemonCore {
                 message: "fullOnce 临时放开窗已随编排开关 toggle 清除"
             ))
         }
-        if !enabled,
-           capabilities?.contains(DaemonXPC.capabilitySub80) == true,
-           policy.upperLimit >= Topoff.degradedLimit {
-            topoffShutdownCleanupLocked(now: Date(), events: &events)
-        }
         persistPolicyLocked(events: &events)
         events.append(LogEvent(
             category: .lifecycle, level: .info,
@@ -124,8 +120,9 @@ extension DaemonCore {
     /// persist + 即时 performTickLocked + 回读单一真相；**不改 mode**）。开关默认关
     ///（§2.3）；**迟滞运行态不入 TopoffPersistedState**（重启后 tick 首拍按开关 +
     /// CHIE 可写性重估）。关 → 即时 tick 内迟滞退出臂承接（unmount + CHIE 0x00 恢复
-    /// ——off/关断语义不变，全链清理含迟滞退出）；事件路径（disable/restoreAndExit/
-    /// 编排开关关断 ≥80）由 topoffShutdownCleanupLocked 的迟滞退出幂等兜底。
+    /// ——off/关断语义不变，全链清理含迟滞退出）；事件路径（disable/restoreAndExit）
+    /// 由 topoffShutdownCleanupLocked 的迟滞退出幂等兜底（0.21.1 起编排开关关断
+    /// 不再清理——迟滞退出由上方开关 tick 臂独立承接）。
     func setChHysteresisEnabled(_ enabled: Bool) -> DaemonStatus {
         var events: [LogEvent] = []
         lock.lock()

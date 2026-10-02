@@ -4421,6 +4421,40 @@
         }
       }
     },
+    "settings.autoDischarge.suspended": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto discharge paused: frequent discharge cycles detected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动放电已暂停：检测到频繁放电循环"
+          }
+        }
+      }
+    },
+    "settings.autoDischarge.suspended.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Two or more auto discharges completed within 2 hours; automatic triggering is paused (manual discharge is unaffected). Turn the switch off and back on, or restart the daemon, to resume"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2 小时内发生 ≥2 次自动放电完成——振荡熔断已介入，后续自动触发暂停（手动「放电到上限」不受影响）。关闭后重新开启「自动放电」或重启守护进程即可恢复"
+          }
+        }
+      }
+    },
     "settings.autoDischarge.unsupported": {
       "extractionState": "manual",
       "localizations": {
@@ -7885,6 +7919,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "读回校验中…"
+          }
+        }
+      }
+    },
+    "settings.orchestration.readback.overridden": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System setting %1$@ is overridden by the Cellar target %2$@ — adjust the slider if you want the system setting to take precedence"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统设置 %1$@ 已被 Cellar 目标 %2$@ 覆盖——如需以系统设置为准请调整滑杆"
           }
         }
       }

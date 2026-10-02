@@ -125,6 +125,13 @@ final class StatusController: ObservableObject {
     /// 实例级失败连击（会话内存态——Code=4 结构化拒绝为中性不推进，见
     /// NativeLimitSet.advancedFailureBookkeeping）。
     private var embeddedSetFailureStreak = 0
+    /// 0.21.1 §3.2 关断残留补偿重试退避（M1a P3-2——存储属性在主类声明，消费在
+    /// StatusController+LimitExecution.swift 对账臂；会话内存态，App 重启即清）。
+    /// 连续补偿失败 ≥3 → 停试（补偿成功/对账一致复位）；期望值变化 = 新关断态
+    /// → 重试机会重置。照 WP3 读回失配退避（R0-P2）同形态。
+    var reconcileFailureStreak = 0
+    /// 退避窗内记录的期望值（nil = 无失败记录——与 streak 配对推进/复位）。
+    var reconcileBackoffExpected: Int?
     /// WP3 失配退避（评审 R0-P2）：会话累计失配 ≥3 → 停用读回重跑（转纯行为
     /// 验证）+ 通用页如实展示。会话级（App 进程生命周期）。
     private var readbackMismatchCount = 0
@@ -1142,6 +1149,20 @@ final class StatusController: ObservableObject {
             return
         }
         guard !orchestrationReadbackWarning else { return }
+        // 0.21.1 §2.2：域生效值失配提示——MCL 读回 = 系统设置现值，daemon 上报
+        // sub80WrittenLimit = 域生效值（agent 实际跟随值）；两者不等 = 系统设置被
+        // Cellar 域覆盖（域随写覆盖全区间后的显性化——防「静默顶掉」困惑，方案
+        // §0.3/§2.2）。off（真停用）/mode 非 active/域值缺席（fresh 重启首拍）→
+        // 不提示（诚实缺席）。warning=false：信息性提示随 30s 采样活刷新（真值
+        // 跟随状态进出），不复用校验失配的 sticky 语义。
+        if let status = daemonStatus,
+           let written = status.sub80WrittenLimit,
+           status.mode == "active", status.sub80State != .off,
+           let limit, limit != written {
+            orchestrationReadbackLine = CellarL10n.s(
+                "settings.orchestration.readback.overridden", "\(limit)", "\(written)")
+            return
+        }
         orchestrationReadbackLine = formatReadbackLine(limit: limit)
     }
 

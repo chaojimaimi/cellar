@@ -99,6 +99,18 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// `Topoff.verificationTicks`（CellarCore 常量，UI 侧同源引用不重复编码）。
     public var sub80HealProbeActive: Bool?
     public var sub80HealProbeTicks: Int?
+    /// 0.21.1 §2.2 域生效值（topoffprotection mclLimitValue 最近成功写入值——agent
+    /// 实际跟随值；**仅 sub80 能力机填充**，26/旧 daemon 缺席 = 无此特性，
+    /// decodeIfPresent wire 兼容先例）。App 读回行失配提示数据源：MCL 读回（系统
+    /// 设置现值）≠ 域生效值 → 「系统设置 X% 已被 Cellar 目标 Y% 覆盖」提示——
+    /// 域随写覆盖全区间后系统 MCL 被统一覆盖的显性化（方案 §0.3/§2.2）。
+    /// fresh 重启首拍写前缺席（nil = 无提示——诚实缺席，幂等重写后填充）。
+    public var sub80WrittenLimit: Int?
+    /// 0.21.1 §1.1 门 c 振荡熔断抑制态（App 横幅「自动放电已暂停：检测到频繁
+    /// 放电循环」数据源；decodeIfPresent wire 兼容先例）。true = 2h 滑窗内 ≥2 次
+    /// autostart 放电完成 → 后续自动放电静默（手动放电不受影响）；解除 = 重启
+    ///（内存态）或用户重新 opt-in。恒填（daemon 每回包从锁内运行态组装）。
+    public var autoDischargeSuspended: Bool?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -134,6 +146,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         calibrationSuspected: Bool? = nil,
         sub80HealProbeActive: Bool? = nil,
         sub80HealProbeTicks: Int? = nil,
+        sub80WrittenLimit: Int? = nil,
+        autoDischargeSuspended: Bool? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -167,6 +181,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.calibrationSuspected = calibrationSuspected
         self.sub80HealProbeActive = sub80HealProbeActive
         self.sub80HealProbeTicks = sub80HealProbeTicks
+        self.sub80WrittenLimit = sub80WrittenLimit
+        self.autoDischargeSuspended = autoDischargeSuspended
         self.timestamp = timestamp
     }
 }
@@ -249,7 +265,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.21.0-alpha"
+    public static let daemonVersion = "0.21.1-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

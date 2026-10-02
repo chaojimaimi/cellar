@@ -31,17 +31,26 @@ func runAutoDischargeDomainScenarios() throws {
     // ---- ① 触发判定矩阵 ----
 
     // 全门开基线（enabled=true、active、外接、无动作、能力在位、82 ≥ 80+2、
-    // 从未完成——冷却/重插两门直通）。
+    // 从未完成——冷却/重插两门直通）。0.21.1 §1.1 三门增参默认值 = 26 时代假设
+    //（charging=false 停充即时生效、无窗、未抑制）——既有真值表逐值不变（26 回归锚）。
     func ready(
         enabled: Bool? = true, mode: String = "active", externalConnected: Bool = true,
-        percent: Int = 82, upperLimit: Int = 80, actionActive: Bool = false,
-        dischargeCapable: Bool = true, now: Date = t0,
+        isCharging: Bool = false,
+        percent: Int = 82, upperLimit: Int = 80, windowOverride: Bool = false,
+        actionActive: Bool = false,
+        dischargeCapable: Bool = true, oscillationSuspended: Bool = false,
+        now: Date = t0,
         lastAutoCompletion: Date? = nil, adapterCycleSinceCompletion: Bool = true
     ) -> Bool {
         Discharge.autoTriggerReady(
             enabled: enabled, mode: mode, externalConnected: externalConnected,
-            percent: percent, upperLimit: upperLimit, actionActive: actionActive,
-            dischargeCapable: dischargeCapable, now: now,
+            isCharging: isCharging,
+            percent: percent,
+            effectiveTarget: windowOverride ? nil : upperLimit,
+            actionActive: actionActive,
+            dischargeCapable: dischargeCapable,
+            oscillationSuspended: oscillationSuspended,
+            now: now,
             lastAutoCompletion: lastAutoCompletion,
             adapterCycleSinceCompletion: adapterCycleSinceCompletion
         )

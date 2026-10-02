@@ -66,9 +66,11 @@ extension StatusController {
 
     /// 态驱动对账单跳（R3-P2-2 **读回值驱动**，无需会话记忆——覆盖 App 重启窗）：
     /// 观察 daemonStatus 派生关断期望值（NativeLimitSet.shutdownExpectation——
-    /// R3-P1 拆分规则：disable 恒 100 / 编排关 target ≥80 → 100 / target <80 → 80；
-    /// 正常执行态 nil = 无补偿），MCL 读回 ≠ 期望 → 补偿 set（走执行器味道——
-    /// set 优先/驻留 fallback 一致）。
+    /// 0.21.1 §2.2 重定版：disable（mode 关）恒 100 / 编排关 ∧ target <80 → 80
+    ///（原生限充兜底保留）/ **编排关 ∧ target ≥80 → nil（编排关不断域——域随写
+    /// target 覆盖全区间，无残留可补；旧 ≥80→100 补偿为域 100 顶掉用户系统 MCL
+    /// 与乒乓循环的第①层根因，废除——0.21.1 §2.2）**；正常执行态 nil = 无补偿，
+    /// MCL 读回 ≠ 期望 → 补偿 set（走执行器味道——set 优先/驻留 fallback 一致）。
     ///
     /// 门控纪律：**27 终态门**（26 平台 orchestrationTerminal=false → 恒 no-op
     /// ——App 写 MCL 属 0.21 新行为，26 红线零增量）；读回缺席（nil）→ 不补偿
@@ -80,6 +82,9 @@ extension StatusController {
     /// 因对账压回钳 80-85 结构性不可达，App 侧近似是引导链——放行 MCL 100 让电池
     /// 自由充至 percent ≥95，daemon 指纹接管三臂抑制）。近似豁免诚实边界：可能漏
     /// 抑制对账一轮（下轮 30s 重评）；percent 爬坡到 ≥95 前压回循环照旧。
+    /// **0.21.1 §3.2 补偿重试退避（M1a P3-2）**：补偿连续失败 ≥3 → 会话停试
+    ///（30s 循环不再每拍空打；成功/对账一致/期望值变化复位——照 WP3 读回失配
+    /// 退避 R0-P2 同形态；失败残留由 doctor 检查 20 可见化）。
     func reconcileShutdownResidual() async {
         guard orchestrationTerminal else { return }
         guard let status = daemonStatus else { return }
@@ -89,11 +94,23 @@ extension StatusController {
             upperLimit: status.upperLimit
         )
         guard let expected else { return }
+        // 0.21.1 §3.2 退避门（先于读回——停试期不再做无谓 MCL 读；期望值变化 =
+        // 新关断态 → 重试机会重置）。
+        if reconcileFailureStreak >= Self.reconcileFailureBackoffLimit {
+            guard reconcileBackoffExpected != expected else {
+                Self.log.info("关断残留对账退避：连续 \(self.reconcileFailureStreak) 次补偿失败且期望 \(expected)% 未变——本会话停试（期望变化/App 重启复位；doctor 检查 20 可见）")
+                return
+            }
+            reconcileFailureStreak = 0
+            reconcileBackoffExpected = nil
+        }
         let client = mclClient
         let readback = await Task.detached { client.readLimit() }.value
         guard let readback else { return }
         guard readback != expected else {
             mclReadbackValue = readback   // 对账一致——顺带刷新恢复臂判定源
+            reconcileFailureStreak = 0    // 残留已消除——退避复位（0.21.1 §3.2）
+            reconcileBackoffExpected = nil
             return
         }
         // 校准可疑豁免（review P2-1）：percent 数据源 = 1s 遥测快照优先、daemon
@@ -123,13 +140,21 @@ extension StatusController {
             let setValue = try await executor.execute(target: expected)
             let verified = await Task.detached { client.readLimit() }.value
             mclReadbackValue = verified
+            reconcileFailureStreak = 0      // 补偿成功——退避复位（0.21.1 §3.2）
+            reconcileBackoffExpected = nil
             Self.log.info("关断残留补偿：读回 \(readback)% ≠ 期望 \(expected)% → set \(setValue)%（补偿后读回 \(verified.map(String.init) ?? "不可用")）")
         } catch {
             // 失败仅 os_log（控制横幅不进——关断本身已成功；残留由 doctor 检查 20
-            // 可见化 + 下轮对账重试，诚实呈现不静默）。
-            Self.log.error("关断残留补偿失败（期望 \(expected)%，读回 \(readback)%）：\(String(describing: error))——下轮对账重试")
+            // 可见化 + 下轮对账重试，诚实呈现不静默）。0.21.1 §3.2：连续失败计数
+            // 喂退避（≥3 会话停试——30s 循环不再每拍空打）。
+            reconcileFailureStreak += 1
+            reconcileBackoffExpected = expected
+            Self.log.error("关断残留补偿失败（期望 \(expected)%，读回 \(readback)%）：\(String(describing: error))——下轮对账重试（连续失败 ≥\(Self.reconcileFailureBackoffLimit) 次退避停试）")
         }
     }
 
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "limit-execution")
+
+    /// 0.21.1 §3.2 补偿重试退避阈值（M1a P3-2——照 WP3 读回失配退避 ≥3 同形态）。
+    fileprivate static let reconcileFailureBackoffLimit = 3
 }
