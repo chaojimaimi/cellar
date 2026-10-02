@@ -27,6 +27,9 @@ public enum Topoff {
     public static let healProbeInterval: TimeInterval = 3600
     /// 违规计数复位窗（连续 24h 无违反 → strikes 复位，R1-P3）。
     public static let violationResetWindow: TimeInterval = 24 * 3600
+    /// 0.20.2 §3：超带轻量重申冷却（5 min——通知风暴封顶；与 strike 重申冷却
+    /// reassertionCooldown（10 min、lastWriteAt 域写路径）相互独立，簿记分离）。
+    public static let notifyReassertCooldown: TimeInterval = 300
     /// 降级稳态域随写值（= 编排钳制值，§3.2 诚实降级）。
     public static let degradedLimit = 80
     /// 关断清理域随写值（§3.7——先值后态+通知）。
@@ -58,6 +61,14 @@ public enum Topoff {
         percent: Int, target: Int, externalConnected: Bool, isCharging: Bool
     ) -> Bool {
         externalConnected && !isCharging && percent >= target - 1 && percent <= target
+    }
+
+    /// §3.7 关断清理幂等守卫（纯函数钉面——0.20.2 §2 off 持久化跨重启兼容论证）：
+    /// `(100, off)` 态 → false（零写恢复）；重启 fresh lastWrittenLimit（nil）→
+    /// true（一次幂等重写 100 + off 后归位零写稳态——off 诚实性不因重启丢失，
+    /// 守卫允许带 off 重试直至写成功）。
+    public static func shutdownCleanupNeeded(lastWrittenLimit: Int?, off: Bool) -> Bool {
+        lastWrittenLimit != shutdownLimit || !off
     }
 }
 
@@ -99,9 +110,12 @@ public enum TopoffWriter {
     }
 }
 
-/// topoff 通道运行时状态（daemon 锁内内存态，**不持久化**——照 OrchestrationState
-/// 先例：重启即重探，lastWritten 丢失 → 首 tick 幂等重写一次；降级态重启后从头
-/// 计 strike——登记取舍，换零新增落盘面）。
+/// topoff 通道运行时状态（daemon 锁内内存态）。0.20.2 §2 起**诚实性五字段**
+///（degraded / strikes / off / lastViolationAt / lastHealProbeAt）经
+/// TopoffPersistedState 跨重启持久化（写入点钉在 sub80 门内、触发源仅 strike/
+/// 降级跳变/off 关断——TopoffStateStore）；其余瞬态字段照 OrchestrationState
+/// 先例不持久化：重启即重探，lastWritten 丢失 → 首 tick 幂等重写一次（停机期间
+/// 域实况漂移的最便宜对账，R1-P2）。
 public struct TopoffChannelState: Equatable, Sendable {
     /// 当前通道承载目标（nil = 从未承载）。
     public var activeTarget: Int?
@@ -125,6 +139,9 @@ public struct TopoffChannelState: Equatable, Sendable {
     public var lastViolationAt: Date?
     /// 关断清理已执行（sub80State=off 源；通道重新承载即清除）。
     public var off: Bool
+    /// 0.20.2 §3：上次超带轻量重申时刻（5 min 通知冷却簿记）。**内存态不持久化**
+    ///（重启后冷却重置的代价 = 可能多发一次通知，无害——方案 §3 契约钉死）。
+    public var lastReassertAt: Date?
 
     public init() {
         violationTicks = 0
@@ -142,10 +159,17 @@ public struct TopoffTickPlan: Equatable, Sendable {
     public let writeLimit: Int?
     /// 状态推进结果。
     public let state: TopoffChannelState
+    /// 0.20.2 §3：超带轻量重申（违规带内提前向 agent 重发「立即重读」信号）。
+    /// daemon 消费 = 仅 notifyutil 轻调用 + persistLog 一行——**不走域写路径、
+    /// 不动 strikes/violationTicks/20 tick 验证窗与 strike×3 降级**（三套机制
+    /// 并行独立，验证窗满仍走 strike 原路径）。默认 false 保源兼容（既有构造点
+    /// 零 diff）。
+    public var notifyOnly: Bool = false
 
-    public init(writeLimit: Int?, state: TopoffChannelState) {
+    public init(writeLimit: Int?, state: TopoffChannelState, notifyOnly: Bool = false) {
         self.writeLimit = writeLimit
         self.state = state
+        self.notifyOnly = notifyOnly
     }
 }
 
@@ -236,6 +260,21 @@ extension Topoff {
                            externalConnected: externalConnected, isCharging: isCharging) {
             s.violationTicks += 1
             guard s.violationTicks >= verificationTicks else {
+                // 0.20.2 §3 超带轻量重申：违规带内提前向 agent 重发「立即重读」
+                // 信号（压缩停充时延——验证窗满前的空转期，实测超上限窗口 15-20 min）。
+                // 仅**非降级承载态**（degraded 稳态无 topoff 执法可重申）∧ 非
+                // healProbe 观察窗（防污染探针观察语义——R1-P3）；5 min 冷却封顶防
+                // 通知风暴。writeLimit 保持 nil——不重写域值、不动 strikes/
+                // violationTicks/20 tick 窗（三套机制并行独立）。
+                if !s.degraded && !s.healProbeActive {
+                    let notifyDue = s.lastReassertAt.map {
+                        now.timeIntervalSince($0) >= notifyReassertCooldown
+                    } ?? true
+                    if notifyDue {
+                        s.lastReassertAt = now
+                        return TopoffTickPlan(writeLimit: nil, state: s, notifyOnly: true)
+                    }
+                }
                 return TopoffTickPlan(writeLimit: nil, state: s)
             }
             // strike：重申×3 封顶 → 诚实降级（第 3 strike 的降级写 80 即第三次重写）。

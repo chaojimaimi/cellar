@@ -270,21 +270,51 @@ final class DaemonInstaller: ObservableObject {
         return FileManager.default.fileExists(atPath: url.path)
     }
 
-    /// 运行 launchctl 并返回 stdout（print 输出）。
+    /// 运行 launchctl 并返回 stdout+stderr **合并**输出（print 解析输入）。
+    /// 0.20.2 §1.1 收尸纪律修复（0.20.1 偏离项补齐——照 daemon 侧
+    /// DaemonCore+Topoff.runProcessCapture 0.20.1 定版纪律）：
+    /// ①**先 read-to-EOF 后收尸**（原实现先 waitUntilExit 后 read——子进程输出塞满
+    ///   64KB 管道缓冲时互等死锁形态，DaemonInstaller 同款隐患根治）；
+    /// ②**禁用 waitUntilExit + terminationHandler 信号量收尸**——waitUntilExit 在
+    ///   调用线程内嵌 RunLoop 等待（daemon 真机 wedge 事故同源）；terminationHandler
+    ///   前置于 run()（run 与赋值间隙退出的窄窗不依赖追溯回调），Foundation 在内部
+    ///   GCD 线程回调不触碰调用方 RunLoop；
+    /// ③**10s watchdog terminate**（launchctl 挂起不永久挂起刷新链——异常路径上界）
+    ///   + 超时补 terminate，terminationStatus 语义仅在退出后有意义（本实现不读
+    ///   退出码，维持「输出非空即可解析」契约）。
+    /// **stdout/stderr 合并进解析**（原实现丢弃 stderr）：未注册服务的报错行
+    /// （Could not find service...）走 stderr，是 DaemonRoute/BTMState 解析判定
+    /// 输入——先例 DoctorCommand.swift:193 同一解析器吃合并流已在产线运行。
+    /// 返回值形态不变（String），调用点零改动。
     private nonisolated static func runLaunchctl(_ arguments: [String]) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        // R3-P3 纪律：terminationHandler 前置于 run()——run 与赋值间隙退出的窄窗
+        // 不再依赖 Foundation 追溯回调行为。
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do {
             try process.run()
         } catch {
             return ""
         }
-        process.waitUntilExit()
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let watchdog = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + .seconds(Topoff.subprocessTimeoutSeconds), execute: watchdog
+        )
+        // 先读至 EOF（子进程退出或被看门狗 terminate 时返回），再等退出信号收尸
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if exited.wait(timeout: .now() + .seconds(5)) == .timedOut {
+            if process.isRunning { process.terminate() }
+            _ = exited.wait(timeout: .now() + .seconds(5))
+        }
+        watchdog.cancel()
         return String(data: data, encoding: .utf8) ?? ""
     }
 }

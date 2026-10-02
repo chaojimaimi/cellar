@@ -9,6 +9,8 @@
 // ⑤汇聚点路由真值表（§3.1：单通道互斥/降级钳 80/自愈窗编排静默/编排开关门独立性/
 //   26 回归逐值/actionActive 执法总开关）
 // ⑥wire：sub80State 三态 round-trip + 旧 JSON 缺席（HealthCapabilitiesDomain 能力-9）
+// ⑦0.20.2 §3 同步：违规带场景断言携带 notifyOnly=true（预期内变更——lastReassertAt
+//   fresh nil 冷却恒过；轻量重申四组详表见 TopoffReassertDomain）
 
 import CellarCore
 import Foundation
@@ -91,8 +93,11 @@ func runTopoffDomainScenarios() {
         written.lastWriteAt = tick(0)
         let idle = Topoff.channelTick(state: written, target: 75, now: tick(1),
                                       percent: 90, externalConnected: true, isCharging: true)
-        check(idle.writeLimit == nil && idle.state.violationTicks == 1,
-              "通道-1", "幂等：lastWritten == target → 零写；违规拍开始计数（90>77 ∧ 充电中）")
+        // 0.20.2 §3 预期内变更：违规拍首拍（lastReassertAt fresh nil 冷却恒过）→
+        // 超带轻量重申 notifyOnly=true（writeLimit 保持 nil——不重写域值）。
+        check(idle.writeLimit == nil && idle.state.violationTicks == 1 && idle.notifyOnly
+                && idle.state.lastReassertAt == tick(1),
+              "通道-1", "幂等：lastWritten == target → 零写；违规拍开始计数（90>77 ∧ 充电中）；0.20.2 §3：违规带首拍轻量重申 notifyOnly=true（lastReassertAt 锚定）")
     }
 
     // 通道-2：验证窗 20 tick → strike 1 → 重申写（冷却自然满足）。
@@ -102,14 +107,21 @@ func runTopoffDomainScenarios() {
         s.lastWrittenLimit = 75
         s.lastWriteAt = tick(0)
         var strikePlan: TopoffTickPlan?
+        var firstInBandPlan: TopoffTickPlan?
         for n in 1...20 {
             strikePlan = Topoff.channelTick(state: s, target: 75, now: tick(n),
                                             percent: 90, externalConnected: true, isCharging: true)
+            if n == 1 { firstInBandPlan = strikePlan }
             s = strikePlan!.state
         }
         check(s.strikes == 1 && s.violationTicks == 0 && s.lastViolationAt == tick(20)
                 && strikePlan?.writeLimit == 75,
               "通道-2", "连续 20 违规 tick → strike 1 + 重申写 75（重写即重置动力学；距初写 600s ≥ 冷却）")
+        // 0.20.2 §3 预期内变更：窗内非 strike 拍轻量重申（首拍 notifyOnly=true，
+        // 冷却 5 min 封顶）；strike 拍自带重申写路径 → notifyOnly=false（机制分离）。
+        check(firstInBandPlan?.notifyOnly == true && firstInBandPlan?.writeLimit == nil
+                && strikePlan?.notifyOnly == false,
+              "通道-2", "0.20.2 §3：窗内首拍 notifyOnly=true（提前重发信号）；strike 拍 notifyOnly=false（重申写自带通知——三套机制并行独立）")
         // 中断归零：19 违规 + 1 非违规 → 窗清零不 strike。
         var interrupted = TopoffChannelState()
         interrupted.activeTarget = 75
@@ -182,8 +194,8 @@ func runTopoffDomainScenarios() {
         s.lastWrittenLimit = 75
         let plan = Topoff.channelTick(state: s, target: 75, now: tick(1),
                                       percent: nil, externalConnected: nil, isCharging: nil)
-        check(plan.writeLimit == nil && plan.state.violationTicks == 0,
-              "通道-6", "采样缺席（nil 入参）→ 窗不推进（防误降级）")
+        check(plan.writeLimit == nil && plan.state.violationTicks == 0 && !plan.notifyOnly,
+              "通道-6", "采样缺席（nil 入参）→ 窗不推进（防误降级）；0.20.2 §3：无违规带证据 → 不轻量重申")
     }
 
     // ---- ④ healTick 自愈（§3.2）----

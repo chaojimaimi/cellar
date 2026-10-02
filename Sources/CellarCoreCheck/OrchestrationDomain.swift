@@ -407,7 +407,10 @@ private func runOrchestrationDoctorScenarios() throws {
         nativeAttempted: Bool = false,
         orchestrationProbe: OrchestrationDoctorProbe? = nil,
         orchestrationAttempted: Bool = false,
-        osMajorVersion: Int = 26
+        osMajorVersion: Int = 26,
+        daemonCapabilities: [String]? = nil,
+        daemonSub80State: Sub80State? = nil,
+        daemonUpperLimit: Int = 80
     ) -> DoctorInputs {
         DoctorInputs(
             isRoot: true, smcConnected: true,
@@ -415,7 +418,8 @@ private func runOrchestrationDoctorScenarios() throws {
             chargingEnabled: false, chargingError: nil,
             snapshot: snapshot, snapshotError: nil,
             conflict: ConflictScanResult(exact: [], generic: []),
-            daemonStatus: DaemonStatus(version: "t", mode: "active", upperLimit: 80, hysteresis: 2),
+            daemonStatus: DaemonStatus(version: "t", mode: "active", upperLimit: daemonUpperLimit, hysteresis: 2,
+                                       capabilities: daemonCapabilities, sub80State: daemonSub80State),
             daemonProbeAttempted: true,
             nativeLimit: nativeLimit,
             nativeLimitProbeAttempted: nativeAttempted,
@@ -494,5 +498,45 @@ private func runOrchestrationDoctorScenarios() throws {
         ))
         check(inactive27?.status == .pass && inactive27?.detail.contains("未检测到") == true,
               "医生-15", "27 + 无阻断策略 → PASS 注册态（残留臂仅在 active 时接管）")
+    }
+    // 医生-15（0.20.2 §1.2 门控三态，R2-P2 场景域钉定）：sub80 门内插 27 渲染分支
+    // ——topoff active → 「现行执法（上限 N%）」（0.20.1 enforcingLimit 门同款词汇）；
+    // 门负臂（capabilities 不含 sub80 / degraded / off）与 26 保持残留检测原文案。
+    do {
+        let sub80Capable = [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilitySub80]
+        let active85 = NativeLimitStatus(known: true, active: true, socLimit: 85, manualSocLimit: 85)
+        // 门控主臂：27 ∧ sub80 capable ∧ sub80State active → INFO 现行执法（N =
+        // daemon 上报 upperLimit——与注册残留值 85 无关）。
+        let enforcing = check15(doctorInputs(
+            nativeLimit: active85, nativeAttempted: true, osMajorVersion: 27,
+            daemonCapabilities: sub80Capable, daemonSub80State: .active, daemonUpperLimit: 75
+        ))
+        check(enforcing?.status == .info && enforcing?.detail.contains("现行执法（上限 75%）") == true
+                  && enforcing?.detail.contains("注册残留 85%") == true
+                  && enforcing?.detail.contains("topoff 通道") == true,
+              "医生-15", "0.20.2 §1.2：27 + topoff active → INFO「现行执法（上限 75%）」（N=upperLimit；残留 85% 降为附注——plist 残留仍是事实）")
+        // 门负臂：sub80 capable 但 degraded（编排钳 80 稳态）→ 残留检测原文案。
+        let degraded27 = check15(doctorInputs(
+            nativeLimit: active85, nativeAttempted: true, osMajorVersion: 27,
+            daemonCapabilities: sub80Capable, daemonSub80State: .degraded, daemonUpperLimit: 75
+        ))
+        check(degraded27?.status == .info && degraded27?.detail.contains("注册残留 85%") == true
+                  && degraded27?.detail.contains("现行执法") != true,
+              "医生-15", "0.20.2 §1.2：27 + degraded 稳态 → 残留检测原文案（降级无 topoff 现行执法——编排钳 80 接管）")
+        // 门负臂：sub80State active 但 capabilities 不含 sub80（26 终态形态）→ 原文案。
+        let notCapable27 = check15(doctorInputs(
+            nativeLimit: active85, nativeAttempted: true, osMajorVersion: 27,
+            daemonCapabilities: [DaemonXPC.capabilityDischarge], daemonSub80State: .active
+        ))
+        check(notCapable27?.detail.contains("注册残留 85%") == true
+                  && notCapable27?.detail.contains("现行执法") != true,
+              "医生-15", "0.20.2 §1.2：capabilities 不含 sub80 ∧ active → 不触发门控（双门判定——26 终态语义）")
+        // 门负臂：off 关断态（域随写 100 无执法）→ 原文案。
+        let off27 = check15(doctorInputs(
+            nativeLimit: active85, nativeAttempted: true, osMajorVersion: 27,
+            daemonCapabilities: sub80Capable, daemonSub80State: .off, daemonUpperLimit: 75
+        ))
+        check(off27?.detail.contains("注册残留 85%") == true && off27?.detail.contains("现行执法（上限") != true,
+              "医生-15", "0.20.2 §1.2：27 + off 关断态 → 残留检测原文案（关断后无现行执法）")
     }
 }

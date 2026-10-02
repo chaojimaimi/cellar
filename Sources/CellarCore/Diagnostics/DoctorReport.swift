@@ -719,6 +719,19 @@ public enum DoctorReportGenerator {
         // 校准冲突 FAIL 分支在 27 不可达（daemon 侧编排终态已拒绝校准/fullOnce），
         // 置于其前即 27 单一语义；冲突横幅 27 不触发（编排即执法者）。
         if inputs.osMajorVersion >= 27 {
+            // 0.20.2 §1.2 门控：topoff 通道承载中（sub80 capable ∧ sub80State ==
+            // .active——仅 27 可达）→ 「现行执法（上限 N%）」（N = daemon 上报
+            // upperLimit——0.20.1 enforcingLimit 门同款词汇，App 仪表板同源）；
+            // 残留检测原文案降为附注（plist 残留仍是事实）。否则保持残留检测
+            // 原文案（采集侧零改动——DoctorInputs 已携带 daemonStatus）。
+            if let daemonStatus = inputs.daemonStatus,
+               daemonStatus.capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+               daemonStatus.sub80State == .active {
+                return DoctorCheck(
+                    name: "原生限充共存", status: .info,
+                    detail: "现行执法（上限 \(daemonStatus.upperLimit)%）——原生限充注册残留 \(nativeLimit)%（非现行上限——macOS 27 执法由 topoff 通道接管，可忽略；如需彻底清理可在系统设置移除后重启）"
+                )
+            }
             return DoctorCheck(
                 name: "原生限充共存", status: .info,
                 detail: "原生限充注册残留 \(nativeLimit)%（非现行上限——macOS 27 执法由编排接管，可忽略；如需彻底清理可在系统设置移除后重启）"

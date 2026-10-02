@@ -146,10 +146,16 @@ final class DaemonCore: @unchecked Sendable {
     /// 幂等误发一次（S3 已证同值重设无痕）+ 冷却窗重置——换零新增落盘面。
     var orchestrationState = OrchestrationState()
     /// 0.20 M1b topoff 通道运行时状态（结构体定义在 CellarCore Topoff.swift；决策
-    /// 全在 Topoff 纯函数，副作用在 DaemonCore+Topoff.swift）。**不持久化**（照
-    /// orchestrationState 先例：重启即重探，lastWritten 丢失 → 首 tick 幂等重写
-    /// 一次；降级态重启后从头计 strike——登记取舍，换零新增落盘面）。
+    /// 全在 Topoff 纯函数，副作用在 DaemonCore+Topoff.swift）。0.20.2 §2 起**诚实性
+    /// 五字段**（degraded/strikes/off/lastViolationAt/lastHealProbeAt）经
+    /// topoffStateStore 跨重启持久化（写入点钉在 sub80 门内、触发源仅 strike/降级
+    /// 跳变/off 关断）；瞬态字段照 orchestrationState 先例不持久化——重启即重探，
+    /// lastWritten 丢失 → 首 tick 幂等重写一次（停机期间域实况漂移的最便宜对账）。
     var topoffState = TopoffChannelState()
+    /// 0.20.2 §2 topoff 诚实性状态持久化（topoff-state.json；路径注入缝照
+    /// calibrationStateStore 先例——可测。写入纪律：主锁内 tmp+rename 直写，
+    /// 26 平台不生成状态文件）。
+    let topoffStateStore: TopoffStateStore
     /// 0.20 M1b P3-1：topoff 域写连续失败计数（日志降频——首条 error、后续合并
     /// 计数 warn；写成功即清零）。锁内内存态（纯日志面，不持久化）。⚠️ internal：
     /// DaemonCore+Topoff.swift 跨文件访问——executable internal 模块外不可达。
@@ -166,12 +172,14 @@ final class DaemonCore: @unchecked Sendable {
         policyStore: PolicyStore, log: os.Logger,
         actionStore: ActionStore = ActionStore(url: ActionStore.defaultURL),
         calibrationStateStore: CalibrationStateStore = CalibrationStateStore(url: CalibrationStateStore.defaultURL),
-        scheduleStateStore: ScheduleStateStore = ScheduleStateStore(url: ScheduleStateStore.defaultURL)
+        scheduleStateStore: ScheduleStateStore = ScheduleStateStore(url: ScheduleStateStore.defaultURL),
+        topoffStateStore: TopoffStateStore = TopoffStateStore(url: TopoffStateStore.defaultURL)
     ) {
         self.policyStore = policyStore
         self.actionStore = actionStore
         self.calibrationStateStore = calibrationStateStore
         self.scheduleStateStore = scheduleStateStore
+        self.topoffStateStore = topoffStateStore
         self.monitor = BatteryMonitor.makeDefault()
         self.lifecycleLogger = log
         self.controlLogger = Logger(subsystem: "com.cellar.daemon", category: "control")
@@ -203,6 +211,22 @@ final class DaemonCore: @unchecked Sendable {
         // Phase 5 v1.6：充电日程运行时状态载入（照 calibrationState 先例——缺失/
         // 损坏 → 空状态容错；在窗中断由首个 tick 日程臂无侧重算补判，UD-3）。
         scheduleState = scheduleStateStore.load()
+
+        // 0.20.2 §2：topoff 诚实性状态载入（**policy 装载后、startup() 内**——
+        // 24h 复位窗/自愈节奏判定依赖 policy 语境，R1-P3）。缺失/损坏/值域越界 →
+        // fail-open fresh（域写幂等兜底，Topoff.restoredState）；26 平台无状态文件
+        // （写入点钉在 sub80 门内）→ 恒 fresh 零行为。degraded=true 跨重启 → 首
+        // tick 走 healTick 降级稳态（域值 80 物理持久不重写——「稳态下不重写」
+        // 不变量保持，healTick 探针照跑）；off=true → 关断清理幂等守卫兼容；
+        // strikes 跨重启累计（×3 降级防线不因重启弱化）。
+        let persistedTopoff = topoffStateStore.load()
+        topoffState = Topoff.restoredState(persisted: persistedTopoff)
+        if let persistedTopoff {
+            events.append(LogEvent(
+                category: .lifecycle, level: .info,
+                message: "topoff 诚实性状态已载入：degraded=\(persistedTopoff.degraded) strikes=\(persistedTopoff.strikes) off=\(persistedTopoff.off)（降级稳态 healTick 照跑；瞬态字段 fresh——首拍幂等重写对账停机漂移）"
+            ))
+        }
 
         do {
             let detected = try establishBackendLocked(events: &events)

@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.20.2-alpha] - 2026-10-02
+
+### Fixed
+
+- **观测语义统一**：topoff 通道执法中时，doctor 检查 15 与 `cellar status` 的「原生限充注册残留/未注册」行改判「现行执法（上限 N%）」（0.20.1 修了仪表板，本批补齐 doctor 与 CLI 同语义）。
+- **App 侧 launchctl 调用收尸纪律**：面板的 `launchctl print` 解析路径与 daemon 侧同款加固（terminationHandler + read-to-EOF 先行 + 10 秒看门狗），消除大输出下的管道互等隐患。
+
+### Added
+
+- **TopoffState 诚实性持久化**：降级态、strike 计数、关断态、违规/自愈时刻跨 daemon 重启保留——此前重启会「洗白」降级（用户重启后横幅消失但通道仍降级）并弱化 strike×3 防线。瞬态字段（域写簿记/验证窗计数）保持重启重探——首拍幂等重写兼作停机期间域漂移的对账。损坏文件静默回退 fresh，不影响执法。
+- **超限轻量重申**：电量超过上限 +2% 的违规带内，每 5 分钟向系统执法代理重发一次「立即重读」通知（不重写域值、不消耗 strike 配额、不影响既有重申/降级机制）——恢复充电场景的「超上限充电」体感窗口从实测 ~15-20 分钟压缩至 ~5 分钟级。
+- **打包脚本迁移 macOS 27 真实命令**：dmg 构建从弃用的 `hdiutil create` 迁移至 `diskutil image create from`，并内建「产物可挂载 + 拖拽布局完整」门禁，坏产物不再流出。
+
 ## [0.20.1-alpha] - 2026-10-02
 
 ### Fixed

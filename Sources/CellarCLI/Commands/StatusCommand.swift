@@ -227,24 +227,18 @@ struct StatusCommand: ParsableCommand {
     // MARK: - Phase 5 v1.7 原生限充行（方案 §3.3 CLI 段）
 
     /// 原生限充行（注册态；`--json` 的 daemon 段经 DaemonStatus 直接 encode 自动携带
-    /// nativeLimit 子对象，本函数只服务人读路径）。三态：nil = 旧 daemon 未上报
-    /// （照风扇行升级提示）；known=false = 检测未知；active = N% 注册（守卫口径
-    /// blocking 最小值）；inactive = 未注册。CLI 输出恒中文（不本地化，既有惯例）。
+    /// nativeLimit 子对象，本函数只服务人读路径）。0.20.2 §1.3：行文案/门控判定
+    /// 纯函数化（CellarCore.NativeLimitStatusLine——本渲染函数 CLI 私有不可直测，
+    /// 决策面下沉 CellarCoreCheck 场景域钉死）。topoff active（域值在位——sub80
+    /// capable ∧ sub80State == .active）→ 「现行执法（上限 N%，topoff 通道）」；
+    /// 否则原注册态检测三态文案（nil = 旧 daemon 升级提示 / known=false = 检测未知
+    /// / 未注册 / N% 注册）。CLI 输出恒中文（不本地化，既有惯例）。
     private func printNativeLine(_ status: DaemonStatus) {
-        guard let native = status.nativeLimit else {
-            print("原生限充：旧版守护进程未上报（升级后可查看）")
-            return
+        let line = NativeLimitStatusLine.resolve(status)
+        print(line.lineText)
+        if line.showsUserMirror {
+            printNativeMirrorLine()
         }
-        guard native.known else {
-            print("原生限充：检测未知（策略文件读取失败）")
-            return
-        }
-        guard native.active, let socLimit = native.socLimit else {
-            print("原生限充：未注册")
-            return
-        }
-        print("原生限充：\(socLimit)% 注册")
-        printNativeMirrorLine()
     }
 
     /// MagSafe LED 行（方案 §3.3 CLI 段；`--json` daemon 段经 DaemonStatus 自动

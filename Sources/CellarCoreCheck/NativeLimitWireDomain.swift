@@ -339,4 +339,23 @@ func runNativeLimitWireDomainScenarios() throws {
         check(report.checks[14].status == .pass && report.worstStatus == .pass && report.exitCode == 0,
               "医生-12", "全绿样本（原生未注册）不抬升退出码")
     }
+
+    // 医生-16（0.20.2 §1.2 的 26 零回归背书）：osMajorVersion 26（缺省）即使 daemon
+    // 上报 sub80 capable ∧ sub80State == .active（26 现实不可达形态——防御性输入），
+    // 门控在 27 渲染分支内 → 26 分支逐字不变（WARN 现行执法语义）。
+    do {
+        let active85 = NativeLimitStatus(known: true, active: true, socLimit: 85, manualSocLimit: 85)
+        let sub80Active26 = doctorInputs(
+            daemonStatus: DaemonStatus(
+                version: "0.20.1-alpha", mode: "active", upperLimit: 80, hysteresis: 2,
+                capabilities: [DaemonXPC.capabilityOrchestration, DaemonXPC.capabilitySub80],
+                sub80State: .active
+            ),
+            nativeLimit: active85
+        )
+        let check15 = nativeCheck(sub80Active26)
+        check(check15.status == .warn && check15.detail.contains("Cellar 执法生效")
+                && check15.detail.contains("二选一") && check15.detail.contains("现行执法（上限") != true,
+              "医生-16", "26 + sub80 门控输入 → WARN 现行语义零回归（0.20.2 §1.2 门控仅 osMajorVersion ≥ 27 分支内——26 行为零变化）")
+    }
 }

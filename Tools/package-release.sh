@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 版本号单变量：zip/dmg 文件名由此派生；发布时与 App/CLI/daemon 版本串保持一致。
-VERSION=0.20.1-alpha
+VERSION=0.20.2-alpha
 
 PROJECT="App/CellarApp.xcodeproj"
 SCHEME="CellarApp"
@@ -71,16 +71,38 @@ mkdir -p dist
 rm -f "$ZIP_PATH"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
 
-echo "==> 6/7 打包 dmg（hdiutil 压缩只读，拖拽安装布局）"
+echo "==> 6/7 打包 dmg（diskutil image create from 压缩只读，拖拽安装布局）"
 # staging 布局：Cellar.app + /Applications 符号链接（访达拖拽安装惯例）；
 # UDZO = 只读压缩，系统工具零第三方依赖。
+# 0.20.2 §4：hdiutil create 弃用警告迁移 macOS 27 真实命令 diskutil image create
+# from（spike 实证：folder 源保留 bundle 结构与 /Applications 符号链接，产物
+# hdiutil attach 挂载验证通过；UDZO 同格式）。
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
 ditto "$APP_PATH" "$STAGING/Cellar.app"
 ln -s /Applications "$STAGING/Applications"
 rm -f "$DMG_PATH"
-hdiutil create -volname "Cellar v${VERSION}" -srcfolder "$STAGING" \
-    -ov -format UDZO "$DMG_PATH" > /dev/null
+diskutil image create from --format UDZO --volname "Cellar v${VERSION}" \
+    "$STAGING" "$DMG_PATH" > /dev/null   # stderr 放行（R3-P2：失败根因可见；弃用告警不在 stderr）
+
+# 产物可挂载验证（0.20.2 §4 门禁：迁移后 dmg 必须可挂载且拖拽布局完整——失败即
+# 打包失败，防坏产物流出）。attach 走 diskutil image attach（hdiutil attach 同为
+# 弃用面）；detach 无 diskutil 等价子命令，保留 hdiutil detach（非弃用告警面）。
+VERIFY_MNT="$(mktemp -d)"
+if ! diskutil image attach --readOnly --nobrowse --mountPoint "$VERIFY_MNT" "$DMG_PATH" > /dev/null; then
+    echo "❌ dmg 挂载验证失败（diskutil image 迁移产物不可挂载）——中止打包" >&2
+    rm -rf "$VERIFY_MNT"
+    exit 1
+fi
+if [ ! -d "$VERIFY_MNT/Cellar.app" ] || [ ! -L "$VERIFY_MNT/Applications" ]; then
+    echo "❌ dmg 内容验证失败（Cellar.app / Applications 链接缺席）——中止打包" >&2
+    hdiutil detach "$VERIFY_MNT" -quiet || true
+    rm -rf "$VERIFY_MNT"
+    exit 1
+fi
+hdiutil detach "$VERIFY_MNT" -quiet > /dev/null
+rm -rf "$VERIFY_MNT"
+echo "dmg 挂载验证通过（Cellar.app + Applications 拖拽布局）"
 
 echo "==> 7/7 产物清单与 SHA-256 校验和"
 ls -lh "$ZIP_PATH" "$DMG_PATH"

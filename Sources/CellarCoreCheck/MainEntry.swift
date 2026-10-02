@@ -384,6 +384,16 @@ struct Main {
         // 复位）/healTick 自愈/汇聚点路由真值表（单通道互斥/降级钳 80/编排开关门独立/
         // 26 回归逐值）——纯函数面，TopoffDomain）。
         runTopoffDomainScenarios()
+        // 0.20.2 §3：超带轻量重申场景域（触发带/冷却/不动降级计数/healProbe 窗不触发
+        // 四组——纯函数面，TopoffReassertDomain）。
+        runTopoffReassertDomainScenarios()
+        // 0.20.2 §2：topoff 诚实性状态持久化场景域（加载/损坏 fallback/值域钳制/
+        // 降级跨重启 healTick 照跑/off 兼容/写入点 sub80 门/触发源七组——
+        // TopoffStateStore 路径注入缝 + Topoff 纯函数面，TopoffPersistenceDomain）。
+        try runTopoffPersistenceDomainScenarios()
+        // 0.20.2 §1.3：status「原生限充」行决策纯函数场景域（门控主臂/负臂/既有
+        // 三态文案/优先序——NativeLimitStatusLine，NativeLimitLineDomain）。
+        runNativeLimitLineDomainScenarios()
         // Phase 5 v1.8 M1：MagSafe LED 模型层场景域（方案 §2 清单：validating/
         // interpreting 白名单穷举/correctionDecision 矩阵穷举（门槛三行/计费
         // gating/锁存自动解除防卡死）/wire 三态/policy 仅丢字段分层——纯函数面，

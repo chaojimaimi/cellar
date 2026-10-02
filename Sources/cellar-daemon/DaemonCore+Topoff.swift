@@ -37,6 +37,12 @@ extension DaemonCore {
             healProbeActive: topoffState.healProbeActive
         )
         guard sub80Capable else { return route.orchestrationDesired }   // 非 sub80 机：零行为（26 回归锚）
+        // 0.20.2 §2 诚实性状态持久化：**写入点钉在 sub80 门内**（26 平台不生成
+        // 状态文件——红线）。defer 收口本方法全部变更路径；触发源判定
+        // （strike / 降级跳变 / off 关断）在 helper 内经 Topoff 纯函数承担，域写
+        // 不触发（R2-P3）。主锁内 tmp+rename 直写（本方法调用方均持主锁）。
+        let honestyBefore = topoffState
+        defer { persistTopoffHonestyStateLocked(previous: honestyBefore) }
         // 0.20.1 观测性：每 tick 一行持久轨迹（wedge 事件教训——LogEvent 内存环随进程
         // 消失致事后不可溯源；本行落 daemon.log，卡死时最后一行即 wedge 现场）。
         Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) desired=\(route.orchestrationDesired.map(String.init) ?? "nil") percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
@@ -68,6 +74,18 @@ extension DaemonCore {
             topoffState = plan.state
             if let limit = plan.writeLimit {
                 _ = topoffExecuteWriteLocked(limit: limit, now: now, events: &events)
+            }
+            // 0.20.2 §3 超带轻量重申消费：仅 notifyutil **独立轻调用** + persistLog
+            // 一行——不走 topoffExecuteWriteLocked 的域写路径、**不动 strikes/
+            // violationTicks/20 tick 验证窗与 strike×3 降级**（三套机制并行独立，
+            // 验证窗满仍走 strike 原路径；语义边界方案 §3 钉死）。
+            if plan.notifyOnly {
+                let notified = Self.runProcessCapture(
+                    "/usr/bin/notifyutil", ["-p", Topoff.notifyName]
+                ).exitCode == 0
+                Self.persistLog(notified
+                    ? "topoff 轻量重申：通知已发（域值未变）"
+                    : "topoff 轻量重申：通知发送失败（域值未变——strike 管道 10 min 兜底）")
             }
             return route.orchestrationDesired
         }
@@ -137,13 +155,35 @@ extension DaemonCore {
         }
     }
 
+    /// 0.20.2 §2 诚实性状态持久化（主锁内直写——tmp+rename 原子替换，单写者 =
+    /// tick 持锁线程；写入点钉在 sub80 门内，26 不生成状态文件）。触发源判定经
+    /// Topoff.shouldPersistHonestyChange 纯函数（strike / 降级跳变 / off 关断任一
+    /// 跳变即写，lastViolationAt/lastHealProbeAt 随同拍五字段快照落盘；域写与观察
+    /// 窗簿记不触发——R2-P3，低频）。写失败仅 persistLog 可见化（fail-open——
+    /// 重启后 fresh 重探/幂等重写兜底，不阻断通道）。
+    private func persistTopoffHonestyStateLocked(previous: TopoffChannelState) {
+        guard Topoff.shouldPersistHonestyChange(previous: previous, current: topoffState) else { return }
+        do {
+            try topoffStateStore.save(topoffState.honestySnapshot)
+        } catch {
+            Self.persistLog("topoff 诚实性状态持久化失败：\(error)（fail-open——重启后 fresh 兜底）")
+        }
+    }
+
     /// §3.7 关断清理（第四处卫生）：域随写 100（先值后态 + 通知）+ off——杜绝
-    /// 「UI 已停用、实际钉 75」（agent 每分钟跟随域值）。幂等：已 100 且 off → 零写；
-    /// **P3-2 评审修法：off 置位以写成功为条件**——失败不置位，守卫允许带 off 缺席
-    /// 逐拍重试（「残留域值不滞留执法」不变量）。消费点：汇聚点状态不变量（mode
-    /// 非 active ∨ 编排关 ∧ 目标 ≥80——P3-3）+ disable/restoreAndExit 事件路径。
+    /// 「UI 已停用、实际钉 75」（agent 每分钟跟随域值）。幂等：已 100 且 off → 零写
+    ///（幂等守卫经 Topoff.shutdownCleanupNeeded 纯函数钉面——0.20.2 §2 off 持久化
+    /// 跨重启兼容：重启 fresh lastWrittenLimit → 非 (100, off) → 一次幂等重写后
+    /// 归位零写稳态）；**P3-2 评审修法：off 置位以写成功为条件**——失败不置位，
+    /// 守卫允许带 off 缺席逐拍重试（「残留域值不滞留执法」不变量）。消费点：汇聚
+    /// 点状态不变量（mode 非 active ∨ 编排关 ∧ 目标 ≥80——P3-3）+ disable/restore
+    /// AndExit 事件路径。0.20.2 §2：off 关断为持久化触发源（命中拍诚实性快照落盘）。
     func topoffShutdownCleanupLocked(now: Date, events: inout [LogEvent]) {
-        guard topoffState.lastWrittenLimit != Topoff.shutdownLimit || !topoffState.off else { return }
+        let honestyBefore = topoffState
+        defer { persistTopoffHonestyStateLocked(previous: honestyBefore) }
+        guard Topoff.shutdownCleanupNeeded(
+            lastWrittenLimit: topoffState.lastWrittenLimit, off: topoffState.off
+        ) else { return }
         let written = topoffExecuteWriteLocked(limit: Topoff.shutdownLimit, now: now, events: &events)
         guard written else {
             events.append(LogEvent(
