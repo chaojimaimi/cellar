@@ -1467,6 +1467,11 @@ final class DaemonCore: @unchecked Sendable {
             // 系统设置现值，域生效值 = 最近成功写入的 mclLimitValue，agent 实际跟随
             // 值）。fresh 重启首拍写前 nil（App 无提示——诚实缺席，幂等重写后填充）。
             status.sub80WrittenLimit = topoffState.lastWrittenLimit
+            // 0.21.3 §1.3：UI-100 机制关闭检测（G3）——suppressionConsecutive
+            // ≥ Topoff.suppressionThreshold 锁存（内存态不持久化；sub80 门内恒填，
+            // 26 不填缺席 = 无此特性）。解除 = 域读回一致清零（随回包自然消失）。
+            status.sub80MechanismSuppressed = topoffState.suppressionConsecutive
+                >= Topoff.suppressionThreshold
         }
         // 0.21.0 §2.4：迟滞开关回读（policy 单一真相**恒填**——照 orchestration.enabled
         // 先例；26 平台照填、UI 侧 capabilities 门控不渲染，wire 恒填与渲染门控分层）。
@@ -1475,6 +1480,11 @@ final class DaemonCore: @unchecked Sendable {
         // 26/旧 daemon 缺席 = 无此特性，wire 兼容）。
         if orchestrationTerminalLocked {
             status.calibrationSuspected = calibrationCoexistenceState.suspected
+            // 0.21.3 §2.1：MCL 对账期望派生的两窗输入（shutdownExpectation 八行表
+            // 行 1/2——App 对账与 doctor 检查 20 同源消费；显式字段单一真相，勿由
+            // App 侧从 scheduleActiveId 再派生）。
+            status.fullOnceWindowActive = orchestrationState.fullOnceWindowActive
+            status.chargingDisabledWindowActive = chargingDisabledWindowActiveLocked
         }
         // 0.21.1 §1.1 门 c：振荡熔断抑制态（App 横幅「自动放电已暂停」数据源——
         // 恒填，内存态随回包透出；false = 未抑制）。

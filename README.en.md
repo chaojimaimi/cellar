@@ -21,7 +21,7 @@
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
 - **Discharge to Limit**: temporarily disconnects the adapter and runs on battery until the charge drops to the limit target, then automatically restores (real-time supply power visualization; support conditions below)
 - **Root-free read-only monitoring**: charge level, charging/discharging state, voltage, current, temperature, cycle count, battery health, design/full charge capacity, cell voltages, adapter details
-- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command fourteen-point diagnostics (including a device compatibility line)
+- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command twenty-point diagnostics (device compatibility, native-limit coexistence, MagSafe LED, orchestration/execution and MCL reconciliation)
 
 ## GUI (App)
 
@@ -122,7 +122,7 @@ GUI route: open `App/CellarApp.xcodeproj` in Xcode and build; place the resultin
 ```bash
 cellar status          # status overview (backend, level, charging state, control key, daemon state)
 cellar status --json   # same, machine-readable JSON (daemon/route/local sections, for scripting)
-cellar doctor          # fourteen-point diagnostic report (exit codes 0/1/2 usable in scripts)
+cellar doctor          # twenty-point diagnostic report (exit codes 0/1/2 usable in scripts)
 cellar doctor --devices  # single-line device compatibility output (welcome in issue reports)
 sudo cellar set 80     # set limit 80% (range 60–100; --hysteresis n available)
 sudo cellar disable    # stop limit management, restore default system charging
@@ -141,20 +141,23 @@ sudo cellar uninstall  # uninstall and restore default system charging
 - **Recoverability**: SIGTERM, `disable`, and `uninstall` all automatically restore default system charging; a daemon crash is re-pulled by launchd, which immediately reconciles state
 - **Least privilege**: reads need no privileges; writes converge on a single root daemon; XPC mutation commands accept only root or admin-group (gid 80) members, with a type whitelist and rate limiting
 - **No silent failures**: write-after-read verification; verification failures (including external writer conflicts) are reported as typed errors
+- **System Settings charge limit vs. Cellar (macOS 27, three-branch model)**: a concrete value in System Settings → the native limit dominates (stop Cellar if you only want the native one); while Cellar enforces → the system limit is released to 100% and Cellar's target takes over the stop point (the normal prerequisite); **dragging System Settings to 100% by hand is NOT an off switch — it disables the native mechanism entirely** (the battery then charges freely to 100%). Use Cellar's stop button to disable limiting; the Cellar slider is the single source of intent, any System Settings override is surfaced on the readback line, and a disabled mechanism is detected and restored within 30 seconds (see [FAQ Q16](docs/FAQ.md))
 - **No telemetry, no network**: zero third-party dependencies besides package resolution
 
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 785 scenarios, hundreds of checks: exhaustive decision-matrix
-                            # enumeration (700+ boundary combinations), packing/parsing,
+swift run CellarCoreCheck   # 838 scenarios, hundreds of checks: exhaustive decision-matrix
+                            # enumeration (800+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 91.25%)
-swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 390
-                            # authoritative + 0.21-batch new forms landing via CI regen) + localization gate (487 keys × en/zh-Hans)
+                            # pure logic, ≥80% · currently 92.06%)
+swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 444
+                            # authoritative (0.21.2 baseline; 0.21.3 adds 6 Orchestration
+                            # cases — verify 450 after CI snapshot-regen) + localization
+                            # gate (493 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

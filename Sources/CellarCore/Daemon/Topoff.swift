@@ -35,6 +35,11 @@ public enum Topoff {
     public static let notifyReassertCooldown: TimeInterval = 300
     /// 降级稳态域随写值（= 编排钳制值，§3.2 诚实降级）。
     public static let degradedLimit = 80
+    /// 0.21.3 §1.3 suppressed 锁存阈值：连续覆写签名命中 ≥2 次 → 域机制被外部
+    /// 压制（UI-100 三键覆写形态）——wire sub80MechanismSuppressed 数据源（App
+    /// 通用页警示行 + doctor 检查 20 FAIL 臂）。锁存后重写限频复用
+    /// reassertionCooldown 10 min；解除 = 读回一致清零（方案 §1.3 钉死）。
+    public static let suppressionThreshold = 2
     /// 关断清理域随写值（§3.7——先值后态+通知）。
     public static let shutdownLimit = 100
     /// 0.20.1 热修：topoff 子进程看门狗超时（秒）——真机 wedge 事件（走查②：strike
@@ -114,6 +119,40 @@ public enum TopoffWriter {
         }
         return .written(notified: notify(Topoff.notifyName))
     }
+
+    /// 域读回（0.21.3 §1.2 G7b——外部覆写快速自愈的判定输入）：root 侧
+    /// `defaults read <path> <key>` 锁内子进程 ×2（limit/FeatureState 各一笔；
+    /// 0.20.1 收尸纪律同款由 daemon 侧 run 注入承担）。**仅违规拍/锁存期补采样
+    /// 调用**（daemon 以 `Topoff.isViolationTick` ∨ suppressed 锁存预判——健康
+    /// 稳态零子进程开销）。
+    ///
+    /// 返回语义（与 channelTick `domainReadback` 参数钉死）：
+    /// - 外层 nil = **读失败**（子进程启动失败〔负退出码〕∨ **看门狗击杀等白名单
+    ///   外退出码**——defaults 正常退出码仅 {0 成功, 1 键/域缺席}；0.20.1 看门狗
+    ///   SIGTERM 击杀 terminationStatus=15，误归「键缺席→覆写签名」会虚增
+    ///   suppressionConsecutive〔两次挂起 = 假锁存〕，一律 fail-open）→ 调用方
+    ///   按既有违规计数（不阻断防线）；
+    /// - 外层非 nil = 域已看视：键缺席/解析失败 → 对应内层 nil（参与覆写签名——
+    ///   域文件被删/键被清本身即外部覆写形态，重写自愈方向正确）。
+    public static func read(
+        defaultsPath: String = Topoff.domainPath,
+        run: (String, [String]) -> (output: String, exitCode: Int32)
+    ) -> (limit: Int?, featureState: Int?)? {
+        func readKey(_ key: String) -> (value: Int?, exitCode: Int32) {
+            let result = run("/usr/bin/defaults", ["read", defaultsPath, key])
+            guard result.exitCode == 0 else { return (nil, result.exitCode) }
+            let parsed = Int(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+            return (parsed, 0)
+        }
+        let limitRead = readKey(Topoff.limitKey)
+        let stateRead = readKey(Topoff.featureStateKey)
+        // 读失败判定：退出码 ∈ {0, 1} 白名单外（负 = 启动失败；15 = 看门狗 SIGTERM
+        // 击杀；其余异常值同归）→ 整体 fail-open。
+        if !(0...1).contains(limitRead.exitCode) || !(0...1).contains(stateRead.exitCode) {
+            return nil
+        }
+        return (limitRead.value, stateRead.value)
+    }
 }
 
 /// topoff 通道运行时状态（daemon 锁内内存态）。0.20.2 §2 起**诚实性五字段**
@@ -148,6 +187,12 @@ public struct TopoffChannelState: Equatable, Sendable {
     /// 0.20.2 §3：上次超带轻量重申时刻（5 min 通知冷却簿记）。**内存态不持久化**
     ///（重启后冷却重置的代价 = 可能多发一次通知，无害——方案 §3 契约钉死）。
     public var lastReassertAt: Date?
+    /// 0.21.3 §1.3：连续覆写签名命中计数（G3/UI-100 检测）。违规拍域读回覆写
+    /// 签名命中 +1、读回一致清零；**≥ Topoff.suppressionThreshold → suppressed
+    /// 锁存**（wire sub80MechanismSuppressed 数据源；锁存后重写限频 10 min——
+    /// 防持续覆写 30s churn）。**内存态不持久化**（重启丢计数可接受——登记于
+    /// 方案 §1.3：覆写源（MDM/系统设置驻留）跨重启仍在则 ≤2 拍内重新锁存）。
+    public var suppressionConsecutive: Int
 
     public init() {
         violationTicks = 0
@@ -156,6 +201,7 @@ public struct TopoffChannelState: Equatable, Sendable {
         healProbeActive = false
         healProbeTicks = 0
         off = false
+        suppressionConsecutive = 0
     }
 }
 
@@ -229,10 +275,15 @@ extension Topoff {
     /// 与 strikeFired 同拍置位，消费拍拦截）∧ 非校准抑制（校准抑制期 strike 链
     /// 本就冻结——channelTick 不调用无边沿产生；本门为防御纵深（现接线下
     /// 消费先于校准检测=结构性永真；残余 1 tick 窗已登记，防未来接线变更下抑制期消费）。
+    /// **0.21.3 §1.1 `target < 80` 门（钉死）**：owned 扩展后 strike 新源覆盖
+    /// ≥80 目标（编排关域承载）——自动放电不跟随扩展，保持 0.21.2 CHANGELOG
+    /// 「≥80% 目标不再触发自动放电」公开语义（≥80 的 strike 重写域本身即是自愈
+    /// 主手段；物理打断对机制关闭态只会造循环，熔断兜底不经济）。target = 该边沿
+    /// 对应的汇聚目标（消费拍与 topoff tick 同 tick 序，值同源）。
     public static func strikeAccompaniment(
-        edgeReadable: Bool, degraded: Bool, calibrationSuspected: Bool
+        edgeReadable: Bool, degraded: Bool, calibrationSuspected: Bool, target: Int
     ) -> Bool {
-        edgeReadable && !degraded && !calibrationSuspected
+        edgeReadable && !degraded && !calibrationSuspected && target < degradedLimit
     }
 }
 
@@ -247,6 +298,9 @@ extension Topoff {
     /// 单通道互斥不变量：<80（非降级稳态）→ topoff 独占（编排静默 desired=nil）；
     /// 降级稳态 → 编排钳 80；自愈观察窗 → topoff 独占（行为观察有效前提）；
     /// ≥80 → 编排原样（0.19.20 链，sub80 机加 §3.6 域随写卫生）。
+    /// **0.21.3 §1.1 域承载全区间**：编排开关关 ∧ 非全开窗（无 MCL 主导通道）
+    /// → topoffOwned 扩至全区间目标（violation/strike/degraded 链生效——G7 根治）；
+    /// 编排开 ∧ ≥80 维持不承载（MCL 主导语义保持）。
     /// **26/无 sub80 能力机器（sub80Capable=false）→ 0.19.20 既有链逐值不变**
     ///（topoffOwned 恒 false——26 行为零变化回归锚）。
     /// **0.21.0 §1.3 fullOnce 窗（fullOnceWindow，缺省 false = 既有构造零 diff）**：
@@ -296,10 +350,24 @@ extension Topoff {
         } else {
             convergenceTarget = upperLimit
         }
-        // topoff 承载门：sub80 能力 ∧ mode active ∧ 无在轨动作 ∧ 目标 <80
-        //（动作活跃 → 放电/校准维护分支掌权，双通道静默——执法总开关）。
+        // topoff 承载门：sub80 能力 ∧ mode active ∧ 无在轨动作（动作活跃 → 放电/
+        // 校准维护分支掌权，双通道静默——执法总开关）∧（<80 承载 ∨ **0.21.3 §1.1
+        // 域承载全区间扩展**：编排开关关 ∧ ≥80 ∧ 非全开窗）。扩展语义：编排关时
+        // 无 MCL 主导通道（App set 断言静默）→ 域承载全区间执法（violation →
+        // 轻量重申 → strike → degraded → 80 钳/迟滞）——G7（≥80 目标执法链空缺，
+        // 充电失控现场）根治。**全开窗排除（R1-P1-1）**：chargingDisabled/fullOnce
+        // 窗强制 convergenceTarget=100，窗内进 owned 会路由 healTick → 探针写 100
+        // + 超时臂回写 80——违反「域值随汇聚目标」不变量；窗内回落 §3.6 卫生分支
+        // （写 100 无执法——窗语义即完全放开）。**编排开 ∧ ≥80 不进 owned**
+        // （通道语义论据：MCL 主导区间的域违规不是域通道失效的证据——执法主体是
+        // MCL 本身；degraded 钳 80 会伤害健康的 MCL 执法；周期防线 = §2.1
+        // expectation 编排行对账）。26 红线：sub80 门内恒 false（零触及）。
+        let sub80Carried = convergenceTarget.map { $0 < degradedLimit } ?? false
+        let fullOpenWindow = fullOnceWindow || chargingDisabledWindow
+        let domainBackstop = !orchestrationEnabled && !fullOpenWindow
+            && (convergenceTarget.map { $0 >= degradedLimit } ?? false)
         let topoffOwned = sub80Capable && modeActive && !actionActive
-            && (convergenceTarget.map { $0 < degradedLimit } ?? false)
+            && (sub80Carried || domainBackstop)
         // 编排断言目标（0.19.20 链 + 0.20 M1b 分流 + 0.21.0 §2.1 迟滞分流 + §3.1
         // 校准分流；次序即契约勿重排）。
         let desired: Int?
@@ -331,16 +399,27 @@ extension Topoff {
 
     /// topoff 通道每拍推进（承载态，§3.2/§3.3）：
     /// 24h 无违反 strikes 复位 → 幂等写（目标变化/上次未落盘——写后动力学重置）→
-    /// 行为验证窗（连续 20 违规 tick → strike）→ strike <3 重申（冷却门内重写域+
-    /// 通知）/ ≥3 诚实降级（域随写 80，编排钳由路由层承接）。采样缺席拍不推进窗
-    /// （证据不足防误降级）。
+    /// **0.21.3 §1.2 域读回三分支**（覆写签名 → 重写自愈 + 清零不耗 strike +
+    /// suppressionConsecutive 计数/锁存/限频；签名一致 → 锁存解除 + 正常计数；
+    /// 读失败 → fail-open 既有计数）→ 行为验证窗（连续 20 违规 tick → strike）→
+    /// strike <3 重申（冷却门内重写域+通知）/ ≥3 诚实降级（域随写 80，编排钳由
+    /// 路由层承接）。采样缺席拍不推进窗（证据不足防误降级）。
+    /// `domainReadback`：daemon 预判命中才读并注入读回结果——预判 = 违规拍
+    /// （`isViolationTick`）∨ **suppressed 锁存期补采样**（review P1：锁存态下
+    /// 非违规 owned 拍也采样——覆写源停止后锁存仍可在下一拍经一致读回解除，
+    /// wire「随轮询自然消失」兑现；健康稳态零子进程）——channelTick 保持纯函数，
+    /// 覆写判定在场景域钉死。
+    /// - parameter domainReadback: 域读回（`TopoffWriter.read` 输出）；
+    ///   nil = 未注入（健康非违规拍）/读失败（fail-open 既有计数）。缺省 nil 保
+    ///   源兼容。
     public static func channelTick(
         state: TopoffChannelState,
         target: Int,
         now: Date,
         percent: Int?,
         externalConnected: Bool?,
-        isCharging: Bool?
+        isCharging: Bool?,
+        domainReadback: (limit: Int?, featureState: Int?)? = nil
     ) -> TopoffTickPlan {
         var s = state
         // 24h 无违反 → strikes 复位（降级态不经此处——healTick 承载）。
@@ -357,6 +436,41 @@ extension Topoff {
         // 行为验证窗（采样缺席拍：证据不足不推进——防误降级）。
         guard let percent, let externalConnected, let isCharging else {
             return TopoffTickPlan(writeLimit: nil, state: s)
+        }
+        // 0.21.3 §1.2 域读回消费（三分支，G7b 外部覆写快速自愈；daemon 注入时机
+        // = 违规拍预判命中 ∨ **suppressed 锁存期补采样**——锁存态下对非违规
+        // owned 拍也采样，防「覆写源停止后再无违规拍 → 域永不读回 → 锁存永久
+        // 滞留」半死态〔review P1〕；健康稳态仍零子进程）：
+        // - 覆写签名命中（双键口径：limit ≠ lastWritten ∨ FeatureState ≠ 1——
+        //   UI-100 三键覆写在两键必命中；enabled 键不参与签名，残留影响走 §4.4
+        //   真机走查）→ 重写意图（writeLimit=target）+ violationTicks 清零**不耗
+        //   strike**（覆写非通道失效——证据类型区分；覆写循环有意不降级：降级对
+        //   覆写形态无益，升级走 suppressed 可见链）+ suppressionConsecutive 计数
+        //   （≥2 锁存 → 重写限频 10 min——限频拍读回仍覆写签名则**一律清零不计数**
+        //   ，R2-P2：限频只封 writeLimit，不改变证据归类——否则 20 tick 后
+        //   strike→degraded 违背「覆写不降级」钉死语义）。**非违规拍的覆写**
+        //   （锁存期补采样引入）同样走本臂——域值错误与充电态无关，重写即自愈；
+        // - 签名一致 → suppressionConsecutive 清零（**锁存解除唯一路径**——
+        //   违规拍与锁存期补采样拍同权，wire「随轮询自然消失」的兑现面），
+        //   违规拍随后落正常计数（既有链——strike 只计 agent 无视）；
+        // - 读失败/未读（nil）→ fail-open 既有计数（读失败不阻断防线）。
+        if let readback = domainReadback {
+            let overridden = readback.limit != s.lastWrittenLimit
+                || readback.featureState != 1
+            if overridden {
+                s.suppressionConsecutive += 1
+                s.violationTicks = 0
+                if s.suppressionConsecutive >= suppressionThreshold {
+                    let cooldownElapsed = s.lastWriteAt.map {
+                        now.timeIntervalSince($0) >= reassertionCooldown
+                    } ?? true
+                    return TopoffTickPlan(
+                        writeLimit: cooldownElapsed ? target : nil, state: s
+                    )
+                }
+                return TopoffTickPlan(writeLimit: target, state: s)
+            }
+            s.suppressionConsecutive = 0
         }
         if isViolationTick(percent: percent, target: target,
                            externalConnected: externalConnected, isCharging: isCharging) {

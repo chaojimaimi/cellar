@@ -13,8 +13,11 @@ import os
 /// Sendable：实现为无状态结构体（detached 闭包捕获存在类型需此约束——
 /// ShortcutsRunning 先例）。
 protocol LimitExecuting: Sendable {
-    /// 执行目标设置。返回**读回校验目标**（set 路径 = 实际写入值；快捷指令路径 =
-    /// 同值）——恢复臂 <80 分支钳 80 后读回按写入值校验，不与 pending 原值失配。
+    /// 执行目标设置。返回**读回校验目标**（set 路径 = NativeLimitSet.setTarget
+    /// 映射后的实际写入值；快捷指令路径 = 同值）——0.21.3 §2.2 重定版：恢复臂
+    /// <80 分支映射为 **set 100**（恢复 pre-fullOnce 原生关闭态——域管）后，读回
+    /// 按写入值 100 校验，不与 pending 原值失配（旧「钳 80 后按写入值校验」契约
+    /// 随映射同步重写）。
     /// 抛错 = 执行失败（detail 进回报链；MCLSetFailure 为 set 路径结构化失败）。
     func execute(target: Int) async throws -> Int
 }
@@ -65,12 +68,14 @@ extension StatusController {
     }
 
     /// 态驱动对账单跳（R3-P2-2 **读回值驱动**，无需会话记忆——覆盖 App 重启窗）：
-    /// 观察 daemonStatus 派生关断期望值（NativeLimitSet.shutdownExpectation——
-    /// 0.21.1 §2.2 重定版：disable（mode 关）恒 100 / 编排关 ∧ target <80 → 80
-    ///（原生限充兜底保留）/ **编排关 ∧ target ≥80 → nil（编排关不断域——域随写
-    /// target 覆盖全区间，无残留可补；旧 ≥80→100 补偿为域 100 顶掉用户系统 MCL
-    /// 与乒乓循环的第①层根因，废除——0.21.1 §2.2）**；正常执行态 nil = 无补偿，
-    /// MCL 读回 ≠ 期望 → 补偿 set（走执行器味道——set 优先/驻留 fallback 一致）。
+    /// 观察 daemonStatus 派生 MCL 期望值（NativeLimitSet.shutdownExpectation——
+    /// **0.21.3 §2.1 八行表统一重定版**：两窗/mode 关恒 100 / 编排开 ≥80 →
+    /// target（MCL 主导，本循环即周期对账防线）/ 编排开 <80 非 degraded → 100
+    ///（MCL 让域管）∧ degraded → 80（对齐编排钳）/ 编排关 degraded → 80（域通道
+    /// 死亡最后防线）∧ 非 degraded → 100（**0.21.3 §1.1 域承载全区间**——旧
+    /// 「<80→80 兜底」为 G1 实证有害形态〔MCL 80 主导顶掉域 75〕，废除）），MCL
+    /// 读回 ≠ 期望 → 补偿 set（走执行器味道——set 优先/驻留 fallback 一致，统一
+    /// API set 保机制使能——三分支分支 2 路径）。
     ///
     /// 门控纪律：**27 终态门**（26 平台 orchestrationTerminal=false → 恒 no-op
     /// ——App 写 MCL 属 0.21 新行为，26 红线零增量）；读回缺席（nil）→ 不补偿
@@ -91,7 +96,10 @@ extension StatusController {
         let expected = NativeLimitSet.shutdownExpectation(
             modeActive: status.mode == "active",
             orchestrationEnabled: status.orchestration?.enabled == true,
-            upperLimit: status.upperLimit
+            upperLimit: status.upperLimit,
+            degraded: status.sub80State == .degraded,
+            fullOnceWindowActive: status.fullOnceWindowActive == true,
+            chargingDisabledWindowActive: status.chargingDisabledWindowActive == true
         )
         guard let expected else { return }
         // 0.21.1 §3.2 退避门（先于读回——停试期不再做无谓 MCL 读；期望值变化 =

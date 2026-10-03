@@ -407,8 +407,10 @@ func runAutoDischargeDomainScenarios() throws {
           "边沿拍 ∧ percent = 上限+1 → 静默（margin 门原样）")
 
     // 自动-34：伴随组合消费形态（daemon 传入 strikeEdgeLatched 前先经
-    // Topoff.strikeAccompaniment 归并——degraded 拦截/校准抑制/无边沿三臂在组合层
-    // 归并为 false，模型层输入形态见 TopoffDomain 边沿-2/3/6）。
+    // Topoff.strikeAccompaniment 归并——degraded 拦截/校准抑制/无边沿/**0.21.3 §1.1
+    // target<80 门**四臂在组合层归并为 false，模型层输入形态见 TopoffDomain 边沿-2/3/6）。
+    // 本域默认上限 80（<80 承载语境）；≥80 strike 边不放电（0.21.2 公开语义保持）
+    // 的门面在 TopoffDomain 边沿-6 重定版钉死。
     let accompanimentRows: [(edge: Bool, degraded: Bool, suspected: Bool, expected: Bool, note: String)] = [
         (true, false, false, true, "边沿拍承载态 → 成立"),
         (true, true, false, false, "第 3 边沿（降级拍）→ !degraded 拦截 → 不放电"),
@@ -417,7 +419,8 @@ func runAutoDischargeDomainScenarios() throws {
     ]
     for row in accompanimentRows {
         let accompanied = Topoff.strikeAccompaniment(
-            edgeReadable: row.edge, degraded: row.degraded, calibrationSuspected: row.suspected)
+            edgeReadable: row.edge, degraded: row.degraded, calibrationSuspected: row.suspected,
+            target: 79)
         check(accompanied == row.expected, "自动-34", "伴随组合（edge=\(row.edge), degraded=\(row.degraded), suspected=\(row.suspected)）→ \(row.note)")
         // 组合直通收紧判定（daemon 接线形态：非 nil = 收紧模式；charging=true 态下
         // 触发 ⇔ 伴随成立——边沿拍门 a 放行、非边沿拍门 a + 边沿门双拦）。

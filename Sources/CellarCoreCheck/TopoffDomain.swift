@@ -317,9 +317,10 @@ func runTopoffDomainScenarios() {
 
     // ---- ⑤b §3.7 关断清理状态不变量（P3-3 场景钉死——路由前置条件面）----
 
-    // 清理-1：daemon 关断清理分支的触发前置（纯函数可钉面）——mode nil ∨（编排关 ∧
-    // 目标 ≥80）时 desired=nil ∧ !topoffOwned（域随写卫生零触发）；<80 编排关 →
-    // topoffOwned（不清理）。daemon 侧按此消费（CellarCoreCheck 不可 import daemon，
+    // 清理-1：daemon 关断清理分支的触发前置（纯函数可钉面）——**仅 mode 非 active**
+    //（0.21.3 §1.1 域承载全区间后：编排关 ∧ ≥80 不再清理——旧「清理前置」臂为
+    // G7 根治面废除，域随写 target + 执法链承载）；<80 编排关 → topoffOwned
+    //（不清理）。daemon 侧按此消费（CellarCoreCheck 不可 import daemon，
     // 调用点次序由 daemon 注记 + code-review 走查兜底）。
     do {
         let modeNil = Topoff.convergenceRoute(
@@ -328,19 +329,24 @@ func runTopoffDomainScenarios() {
             degraded: false, healProbeActive: false)
         check(modeNil.convergenceTarget == nil && modeNil.orchestrationDesired == nil && !modeNil.topoffOwned,
               "清理-1", "mode 非 active → 清理前置成立（域随写 100 + off）")
-        let orchOff80 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
+        let modeNil85 = Topoff.convergenceRoute(
+            modeActive: false, orchestrationEnabled: false, chargingDisabledWindow: false,
             upperLimit: 85, sub80Capable: true, actionActive: false,
             degraded: false, healProbeActive: false)
-        check(orchOff80.orchestrationDesired == nil && !orchOff80.topoffOwned
-                && orchOff80.convergenceTarget == 85,
-              "清理-1", "编排关 ∧ 目标 ≥80 → 清理前置成立（P3-3：fresh 重启首拍即清理——状态不变量）")
+        check(modeNil85.convergenceTarget == nil && !modeNil85.topoffOwned,
+              "清理-1", "mode 非 active ∧ 编排关 ∧ 85 → 清理前置成立（mode 门最优先——owned 扩展不触及）")
         let orchOff75 = Topoff.convergenceRoute(
             modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
             upperLimit: 75, sub80Capable: true, actionActive: false,
             degraded: false, healProbeActive: false)
         check(orchOff75.topoffOwned,
               "清理-1", "编排关 ∧ 目标 <80 → topoff 承载（不清理——topoff 不受编排开关门）")
+        let orchOff85 = Topoff.convergenceRoute(
+            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false,
+            degraded: false, healProbeActive: false)
+        check(orchOff85.topoffOwned && orchOff85.convergenceTarget == 85,
+              "清理-1", "编排关 ∧ 目标 85 → **0.21.3 §1.1 域承载全区间**（owned 扩展——旧清理前置臂废除；violation/strike/degraded 链生效）")
     }
 
     // ---- ⑤ 汇聚点路由真值表（§3.1 R1-P3）----
@@ -388,6 +394,9 @@ func runTopoffDomainScenarios() {
     }
 
     // 路由-4：编排开关门独立性（R1-P3 位置约束）——编排关 ∧ <80 → topoff 仍承载。
+    // **0.21.3 §1.1 重定版**：编排关 ∧ ≥80 → **owned（域承载全区间）**——旧「不
+    // 承载 + §3.7 清理态保持」为 G7（≥80 执法链空缺）废除面；desired 恒 nil
+    //（编排静默——域独占执法，MCL 对账防线归 §2.1 expectation 编排行）。
     do {
         let route = Topoff.convergenceRoute(
             modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
@@ -399,8 +408,8 @@ func runTopoffDomainScenarios() {
             modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
             upperLimit: 85, sub80Capable: true, actionActive: false,
             degraded: false, healProbeActive: false)
-        check(!off85.topoffOwned && off85.orchestrationDesired == nil,
-              "路由-4", "编排开关关 ∧ 目标 ≥80 → 编排静默 ∧ topoff 不承载（域随写卫生零触发——§3.7 关断清理态保持，防域值复活）")
+        check(off85.topoffOwned && off85.orchestrationDesired == nil,
+              "路由-4", "编排开关关 ∧ 目标 85 → **owned 扩展**（域承载全区间执法——desired=nil 编排静默）")
     }
 
     // 路由-5：26 回归（sub80Capable=false → 0.19.20 链逐值 + topoffOwned 恒 false）。
@@ -541,16 +550,25 @@ func runTopoffDomainScenarios() {
     }
 
     // 边沿-6：伴随组合真值表（Topoff.strikeAccompaniment——观测段触发条件的边沿项）：
-    // 可读 ∧ !degraded ∧ !suspected → 成立；降级拍（第 3 边沿）→ 不成立；校准抑制
-    // → 不成立（抑制期冻结）；无边沿 → 不成立。
+    // 可读 ∧ !degraded ∧ !suspected ∧ **target<80（0.21.3 §1.1 门——owned 扩展后
+    // strike 新源覆盖 ≥80〔编排关域承载〕，自动放电不跟随扩展：≥80 的 strike 重写
+    // 域本身即是自愈主手段；物理打断对机制关闭态只会造循环。0.21.2「≥80% 目标
+    // 不再触发自动放电」公开语义保持）** → 成立；降级拍（第 3 边沿）→ 不成立；
+    // 校准抑制 → 不成立（抑制期冻结）；无边沿 → 不成立。
     do {
-        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false),
-              "边沿-6", "边沿可读 ∧ 承载态 ∧ 非抑制 → 伴随成立（触发 + 门 a 放行）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: true, calibrationSuspected: false),
+        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 75),
+              "边沿-6", "边沿可读 ∧ 承载态 ∧ 非抑制 ∧ target 75 → 伴随成立（触发 + 门 a 放行）")
+        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 79),
+              "边沿-6", "target 79（<80 上沿）→ 伴随成立（门边界严格小于）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 80),
+              "边沿-6", "target 80 → 不放电（0.21.3 §1.1 门：≥80 strike 边〔编排关域承载新源〕不触发自动放电——0.21.2 公开语义保持）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 85),
+              "边沿-6", "target 85 → 不放电（同上门拦截）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: true, calibrationSuspected: false, target: 75),
               "边沿-6", "第 3 边沿（降级拍）→ degraded 拦截 → 不放电（R2-P3-3 单列）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: true),
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: true, target: 75),
               "边沿-6", "校准抑制期 → 冻结（放电对抗充满防误触发）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: false, degraded: false, calibrationSuspected: false),
+        check(!Topoff.strikeAccompaniment(edgeReadable: false, degraded: false, calibrationSuspected: false, target: 75),
               "边沿-6", "无边沿（含 healTick 无边）→ 不成立（非边沿拍静默）")
     }
 }

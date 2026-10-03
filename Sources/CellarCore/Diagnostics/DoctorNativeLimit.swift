@@ -5,17 +5,19 @@ import Foundation
 // DoctorReport.swift 行数纪律）
 //
 // 两项均 27 门控（MCL 读回仅在 set 路径语境有语义——26 上 Cellar 从不写 MCL，
-// 读回值是系统自有状态，检测必属误报）且 info 恒不抬退出码（残留诊断非故障）。
-// R3-P3-3：27 无 actionTrack——「非 fullOnce 在轨」条件恒真，**如实省略**，
-// 不为此造假轨道判定（fullOnce 窗内运行 doctor 报 INFO 属已知形态，恢复指引
-// 文案即处置路径）。
+// 读回值是系统自有状态，检测必属误报）。0.21.3 §1.3 登记**例外**：检查 20 的
+// suppressed FAIL 臂抬退出码（现 info 恒不抬纪律的唯一例外——机制被系统设置
+// 关闭是需要用户行动的真故障形态）。R3-P3-3：27 无 actionTrack——「非 fullOnce
+// 在轨」条件恒真，**如实省略**，不为此造假轨道判定（0.21.3 §2.1 起 fullOnce
+// 窗在位经 wire fullOnceWindowActive 显性化，检查 19 据此窗内零渲染）。
 
 extension DoctorReportGenerator {
     /// 检查 19（§1.3）：fullOnce 临时放开残留——MCL 读回 100 ∧ policy < 100
     /// （判定源与面板恢复臂同式：NativeLimitSet.fullOnceRestoreAvailable，读回
     /// 驱动非轨道判定）→ INFO + 恢复指引。渲染条件：27 ∧ daemon 在线 ∧ 编排终态
     /// ∧ mode active ∧ 编排开关开（开关关时读回 100 属 §1.5 关断期望态——检查
-    /// 20 承接，本项不双报）∧ MCL 读回在位。
+    /// 20 承接，本项不双报）∧ MCL 读回在位 ∧ **fullOnce 窗不在位**（0.21.3 §2.1
+    /// wire 供给——窗内读回 100 是显式放开意图非残留）。
     static func fullOnceResidual(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard inputs.mclProbeAttempted, inputs.osMajorVersion >= 27,
               let mcl = inputs.mclProbe, mcl.readable, let readback = mcl.limit,
@@ -24,44 +26,72 @@ extension DoctorReportGenerator {
               status.mode == "active",
               status.orchestration?.enabled == true
         else { return nil }
+        // 0.21.3 §2.1：窗在位（daemon wire）→ 显式放开期，非残留——零渲染
+        //（旧「若刚点击充满一次属预期形态」附注由显式窗态取代）。
+        guard status.fullOnceWindowActive != true else { return nil }
         guard NativeLimitSet.fullOnceRestoreAvailable(
             mclReadback: readback, policyUpperLimit: status.upperLimit
         ) else { return nil }
         return DoctorCheck(
             name: "临时放开残留", status: .info,
             detail: "原生限充读回 100% 而策略上限 \(status.upperLimit)%——临时放开未恢复"
-                + "（若刚点击「充满一次」属预期形态）。请在 Cellar 面板点击「恢复限充」，"
-                + "或调整上限/重开限充自动收敛"
+                + "。请在 Cellar 面板点击「恢复限充」，或调整上限/重开限充自动收敛"
         )
     }
 
-    /// 检查 20（§1.5）：关断残留——期望值派生（NativeLimitSet.shutdownExpectation，
-    /// 0.21.1 §2.2 重定版：mode 关恒 100 / 编排关 ∧ target <80 → 80（原生限充
-    /// 兜底保留）/ **编排关 ∧ target ≥80 → nil（编排关不断域——域随写 target
-    /// 覆盖全区间，不再渲染）**），MCL 读回 ≠ 期望 → INFO 指引。
-    /// 读回缺席（探测失败/类缺席）→ 不渲染（读通道死态无对账可言——诚实缺席）；
-    /// 期望 nil（正常执行态/编排关 ≥80）→ 不渲染。
+    /// 检查 20（§1.5 + 0.21.3 重定版）：MCL 对账残留——期望值派生
+    ///（NativeLimitSet.shutdownExpectation **八行表**：两窗/mode 关恒 100 /
+    /// 编排开 ≥80 → target / 编排开 <80 非 degraded → 100 ∧ degraded → 80 /
+    /// 编排关 degraded → 80 ∧ 非 degraded → 100——旧「编排关 ∧ <80 → 80 兜底」
+    /// 行 G1 实证有害〔MCL 80 主导顶掉域 75〕废除；输入增 degraded + 两窗，
+    /// daemon wire 供给），读回 ≠ 期望 → INFO + 三分支教育指引（G1 修正：不再
+    /// 引导「按需关闭/set 80」——系统设置设具体值或交给 Cellar，绝不用 100%
+    /// 作「关闭」）。
+    /// **suppressed/残留双态合取（§1.3，R2-P3-3）**：daemon wire
+    /// sub80MechanismSuppressed == true → **FAIL 优先**（抬退出码——「info 恒
+    /// 不抬」纪律的登记例外；UI-100 机制关闭需用户行动）；无 suppressed 才评
+    /// 残留 INFO。读回缺席（探测失败/类缺席）→ 不渲染（读通道死态无对账可言
+    /// ——诚实缺席）。
     static func shutdownResidual(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard inputs.mclProbeAttempted, inputs.osMajorVersion >= 27,
-              let mcl = inputs.mclProbe, mcl.readable, let readback = mcl.limit,
               let status = inputs.daemonStatus
         else { return nil }
+        // 双态合取第一态：suppressed 优先 FAIL（§1.3——同名指引与 App 通用页
+        // 警示行一致；锁存解除〔域读回一致〕随 wire 回 false 自然回落）。
+        // **挪至 mcl.readable 门之前（review P3）**：suppressed 是 daemon 域侧
+        // 证据（wire 透出），不应被 MCL 探测可用性门控——MCL 类缺席/读取失败
+        // 的边角形态不应压掉 FAIL 臂。
+        if status.sub80MechanismSuppressed == true {
+            return DoctorCheck(
+                name: "关断残留", status: .fail,
+                detail: "系统设置充电上限 100% 已关闭原生限充机制（Cellar 正在自动恢复；"
+                    + "若反复出现请在系统设置设一个具体上限（如 80%）——切勿用 100% 作"
+                    + "「关闭」，那是机制关闭位；停用限充请用 Cellar 的停用按钮）"
+            )
+        }
+        guard let mcl = inputs.mclProbe, mcl.readable, let readback = mcl.limit else {
+            return nil
+        }
         guard let expected = NativeLimitSet.shutdownExpectation(
             modeActive: status.mode == "active",
             orchestrationEnabled: status.orchestration?.enabled == true,
-            upperLimit: status.upperLimit
+            upperLimit: status.upperLimit,
+            degraded: status.sub80State == .degraded,
+            fullOnceWindowActive: status.fullOnceWindowActive == true,
+            chargingDisabledWindowActive: status.chargingDisabledWindowActive == true
         ) else { return nil }
         if readback == expected {
             return DoctorCheck(
                 name: "关断残留", status: .pass,
-                detail: "关断对账一致（读回 \(readback)%，期望 \(expected)%）"
+                detail: "MCL 对账一致（读回 \(readback)%，期望 \(expected)%）"
             )
         }
         return DoctorCheck(
             name: "关断残留", status: .info,
-            detail: "MCL 读回 \(readback)% 与关断期望值 \(expected)% 不符"
-                + "（App 缺席窗残留——daemon 侧关断无法写 MCL，已登记局限）。"
-                + "打开 Cellar App 将自动对账补偿，或手动在系统设置调整充电上限"
+            detail: "MCL 读回 \(readback)% 与期望值 \(expected)% 不符（App 缺席窗残留"
+                + "——打开 Cellar App 将自动对账补偿）。提示：在系统设置手动调整时"
+                + "请设一个具体上限（如 80%）或交给 Cellar 管理——切勿设 100% 来"
+                + "「关闭」限充（那是机制关闭位；停用请用 Cellar 的停用按钮）"
         )
     }
 }

@@ -689,10 +689,17 @@ extension DaemonCore {
             latch: strikeEdgeLatch, tick: tickSequence
         )
         strikeEdgeLatch = latchConsumed
+        // 0.21.3 §1.1 target<80 门输入：该边沿对应的汇聚目标（与 topoff tick 同
+        // tick 序同源派生——窗在位时 100、否则 policy.upperLimit；mode 关则无
+        // 执法语境，discharge 门自有拦截，此处传 upperLimit 原值即可）。
+        let accompanimentTarget = orchestrationState.fullOnceWindowActive
+            || chargingDisabledWindowActiveLocked
+            ? Topoff.shutdownLimit : policy.upperLimit
         let strikeAccompanied = Topoff.strikeAccompaniment(
             edgeReadable: edgeReadable,
             degraded: topoffState.degraded,
-            calibrationSuspected: calibrationCoexistenceState.suspected
+            calibrationSuspected: calibrationCoexistenceState.suspected,
+            target: accompanimentTarget
         )
         guard Discharge.autoTriggerReady(
             enabled: policy.autoDischargeEnabled,

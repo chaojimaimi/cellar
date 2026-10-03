@@ -154,7 +154,9 @@ func runDischargeOscillationDomainScenarios() throws {
     // 重插门自解锁 → 循环自持。修后断链三环逐值钉死：
 
     // 乒乓-1：断链第一环——域随写 target（编排关 ∧ target 80 → 汇聚目标 80 非 100、
-    // 非清理、topoff 不承载、编排静默）。
+    // 非清理、**0.21.3 §1.1 起域承载执法（owned 扩展）**、编排静默）。乒乓形态不
+    // 复活的论证：owned 的 strike 链只重写域值（80 与卫生分支同值）+ 自动放电被
+    // 0.21.3 §1.1 target<80 门拦截（80 目标 strike 边不放电——过冲臂新增第四道断链）。
     let incident = Topoff.convergenceRoute(
         modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
         upperLimit: 80, sub80Capable: true, actionActive: false,
@@ -164,14 +166,17 @@ func runDischargeOscillationDomainScenarios() throws {
           "编排关 ∧ target 80 → 汇聚目标 80（域随写 80——域恢复滞回根治面；修前清理域 100 已废除）")
     check(incident.orchestrationDesired == nil, "乒乓-1",
           "编排关 → 编排静默（开关仅门控 App set 执行通道——域通道不受门，架构自述不变量对齐）")
-    check(!incident.topoffOwned, "乒乓-1",
-          "target 80 不 <80 → topoff 不承载（§3.6 域随写卫生分支承接——汇聚点 mode nil 守卫不触发）")
+    check(incident.topoffOwned, "乒乓-1",
+          "target 80 ∧ 编排关 → **0.21.3 §1.1 owned 扩展**（域承载全区间执法——violation/strike 链只重写域 80；放电伴随被 target<80 门拦，循环断链保持）")
 
-    // 乒乓-2：断链第二环——App 对账不再 set 100（§0.3 域 100 顶掉用户系统 MCL
-    // 的 App 侧同根因）。
+    // 乒乓-2：断链第二环重定版（0.21.3 §2.1 行 8）——编排关 ∧ 非 degraded → 期望
+    // 100（**域承载全区间后 MCL 必须 100 让域管**；三分支模型：API 写 100 保机制
+    // 使能 ≠ 修前「域清理 100 顶掉用户系统 MCL」——修前根因是 daemon 域侧清 100
+    // 顶掉用户 MCL，App 侧 set 100 修复后随滑杆唯一意图源语义重定版；系统设置手动
+    // 覆盖由读回失配提示 + suppressed 检测显性化）。
     check(NativeLimitSet.shutdownExpectation(
-        modeActive: true, orchestrationEnabled: false, upperLimit: 80) == nil,
-          "乒乓-2", "编排关 ∧ target 80 → 关断期望 nil（App 停止补偿 set 100；系统设置覆盖由域随写 target + 读回失配提示承载）")
+        modeActive: true, orchestrationEnabled: false, upperLimit: 80) == 100,
+          "乒乓-2", "编排关 ∧ target 80 → 期望 100（0.21.3 §2.1 行 8——域承载全区间，MCL 100 让域管；API set 保机制使能）")
 
     // 乒乓-3：断链第三环——门 a 挡过冲拍 + 熔断封顶降级形态（方案 §2.4 如实登记）。
     check(!Discharge.autoTriggerReady(
@@ -222,8 +227,8 @@ func runDischargeOscillationDomainScenarios() throws {
     check(route(false, 79).topoffOwned && route(false, 79).convergenceTarget == 79
               && route(false, 79).orchestrationDesired == nil,
           "矩阵-1", "target 79 ∧ 编排关 → 同行 1（topoff 不受编排开关门——域随写语义一致化对称面）")
-    check(NativeLimitSet.setTarget(for: 79) == 80, "矩阵-1",
-          "target 79 恢复臂钳 set 80（<80 set 拒验收口径——执行体永不向原生 MCL 写 <80 值）")
+    check(NativeLimitSet.setTarget(for: 79) == 100, "矩阵-1",
+          "target 79 恢复臂 set 100（0.21.3 §2.2 映射——执行体永不向原生 MCL 写 <80 值 ∧ 不造 MCL 80 主导残留〔G1〕）")
 
     // 矩阵-2：行 3/4（target ≥80 ∧ 编排开/关）——域随写 target、编排开断言 target、
     // 编排关静默；边界 80/81 双侧。

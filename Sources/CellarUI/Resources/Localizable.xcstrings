@@ -8179,6 +8179,40 @@
         }
       }
     },
+    "settings.sub80.suppressed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System Settings charge limit 100% has turned the native limiting mechanism off"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统设置充电上限 100% 已关闭原生限充机制"
+          }
+        }
+      }
+    },
+    "settings.sub80.suppressed.desc": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cellar is restoring it automatically; if this keeps happening, set a concrete limit (e.g. 80%) in System Settings — never use 100% as an \"off\" switch (that disables the mechanism; use Cellar's stop button instead)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cellar 正在自动恢复；若反复出现请在系统设置设一个具体上限（如 80%）——切勿用 100% 作「关闭」（那是机制关闭位；停用请用 Cellar 的停用按钮）"
+          }
+        }
+      }
+    },
     "settings.execution.desc": {
       "extractionState": "manual",
       "localizations": {
@@ -8196,19 +8230,36 @@
         }
       }
     },
-    "settings.execution.embeddedNotice": {
+    "settings.execution.channelOff": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Handled by the App's built-in execution channel — the shortcut is kept as a fallback (auto-reverted if the channel becomes unavailable)"
+            "value": "Execution channel: internal domain enforcement (this toggle only controls the App's built-in set channel)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已由 App 内嵌执行通道接管——快捷指令保留为备用（可用性异常时自动回退）"
+            "value": "执行通道：内部域执法（本开关仅控制 App 内嵌 set 通道）"
+          }
+        }
+      }
+    },
+    "settings.execution.channelOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Execution channel: built-in App set + domain as a second line of defense"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "执行通道：App 内嵌 set + 域双保险"
           }
         }
       }

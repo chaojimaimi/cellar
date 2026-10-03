@@ -24,14 +24,17 @@ public enum NativeLimitSet {
     /// 与既有命令命名同域（fullOnce / cancelAction / setOrchestration）。
     public static let restoreCommand = "restoreChargeLimit"
 
-    /// set 执行目标钳制（§1.3 <80 恢复分支钉死）：target ≥80 → 原值直写；
-    /// target <80 → set 80（set 下限，解除原生限充压制——域 target 由 topoff 通道
-    /// 承载，「MCL 80 与域 75 并存无害」为待验证假设 R2-P2-1，§7.4 真机走查判定）。
-    /// 验收口径「≥80 set / <80 topoff」：编排链的 <80 目标本就由 daemon 路由静默
-    /// （Topoff.convergenceRoute topoffOwned → desired=nil），本钳制只服务恢复臂
-    /// 与防御面——执行体永不向原生 MCL 写 <80 值。
+    /// set 执行目标映射（0.21.3 §2.2 重定版——**映射层级钉死 R1-P2-2**：钉在
+    /// setTarget 使全部执行路径生效，含 shortcut 透传态——shortcut 收 100 同样
+    /// 正确）：target ≥80 → 原值直写；target <80 → **set 100**（恢复
+    /// pre-fullOnce 原生关闭态——域管。0.21.0 旧「钳 80」为三分支模型对齐前的
+    /// 有害形态：MCL 80 主导会顶掉域 75——G1/G2 实证，废除）。验收口径「≥80
+    /// set / <80 topoff（MCL 100 让域管）」：编排链的 <80 目标本就由 daemon 路由
+    /// 静默（Topoff.convergenceRoute topoffOwned → desired=nil），本映射只服务
+    /// 恢复臂与防御面——执行体永不向原生 MCL 写 <80 值，且 <80 时不留 MCL 80
+    /// 主导残留。
     public static func setTarget(for pendingTarget: Int) -> Int {
-        max(pendingTarget, minimumSetLimit)
+        pendingTarget >= minimumSetLimit ? pendingTarget : maximumSetLimit
     }
 
     /// §1.1 fallback 触发判定（R1-P2-3）：实例级失败连击达阈值 → 会话驻留快捷指令。
@@ -77,24 +80,43 @@ public enum NativeLimitSet {
         mclReadback == fullOnceTarget && policyUpperLimit < fullOnceTarget
     }
 
-    /// §1.5 关断残留补偿期望值（0.21.1 §2.2 **重定版**——域随写语义一致化后仅剩
-    /// 两臂；旧「编排关 ∧ target ≥80 → 100」为域 100 顶掉用户系统 MCL 与乒乓循环
-    /// 的第①层根因，已废除）：
-    /// - mode 关（面板停用 / CLI / SIGHUP / restoreAndExit）→ **恒 100**（全开语义
-    ///   与域 100 对齐；set 80 会重造「UI 已停用实际限 80」残留）；
-    /// - mode active ∧ 编排开关关 → target <80 → **80**（原生限充兜底保留——域保持
-    ///   75，topoff 不受编排开关门；域通道故障时 MCL 80 兜底，NativeLimitSet.swift
-    ///   原理由不变）∧ target ≥80 → **nil**（编排关不断域——域随写 target 覆盖
-    ///   全区间，无残留可补；App 不再 set 100）；
-    /// - mode active ∧ 编排开关开 → nil（正常执行态——编排链 + 读回校验既有机制
-    ///   执法，无态驱动补偿；fullOnce 临时放开窗同属本态）。
-    /// nil = 无补偿期望（App 侧不做态驱动对账）。
+    /// MCL 对账期望值（0.21.3 §2.1 **八行表统一重定版**——三分支模型对齐，G1
+    /// 根治；App 态驱动对账与 doctor 检查 20 同源消费；优先级自上而下）：
+    ///
+    /// 1. fullOnce 窗            → 100（窗覆盖——优先级最高）
+    /// 2. chargingDisabled 日程窗 → 100（完全放开——与断言链 desired=100 同源）
+    /// 3. mode 关（disable）     → 100（API 写全开语义；分支 2 路径保机制使能）
+    /// 4. 编排开 ∧ target ≥80    → target（MCL 主导，App set 执法——周期对账防线）
+    /// 5. 编排开 ∧ target <80 ∧ 非 degraded → 100（sub80 topoff 承载，MCL 必须
+    ///   100 让域管）
+    /// 6. 编排开 ∧ target <80 ∧ degraded → 80（对齐编排钳 desired=80——
+    ///   Topoff.swift 降级稳态分支；漏行后果 = 对账写 100 与编排钳互搏 30s 乒乓）
+    /// 7. 编排关 ∧ degraded      → 80（域通道死亡时的最后防线——MCL 80 总比无
+    ///   执法好；三分支分支 1 主导此时是期望行为）
+    /// 8. 编排关 ∧ 非 degraded（含 ≥80）→ 100（**0.21.3 §1.1 域承载全区间**——
+    ///   MCL 必须 100 让域管；旧「<80→80 兜底」行为 G1 实证有害〔MCL 80 主导
+    ///   顶掉域 75〕，废除）
+    ///
+    /// App 对账补偿执行统一走 API set（保机制使能——三分支分支 2 路径）。
+    /// nil 不再出现于 27 正常态（八行恒有期望值）；两窗输入由 wire
+    /// `fullOnceWindowActive`/`chargingDisabledWindowActive` 供给（27 恒填；
+    /// 26 缺省 false = 既有语义）。缺省参数保源兼容（既有构造点零 diff）。
     public static func shutdownExpectation(
-        modeActive: Bool, orchestrationEnabled: Bool, upperLimit: Int
+        modeActive: Bool,
+        orchestrationEnabled: Bool,
+        upperLimit: Int,
+        degraded: Bool = false,
+        fullOnceWindowActive: Bool = false,
+        chargingDisabledWindowActive: Bool = false
     ) -> Int? {
-        if !modeActive { return maximumSetLimit }
-        guard !orchestrationEnabled else { return nil }
-        return upperLimit >= minimumSetLimit ? nil : minimumSetLimit
+        if fullOnceWindowActive { return maximumSetLimit }            // 行 1
+        if chargingDisabledWindowActive { return maximumSetLimit }    // 行 2
+        if !modeActive { return maximumSetLimit }                     // 行 3
+        if orchestrationEnabled {
+            if upperLimit >= minimumSetLimit { return upperLimit }    // 行 4
+            return degraded ? minimumSetLimit : maximumSetLimit       // 行 6 / 行 5
+        }
+        return degraded ? minimumSetLimit : maximumSetLimit           // 行 7 / 行 8
     }
 }
 

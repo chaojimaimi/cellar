@@ -38,7 +38,8 @@ public struct OrchestrationSectionView: View {
     public let showsTitle: Bool
     /// **0.21.0 §1.2 set 可用态**（App 内嵌执行通道接管——R2-P3-3 参数驱动，
     /// CellarUI 不 import App 层）：true → 快捷指令名输入框隐藏 + setup 三步指引
-    /// 降级为说明性文案（「已由 App 内嵌执行通道接管——快捷指令保留为备用」）；
+    /// 分流为执行通道文案（0.21.3 §3.2 按开关态二选一：开 =「App 内嵌 set + 域
+    /// 双保险」/ 关 =「内部域执法（本开关仅控制 App 内嵌 set 通道）」）；
     /// false（缺省）→ 原指引（既有构造零 diff）。App 侧判定 = 27 终态 ∧ MCL set
     /// 通道可用 ∧ 未驻留快捷指令 fallback。
     public let embeddedExecutorAvailable: Bool
@@ -120,8 +121,16 @@ public struct OrchestrationSectionView: View {
             }
             // 0.21.0 §1.2：setup 指引二态——set 可用 → 降级说明性文案（快捷指令
             // 备用化）；set 不可用 → 原三步创建指引（既有文案零变化）。
+            // **0.21.3 §3.2 文案分流（0.21.2 登记）**：旧单一 embeddedNotice 在开关
+            // 关态误导（「已由 App 内嵌执行通道接管」——域执法不受本开关门，开关
+            // 关 ≠ 无执法）。改为按开关态分流：开 =「App 内嵌 set + 域双保险」；
+            // 关 =「内部域执法（本开关仅控制 App 内嵌 set 通道）」——参数驱动
+            //（enabled/embeddedExecutorAvailable 均既有参数，CellarUICheck 快照
+            // 矩阵直接构造两态）。
             if embeddedExecutorAvailable {
-                Text(CellarL10n.s("settings.execution.embeddedNotice"))
+                Text(CellarL10n.s(enabled
+                    ? "settings.execution.channelOn"
+                    : "settings.execution.channelOff"))
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

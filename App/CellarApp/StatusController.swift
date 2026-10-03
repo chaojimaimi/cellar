@@ -884,7 +884,8 @@ final class StatusController: ObservableObject {
     }
 
     /// 「恢复限充」（0.21.0 §1.3 恢复臂）：daemon 置 pending(`policy.upperLimit`)
-    /// → App 消费 set 回读回（<80 policy 分支执行体钳 set 80——§1.3）。前置拒收
+    /// → App 消费 set 回读回（<80 policy 分支执行体映射 set 100——0.21.3 §2.2，
+    /// 恢复 pre-fullOnce 原生关闭态由域管）。前置拒收
     /// （编排开关关）→ daemonError 原文上屏（R3-P3-1 恢复臂前置拒收同适用）。
     func restoreChargeLimit() {
         runControl(
@@ -910,8 +911,9 @@ final class StatusController: ObservableObject {
         if processedOrchestrationTokens.count > 8 {
             processedOrchestrationTokens.removeFirst(processedOrchestrationTokens.count - 8)
         }
-        // 0.21.0 §1.3/§1.1：执行值钳制（<80 → set 80——恢复臂分支；编排链目标
-        // 恒 ≥80 时为恒等）+ 执行体路由（set 优先 / 驻留 fallback）。
+        // 0.21.3 §2.2：执行值映射（<80 → set 100——恢复 pre-fullOnce 原生关闭态
+        // 由域管，不造 MCL 80 主导残留；≥80 恒等）+ 执行体路由（set 优先 /
+        // 驻留 fallback）。
         let setValue = NativeLimitSet.setTarget(for: percent)
         let flavor = NativeLimitSet.executorFlavor(dwellingShortcut: executorDwellsShortcut)
         // 名字执行时读 UserDefaults（static 读取——规避 @StateObject 临时实例接线

@@ -1049,6 +1049,28 @@ private func buildCases() -> [SnapshotCase] {
                     ).frame(width: 304, alignment: .leading)
                 })
             })
+
+            // 0.21.3 §3.2 文案分流第二态 1 组 6 张（全新文件——新增非扰动）：
+            // Orchestration_embeddedOff 钉死「enabled=false ∧
+            // embeddedExecutorAvailable=true——执行通道行分流为『内部域执法（本
+            // 开关仅控制 App 内嵌 set 通道）』」（0.21.2 登记的误导文案修正——
+            // 域执法不受本开关门）。既有 Orchestration_embedded golden 随
+            // channelOn 文案预期 regen。
+            // --regen --only=Orchestration 分组跑。
+            cases.append(SnapshotCase(
+                name: "Orchestration_embeddedOff_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    OrchestrationSectionView(
+                        enabled: false, shortcutName: NativeOrchestration.defaultShortcutName,
+                        lastError: nil, busy: false,
+                        readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
+                        embeddedExecutorAvailable: true,
+                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                    ).frame(width: 304, alignment: .leading)
+                })
+            })
         }
     }
     return cases

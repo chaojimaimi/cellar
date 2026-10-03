@@ -142,9 +142,42 @@ extension DaemonCore {
             return route.orchestrationDesired
         }
         if route.topoffOwned {
-            // 通道承载（<80）：off 清除（重新承载）→ 单通道互斥簿记 → 状态机推进。
+            // 通道承载（<80 或 0.21.3 §1.1 编排关全区间）：off 清除（重新承载）→
+            // 单通道互斥簿记 → 状态机推进。
             if topoffState.off { topoffState.off = false }
             discardStaleOrchestrationPendingLocked(events: &events)
+            // 0.21.3 §1.2 域读回预判（G7b——外部覆写快速自愈）：`Topoff.isViolationTick`
+            // 纯函数预判命中 **∨ suppressed 锁存期**（review P1：锁存态下对非违规
+            // owned 拍也补采样——覆写源停止后再无违规拍时，锁存仍可在下一拍经
+            // 一致读回解除；否则 suppressionConsecutive 唯一清零点在违规拍 =
+            // 永久滞留半死态〔警示行/doctor 20 假 FAIL〕。成本有界：仅锁存期
+            // 2 子进程/30s）才读（健康稳态零子进程）；读回结果注入 channelTick
+            // 新参 domainReadback（保持纯函数，覆写判定进场景域——一致读回在
+            // 非违规拍同样清零解锁）。读失败 → 注入 nil（fail-open 按既有违规
+            // 计数，不阻断防线）。degraded 态走 healTick（无读回面——探针观察
+            // 语义独立，方案 §1.2 未扩展）。
+            var domainReadback: (limit: Int?, featureState: Int?)?
+            let suppressedLatched = topoffState.suppressionConsecutive
+                >= Topoff.suppressionThreshold
+            if !topoffState.degraded,
+               suppressedLatched || Topoff.isViolationTick(
+                   percent: snapshot.percent, target: convergenceTarget,
+                   externalConnected: snapshot.externalConnected,
+                   isCharging: snapshot.isCharging
+               ) {
+                domainReadback = TopoffWriter.read(run: Self.runProcessCapture)
+                if let readback = domainReadback {
+                    let overridden = readback.limit != topoffState.lastWrittenLimit
+                        || readback.featureState != 1
+                    // 注：计数以 channelTick 后的 plan.state 为准（幂等写分支不消费
+                    // 读回——重定目标拍不递增；锁存边沿日志取准确值）。
+                    Self.persistLog(overridden
+                        ? "topoff 域读回（\(suppressedLatched ? "锁存期补采样" : "违规拍预判")）：外部覆写签名命中（读回 limit=\(readback.limit.map(String.init) ?? "缺席") featureState=\(readback.featureState.map(String.init) ?? "缺席") ≠ 写入 \(topoffState.lastWrittenLimit.map(String.init) ?? "nil")）→ 覆写自愈路径（重写目标 \(convergenceTarget)；锁存后 10 min 限频；violationTicks 清零不耗 strike）"
+                        : "topoff 域读回（\(suppressedLatched ? "锁存期补采样" : "违规拍预判")）：签名一致（域文件未被外部覆写）→ \(suppressedLatched ? "suppressionConsecutive 清零，锁存解除" : "违规拍正常计数（agent 无视域）")")
+                } else {
+                    Self.persistLog("topoff 域读回失败（fail-open——按既有违规计数）")
+                }
+            }
             let plan = topoffState.degraded
                 ? Topoff.healTick(
                     state: topoffState, target: convergenceTarget, now: now,
@@ -155,8 +188,22 @@ extension DaemonCore {
                     state: topoffState, target: convergenceTarget, now: now,
                     percent: snapshot.percent,
                     externalConnected: snapshot.externalConnected,
-                    isCharging: snapshot.isCharging)
+                    isCharging: snapshot.isCharging,
+                    domainReadback: domainReadback)
+            let suppressedBefore = topoffState.suppressionConsecutive
+                >= Topoff.suppressionThreshold
             topoffState = plan.state
+            // 0.21.3 §1.3 suppressed 锁存边沿（≥2 连续覆写签名命中——UI-100 机制
+            // 关闭形态）：LogEvent + persistLog（持久轨迹；wire sub80Mechanism-
+            // Suppressed 随 buildStatusLocked 透出）。锁存后重写限频 10 min 在
+            // channelTick 纯函数内（R1-P3-1 复用 reassertionCooldown 先例）。
+            let suppressedAfter = topoffState.suppressionConsecutive
+                >= Topoff.suppressionThreshold
+            if suppressedAfter && !suppressedBefore {
+                let message = "topoff 域机制被压制：系统设置充电上限 100% 已关闭原生限充机制（连续 \(topoffState.suppressionConsecutive) 拍覆写签名命中）——Cellar 正在自动恢复（重写限频 10 min）；若反复出现请在系统设置设一个具体上限（如 80%）"
+                Self.persistLog("topoff suppressed 锁存：\(message)")
+                events.append(LogEvent(category: .control, level: .warn, message: message))
+            }
             // 0.21.2 §3.2 strike 边沿锁存置位（N 拍——本拍观测段已先运行，边沿
             // 对其不可见是设计意图；N+1 拍 autoDischargeObservationLocked 读即清，
             // TTL 语义 Topoff.strikeEdgeReadable/Consume 纯函数钉面）。写域成败

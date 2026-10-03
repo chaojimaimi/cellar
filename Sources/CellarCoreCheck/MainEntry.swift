@@ -395,6 +395,11 @@ struct Main {
         // 0.20.2 §3：超带轻量重申场景域（触发带/冷却/不动降级计数/healProbe 窗不触发
         // 四组——纯函数面，TopoffReassertDomain）。
         runTopoffReassertDomainScenarios()
+        // 0.21.3 §1：执法链全区间扩展场景域（owned 扩展矩阵〔编排关边界/编排开
+        // ≥80 不进/全开窗排除/窗∧degraded/26 恒 false〕/违规拍域读回三分支/
+        // suppressionConsecutive 计数-锁存-限频-解除 + 三新键 wire round-trip
+        // ——纯函数面，TopoffReadbackDomain）。
+        runTopoffReadbackDomainScenarios()
         // 0.20.2 §2：topoff 诚实性状态持久化场景域（加载/损坏 fallback/值域钳制/
         // 降级跨重启 healTick 照跑/off 兼容/写入点 sub80 门/触发源七组——
         // TopoffStateStore 路径注入缝 + Topoff 纯函数面，TopoffPersistenceDomain）。

@@ -39,6 +39,23 @@ struct GeneralSections: View {
             if orchestrationCapabilityAvailable {
                 orchestrationSection
             }
+            // 0.21.3 §1.3 UI-100 机制关闭警示行（G3）：daemon wire
+            // sub80MechanismSuppressed——系统设置把充电上限设为 100% 关闭了原生
+            // 限充机制（topoff 域连续 ≥2 拍覆写签名命中锁存）。Cellar 正在自动
+            // 恢复（重写限频 10 min）；解除 = 域读回一致（随轮询自然消失）。
+            // 独立条件块（域执法不受编排开关门——不并入编排节防开关关态漏显）。
+            if statusController.daemonStatus?.sub80MechanismSuppressed == true {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CellarL10n.s("settings.sub80.suppressed"))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(theme.warning)
+                    Text(CellarL10n.s("settings.sub80.suppressed.desc"))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             fanSection
             thermalSection
             magSafeLedSection

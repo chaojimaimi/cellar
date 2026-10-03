@@ -111,6 +111,24 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// autostart 放电完成 → 后续自动放电静默（手动放电不受影响）；解除 = 重启
     ///（内存态）或用户重新 opt-in。恒填（daemon 每回包从锁内运行态组装）。
     public var autoDischargeSuspended: Bool?
+    /// 0.21.3 §1.3 UI-100 机制关闭检测（G3）：topoff 域连续 ≥2 拍覆写签名命中
+    ///（suppressionConsecutive ≥ Topoff.suppressionThreshold——锁存）。true =
+    /// 系统设置把充电上限设为 100% 关闭了原生限充机制，Cellar 正在自动恢复——
+    /// App 通用页警示行 + doctor 检查 20 FAIL 臂数据源。**仅 sub80 能力机恒填**
+    ///（26/旧 daemon 缺席 = 无此特性，decodeIfPresent wire 兼容先例）；解除 =
+    /// 域读回一致清零（锁存期 daemon 对非违规 owned 拍也补采样读回——覆写源
+    /// 停止后下一拍即解除，随轮询自然消失〔review P1 半死态根治〕）。
+    public var sub80MechanismSuppressed: Bool?
+    /// 0.21.3 §2.1 MCL 对账期望派生的两窗输入（shutdownExpectation 八行表行 1/2）：
+    /// fullOnce 临时放开窗是否在位（orchestrationState.fullOnceWindowActive）。
+    /// **orchestrationTerminal 门内恒填**（27 观测段；26/旧 daemon 缺席 = 无此
+    /// 特性——App 对账循环 orchestrationTerminal 门内天然不消费，decodeIfPresent
+    /// wire 兼容先例）。
+    public var fullOnceWindowActive: Bool?
+    /// 同上——chargingDisabled 日程窗是否在位（scheduleState.lastAppliedEntryId
+    /// 派生的显式字段——单一真相，勿由 App 侧再派生）。orchestrationTerminal
+    /// 门内恒填。
+    public var chargingDisabledWindowActive: Bool?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -148,6 +166,9 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         sub80HealProbeTicks: Int? = nil,
         sub80WrittenLimit: Int? = nil,
         autoDischargeSuspended: Bool? = nil,
+        sub80MechanismSuppressed: Bool? = nil,
+        fullOnceWindowActive: Bool? = nil,
+        chargingDisabledWindowActive: Bool? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -183,6 +204,9 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.sub80HealProbeTicks = sub80HealProbeTicks
         self.sub80WrittenLimit = sub80WrittenLimit
         self.autoDischargeSuspended = autoDischargeSuspended
+        self.sub80MechanismSuppressed = sub80MechanismSuppressed
+        self.fullOnceWindowActive = fullOnceWindowActive
+        self.chargingDisabledWindowActive = chargingDisabledWindowActive
         self.timestamp = timestamp
     }
 }
@@ -265,7 +289,7 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.21.2-alpha"
+    public static let daemonVersion = "0.21.3-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
