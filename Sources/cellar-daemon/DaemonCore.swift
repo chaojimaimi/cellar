@@ -178,6 +178,18 @@ final class DaemonCore: @unchecked Sendable {
     /// calibrationStateStore 先例——可测。写入纪律：主锁内 tmp+rename 直写，
     /// 26 平台不生成状态文件）。
     let topoffStateStore: TopoffStateStore
+    /// 0.21.2 §3.2 strike 边沿锁存（结构体定义在 CellarCore Topoff.swift
+    /// ——TTL 纯函数 StrikeEdgeLatch 族钉面，daemon 只做置位/读即清簿记）。**锁内
+    /// 内存态不持久化**——重启即清，下一 strike 边沿最迟 10 min 后随验证窗满再来
+    ///（方案 §6「边沿丢失」登记面）。置位点 = topoffConvergenceRouteLocked 消费
+    /// plan.strikeFired 拍；消费点 = autoDischargeObservationLocked（读即清）。
+    var strikeEdgeLatch = StrikeEdgeLatch()
+    /// 0.21.2 §3.2 tick 序号（锁内内存态单调递增——performTickLocked 入口 +1，
+    /// 与 watchdog tick 时钟同点）。strike 边沿锁存 TTL 的时基：N 拍置位、N+1 拍
+    /// 可读、N+2 拍失效且读即清（Topoff.strikeEdgeReadable/Consume 纯函数消费）。
+    /// ⚠️ internal：DaemonCore+Topoff/+Discharge 跨文件访问——executable internal
+    /// 模块外不可达。
+    var tickSequence = 0
     /// 0.20 M1b P3-1：topoff 域写连续失败计数（日志降频——首条 error、后续合并
     /// 计数 warn；写成功即清零）。锁内内存态（纯日志面，不持久化）。⚠️ internal：
     /// DaemonCore+Topoff.swift 跨文件访问——executable internal 模块外不可达。
@@ -806,6 +818,9 @@ final class DaemonCore: @unchecked Sendable {
         tickClockLock.lock()
         lastTickAt = Date()
         tickClockLock.unlock()
+        // 0.21.2 §3.2 strike 边沿锁存时基：本拍序号（与 watchdog 时钟同入口首行
+        // ——早退臂亦递增，序号只要求单调不要求连续）。
+        tickSequence += 1
         // 0.20 M1a 合盖拒绝闸：合盖状态只读探测（每 tick 一次缓存——DaemonStatus.
         // clamshellClosed 数据源 + 运行中止判定输入；读取失败 → nil 诚实缺席，
         // mini-spike 结论与弱检查局限见 ClamshellProbe/DEVICES.md）。

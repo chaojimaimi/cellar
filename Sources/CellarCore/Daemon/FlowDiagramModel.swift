@@ -68,24 +68,31 @@ public let flowDiagramEdgeDisplayThresholdW = 0.05
 /// 功率流向判定（判定表，实现与方案 §D2 逐字对齐；`BP`/`SP` 单位 mW）：
 ///
 ///     viW  = voltageMV × amperageMA / 1e6
-///     viEdge = |viW| >= 0.05 ? |viW| : nil          // 显示阈值（P1-2）
+///     viEdge = |viW| >= 0.05 ? −|viW| : nil         // 显示阈值（P1-2）+ 0.21.2 §2.2
+///                                                   // 电池供电态 = 放电方向（负）
 ///     spW  = systemPowerInMW.map { Double($0)/1000 }
+///     slW  = systemLoadMW.map { Double($0)/1000 }   // 0.21.2 §2.1 直读键（SystemLoad）
 ///
 ///     ① !externalConnected
-///        → .battery, batteryEdgeW = viEdge, directEdgeW = nil, systemLoadW = |viW|
-///        （系统节点无阈值——现状）
+///        → .battery, batteryEdgeW = viEdge（负——放电方向契约归位，0.21.2 §2.2）,
+///          directEdgeW = nil, systemLoadW = |viW|
+///        （系统节点无阈值——现状；电池态系统负载维持 |V×I|——D1 电池态 App 1s
+///        采样新鲜度规则，不切遥测代际源）
 ///
 ///     ② externalConnected && (systemPowerInMW == nil || batteryPowerMW == nil)
 ///        → isCharging ? (.charging, batteryEdgeW = viEdge, directEdgeW = nil,
-///                        systemLoadW = nil)
+///                        systemLoadW = slW)
 ///                     : (.holding,  batteryEdgeW = nil, directEdgeW = spW,
-///                        systemLoadW = nil)
+///                        systemLoadW = slW)
 ///        （holding 的 directEdgeW 取 spW——仅需 SP 在场，supplyLineText 的
 ///        holding 分支 R1 P2-1；charging 的 direct 保持 nil——旧
-///        derivedSystemLoadW 需 SP+BP 双在场）
+///        derivedSystemLoadW 需 SP+BP 双在场。0.21.2 §2.1 直读键优先：SP−BP
+///        派生不可达的**部分键缺席场** SystemLoad 在场即用（更优），缺席回退
+///        现状 nil）
 ///
 ///     ③ externalConnected && 遥测齐全（v0.19.5 §D1 修订——assist 代际确认门）
 ///        bpW = BP/1000;  loadW = spW − bpW;  load = loadW >= 0 ? loadW : nil
+///        systemLoad = slW ?? load                       // 0.21.2 §2.1 直读键优先
 ///        generationChanged = previous != nil && (SP != prev.SP || BP != prev.BP)
 ///        bpNegative        = BP < −50 mW
 ///        assistConfirmed   = bpNegative && (prev.kind == .assist        // 锁存维持
@@ -93,11 +100,11 @@ public let flowDiagramEdgeDisplayThresholdW = 0.05
 ///
 ///        六组合（按判定顺序，互斥穷举有归宿）：
 ///        - assistConfirmed                        → .assist, batteryEdgeW = bpW(负),
-///          directEdgeW = spW, systemLoadW = load
+///          directEdgeW = spW, systemLoadW = systemLoad
 ///          （assist 的 directEdgeW = SP：该边真实流量 = min(SP, 负载)，补入态
 ///          负载 = SP + |BP| > SP → 取 SP。于是 直供边 + 电池边 = 系统节点）
 ///        - isCharging && BP > +50 mW              → .charging, batteryEdgeW = bpW(正),
-///          directEdgeW = load, systemLoadW = load
+///          directEdgeW = load, systemLoadW = systemLoad
 ///          （charging 要求 isCharging——徽章与图形一致；仅 assist 一处**故意**
 ///          分叉。已知副作用：isCharging=true && |BP| ≤ ε 时徽章「充电中」而
 ///          图形 holding，验收列为已知形态）
@@ -109,9 +116,11 @@ public let flowDiagramEdgeDisplayThresholdW = 0.05
 ///          systemLoadW = nil、directEdgeW = spW
 ///          （方向词/徽章按最新策略态，数字置 nil 不造数；直供边照显。
 ///          停充侧若兜底旧 holding（load=SP−BP）会复现事故现场的负载虚高
-///          64+25.3=89.3，故显式 nil）
+///          64+25.3=89.3，故显式 nil——**0.21.2 §2.1 直读键不进本臂**：本臂
+///          显式 nil 是 supplyLineText「直供 · SP W」识别式契约的判定依据，
+///          直读键在场即改判会翻转该形态）
 ///        - !isCharging && BP > +50 mW（停充尾态） → .holding, batteryEdgeW = nil,
-///          directEdgeW = spW, systemLoadW = load
+///          directEdgeW = spW, systemLoadW = systemLoad
 ///        - |BP| ≤ 50 mW（含 ±50 边界，**不进**未确认窗口）→ .holding 同上行
 ///
 ///        WHY 判定顺序：assistConfirmed 最先（锁存维持要求稳态字典不动
@@ -135,22 +144,33 @@ public func flowDiagramModel(
     batteryPowerMW: Int?,
     batteryVoltageMV: Int,
     batteryAmperageMA: Int,
+    systemLoadMW: Int? = nil,
     previous: FlowDiagramPreviousSample? = nil
 ) -> FlowDiagramModel {
     let viW = Double(batteryVoltageMV) * Double(batteryAmperageMA) / 1_000_000
     let viEdge: Double? = abs(viW) >= flowDiagramEdgeDisplayThresholdW ? abs(viW) : nil
     let spW = systemPowerInMW.map { Double($0) / 1000 }
+    // 0.21.2 §2.1 直读键：SystemLoad 与 SP/BP 同代相干（同一 PowerTelemetryData
+    // 字典）——守恒下 SP−BP 派生值与直读值等价；部分键缺席场直读在场即用（更优）。
+    let directLoadW = systemLoadMW.map { Double($0) / 1000 }
 
-    // ① 电池供电：边有 0.05 显示阈值、系统节点无阈值（现状口径）。
+    // ① 电池供电：边有 0.05 显示阈值、系统节点无阈值（现状口径）。0.21.2 §2.2
+    // 符号化补缺口：batteryEdgeW 契约 =「受电 + / 放电 −」——电池供电态即放电
+    // 方向，符号落负（旧实现存 abs、消费点 powerBSText 再翻符号；契约归位后
+    // 消费点直传，显示文本逐字节不变）。系统负载维持 |V×I|——D1 电池态 1s
+    // 采样新鲜度规则，不切遥测代际源（直读键不进本臂）。
     guard externalConnected else {
-        return FlowDiagramModel(kind: .battery, batteryEdgeW: viEdge, directEdgeW: nil, systemLoadW: abs(viW))
+        return FlowDiagramModel(
+            kind: .battery, batteryEdgeW: viEdge.map { -$0 },
+            directEdgeW: nil, systemLoadW: abs(viW))
     }
 
-    // ② 遥测缺席 → 回退现状（isCharging 分层；负值/缺席一律不造数）。
+    // ② 遥测缺席 → 回退现状（isCharging 分层；负值/缺席一律不造数）。0.21.2
+    // §2.1 直读键优先：SP−BP 派生不可达的部分键缺席场 SystemLoad 在场即用。
     guard let spW, let batteryPowerMW else {
         return isCharging
-            ? FlowDiagramModel(kind: .charging, batteryEdgeW: viEdge, directEdgeW: nil, systemLoadW: nil)
-            : FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: spW, systemLoadW: nil)
+            ? FlowDiagramModel(kind: .charging, batteryEdgeW: viEdge, directEdgeW: nil, systemLoadW: directLoadW)
+            : FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: spW, systemLoadW: directLoadW)
     }
 
     // ③ 遥测齐全 → 实测符号裁决 + 代际确认门（v0.19.5 §D1；Int mW 精确比较，
@@ -158,6 +178,11 @@ public func flowDiagramModel(
     let bpW = Double(batteryPowerMW) / 1000
     let loadW = spW - bpW
     let load: Double? = loadW >= 0 ? loadW : nil
+    // 0.21.2 §2.1 系统节点数据源升级：直读键优先（守恒下与 SP−BP 等价），缺席
+    // 回退派生值。assist/charging/holding 三臂统一消费；未确认窗口臂**不消费**
+    //（保持显式 nil——防负载虚高事故形态回潮 + supplyLineText「直供 · SP W」
+    // 识别式契约，见判定表注）。
+    let systemLoad = directLoadW ?? load
 
     // 代际确认门：assist 需「连续两帧 BP<−ε 且确认换代」进入，或锁存维持。
     let bpNegative = batteryPowerMW < -flowDiagramZeroFlowEpsilonMW
@@ -176,11 +201,11 @@ public func flowDiagramModel(
 
     if assistConfirmed {
         // 已确认补入：直供边取 SP（min(SP, 负载)，补入态负载恒 > SP）。
-        return FlowDiagramModel(kind: .assist, batteryEdgeW: bpW, directEdgeW: spW, systemLoadW: load)
+        return FlowDiagramModel(kind: .assist, batteryEdgeW: bpW, directEdgeW: spW, systemLoadW: systemLoad)
     }
     if isCharging && batteryPowerMW > flowDiagramZeroFlowEpsilonMW {
         // 实际受电：直供边 = 负载（min(SP, 负载) = 负载，与 assist 同一规则解释）。
-        return FlowDiagramModel(kind: .charging, batteryEdgeW: bpW, directEdgeW: load, systemLoadW: load)
+        return FlowDiagramModel(kind: .charging, batteryEdgeW: bpW, directEdgeW: load, systemLoadW: systemLoad)
     }
     if bpNegative {
         // 未确认窗口（不分支 isCharging）：kind 跟随 1s 新鲜的 isCharging，
@@ -190,7 +215,7 @@ public func flowDiagramModel(
             kind: isCharging ? .charging : .holding,
             batteryEdgeW: nil, directEdgeW: spW, systemLoadW: nil)
     }
-    return FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: spW, systemLoadW: load)
+    return FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: spW, systemLoadW: systemLoad)
 }
 
 /// 快照 → 流向显示模型便捷投影（0.19.4 §1.1——flowDiagramModel 的 BatterySnapshot
@@ -206,6 +231,8 @@ public func flowModel(of snapshot: BatterySnapshot, previous: FlowDiagramPreviou
         batteryPowerMW: snapshot.telemetry?.batteryPowerMW,
         batteryVoltageMV: snapshot.voltageMV,
         batteryAmperageMA: snapshot.amperageMA,
+        // 0.21.2 §2.1：SystemLoad 直读键透传（直读键优先——缺席回退 SP−BP 派生）。
+        systemLoadMW: snapshot.telemetry?.systemLoadMW,
         previous: previous
     )
 }

@@ -32,7 +32,8 @@ extension DashboardView {
 
     /// 功率流向显示模型（v0.19.3 §D4——判定全部下沉 CellarCore 纯函数
     /// `flowDiagramModel`，本文件只做字符串组装）。v0.19.5 §D2：六参直调透传
-    /// controller 前态投影（assist 代际确认门的判定输入）。
+    /// controller 前态投影（assist 代际确认门的判定输入）。0.21.2 §2.1：
+    /// SystemLoad 直读键透传（直读键优先——缺席回退 SP−BP 派生）。
     var flowModel: FlowDiagramModel {
         flowDiagramModel(
             externalConnected: snapshot?.externalConnected ?? false,
@@ -41,6 +42,7 @@ extension DashboardView {
             batteryPowerMW: snapshot?.telemetry?.batteryPowerMW,
             batteryVoltageMV: snapshot?.voltageMV ?? 0,
             batteryAmperageMA: snapshot?.amperageMA ?? 0,
+            systemLoadMW: snapshot?.telemetry?.systemLoadMW,
             previous: statusController.flowPreviousSample
         )
     }
@@ -66,8 +68,9 @@ extension DashboardView {
         switch flowModel.kind {
         case .battery:
             guard let w = flowModel.batteryEdgeW else { return nil }
-            // 负值经格式串显「−」方向（组件 color 由放电边 warn 承载）。
-            return CellarL10n.s("dashboard.flow.powerOut", -w)
+            // 0.21.2 §2.2 符号化补缺口：模型层已按「放电 −」契约落负值，直传
+            // （旧实现存 abs、此处再翻符号——显示文本逐字节不变）。
+            return CellarL10n.s("dashboard.flow.powerOut", w)
         case .assist:
             guard let w = flowModel.batteryEdgeW else { return nil }
             return CellarL10n.s("dashboard.flow.assist", abs(w))

@@ -33,6 +33,7 @@ func runAutoDischargeDomainScenarios() throws {
     // 全门开基线（enabled=true、active、外接、无动作、能力在位、82 ≥ 80+2、
     // 从未完成——冷却/重插两门直通）。0.21.1 §1.1 三门增参默认值 = 26 时代假设
     //（charging=false 停充即时生效、无窗、未抑制）——既有真值表逐值不变（26 回归锚）。
+    // 0.21.2 §3.2：strikeEdgeLatched 缺省 nil = 既有判定链零 diff（26 回归锚）。
     func ready(
         enabled: Bool? = true, mode: String = "active", externalConnected: Bool = true,
         isCharging: Bool = false,
@@ -40,7 +41,8 @@ func runAutoDischargeDomainScenarios() throws {
         actionActive: Bool = false,
         dischargeCapable: Bool = true, oscillationSuspended: Bool = false,
         now: Date = t0,
-        lastAutoCompletion: Date? = nil, adapterCycleSinceCompletion: Bool = true
+        lastAutoCompletion: Date? = nil, adapterCycleSinceCompletion: Bool = true,
+        strikeEdgeLatched: Bool? = nil
     ) -> Bool {
         Discharge.autoTriggerReady(
             enabled: enabled, mode: mode, externalConnected: externalConnected,
@@ -52,7 +54,8 @@ func runAutoDischargeDomainScenarios() throws {
             oscillationSuspended: oscillationSuspended,
             now: now,
             lastAutoCompletion: lastAutoCompletion,
-            adapterCycleSinceCompletion: adapterCycleSinceCompletion
+            adapterCycleSinceCompletion: adapterCycleSinceCompletion,
+            strikeEdgeLatched: strikeEdgeLatched
         )
     }
 
@@ -355,4 +358,70 @@ func runAutoDischargeDomainScenarios() throws {
     // restoreBase 降限与进窗降限同链）。
     check(Discharge.limitObservation(previous: 80, current: 75).rearm, "自动-26",
           "恢复场景等价（base 80 → current 75）→ rearm=true")
+
+    // ---- ⑪ 0.21.2 §3.2 strike 边沿伴随触发矩阵（门向量 × 边沿穷举）----
+    // 收紧语义：27 观测段自动放电 = strike 边沿伴随唯一场景（strikeEdgeLatched 非
+    // nil 即收紧模式——无边沿直接静默；边沿拍门 a 放行）。0.21.1 判定链全保留。
+
+    // 自动-27：边沿拍触发 + 门 a 放行（strike 后仍 charging=true = agent 不跟域的
+    // 失效证据，放电即打断手段——R2-P3-1 门 a 边沿拍精化）。
+    check(ready(isCharging: true, strikeEdgeLatched: true), "自动-27",
+          "边沿拍 ∧ charging=true → 触发（门 a 放行——失效证据本身 = 打断手段）")
+    check(ready(isCharging: false, strikeEdgeLatched: true), "自动-27",
+          "边沿拍 ∧ !isCharging → 触发（门 a 本就开，边沿不改变停充态判定）")
+
+    // 自动-28：非边沿拍静默——收紧模式 strikeEdgeLatched=false（含降级拍/校准抑制
+    // 归并臂）→ 其余门全开也不触发（边沿锁存 = 收紧段触发必要条件）。
+    check(!ready(strikeEdgeLatched: false), "自动-28",
+          "收紧模式无边沿（停充态、门全开）→ 静默（旧链无此门——27 收紧面）")
+    check(!ready(isCharging: true, strikeEdgeLatched: false), "自动-28",
+          "收紧模式无边沿 ∧ charging → 静默（门 a 原样 + 边沿门双拦）")
+
+    // 自动-29：26 不变（缺省 nil = 既有判定链零 diff——无 strike 链，门 a 原样，
+    // 26 过冲即时停充；执法段 effectiveTarget=upperLimit 常量锚不变）。
+    check(!ready(isCharging: true), "自动-29",
+          "26 链（nil）∧ charging=true → 不触发（门 a 原样——26 回归锚）")
+    check(ready(isCharging: false), "自动-29",
+          "26 链（nil）∧ !isCharging → 触发（既有行为逐值不变）")
+
+    // 自动-30：门 a 两态对齐（同一 charging=true 输入：nil = 原样拦 / 边沿拍 = 放行
+    // ——0.21.2 门 a 精化的单点对照；非边沿收紧拍 false 与 nil 同拦）。
+    check(!ready(isCharging: true) && ready(isCharging: true, strikeEdgeLatched: true)
+            && !ready(isCharging: true, strikeEdgeLatched: false), "自动-30",
+          "门 a 两态：nil 模式 charging 拦（26 原样）/ 边沿拍 charging 放行（失效证据即打断）/ 非边沿拍拦")
+
+    // 自动-31：边∧窗静默（门 b 保留——fullOnce/日程窗 effectiveTarget=nil 直接沉默，
+    // 边沿不豁免窗覆盖静默）。
+    check(!ready(windowOverride: true, strikeEdgeLatched: true), "自动-31",
+          "边沿拍 ∧ 完全放开窗 → 静默（门 b 窗覆盖——显式放开期不被放电对抗）")
+
+    // 自动-32：边∧冷却丢失不补发（冷却/重插门保留——边沿不豁免；TTL 1 tick 结构性
+    // 防陈旧边沿冷却后再触发——登记面，见 TopoffDomain 边沿-5）。
+    check(!ready(lastAutoCompletion: t0.addingTimeInterval(-(29 * 60 + 59)), strikeEdgeLatched: true),
+          "自动-32", "边沿拍 ∧ 冷却未过 → 静默（边沿丢失不补发——下一 strike 边沿 10 min 后再来）")
+    check(!ready(lastAutoCompletion: completedAnHourAgo, adapterCycleSinceCompletion: false, strikeEdgeLatched: true),
+          "自动-32", "边沿拍 ∧ 重插门未开 → 静默（同上登记面）")
+
+    // 自动-33：margin 门保留——边沿拍不豁免 margin+2。
+    check(!ready(percent: 81, strikeEdgeLatched: true), "自动-33",
+          "边沿拍 ∧ percent = 上限+1 → 静默（margin 门原样）")
+
+    // 自动-34：伴随组合消费形态（daemon 传入 strikeEdgeLatched 前先经
+    // Topoff.strikeAccompaniment 归并——degraded 拦截/校准抑制/无边沿三臂在组合层
+    // 归并为 false，模型层输入形态见 TopoffDomain 边沿-2/3/6）。
+    let accompanimentRows: [(edge: Bool, degraded: Bool, suspected: Bool, expected: Bool, note: String)] = [
+        (true, false, false, true, "边沿拍承载态 → 成立"),
+        (true, true, false, false, "第 3 边沿（降级拍）→ !degraded 拦截 → 不放电"),
+        (true, false, true, false, "校准抑制期 → 冻结"),
+        (false, false, false, false, "无边沿（healTick 无边同型）→ 不成立"),
+    ]
+    for row in accompanimentRows {
+        let accompanied = Topoff.strikeAccompaniment(
+            edgeReadable: row.edge, degraded: row.degraded, calibrationSuspected: row.suspected)
+        check(accompanied == row.expected, "自动-34", "伴随组合（edge=\(row.edge), degraded=\(row.degraded), suspected=\(row.suspected)）→ \(row.note)")
+        // 组合直通收紧判定（daemon 接线形态：非 nil = 收紧模式；charging=true 态下
+        // 触发 ⇔ 伴随成立——边沿拍门 a 放行、非边沿拍门 a + 边沿门双拦）。
+        check(ready(isCharging: true, strikeEdgeLatched: accompanied) == accompanied, "自动-34",
+              "伴随组合直通（charging 态）：\(row.note)")
+    }
 }

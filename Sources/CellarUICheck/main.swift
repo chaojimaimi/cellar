@@ -983,6 +983,23 @@ private func buildCases() -> [SnapshotCase] {
                 })
             }
 
+            // 0.21.2 §1 自 438 扩 444——共享回落进度行 1 态 6 张（全部全新文件，
+            // 新增非扰动；本地无 golden 属预期——CI macos-26 权威 regen 对账，
+            // 同批流程）：Sub80FallingRow_shown 钉死提取后的共享子组件
+            // Sub80FallingProgressRow（面板充电控制页 + 仪表板电量卡双宿主；
+            // Sub80StatusView.fallingLine 渲染体移交本组件——既有
+            // Sub80Status_falling golden 零 diff 即逐字节同源背书）。
+            // --regen --only=Sub80FallingRow 分组跑。
+            cases.append(SnapshotCase(
+                name: "Sub80FallingRow_shown_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    Sub80FallingProgressRow(from: 82, target: 75)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
             // 0.21.0 §3.2：校准抑制横幅（「系统校准中（限充暂缓——校准结束自动
             // 恢复）」——消费 daemonStatus.calibrationSuspected；缺省 visible=false
             // → EmptyView（既有宿主构造零 diff——组件缺省形态即空渲染）；新组 6 张

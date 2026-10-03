@@ -434,4 +434,123 @@ func runTopoffDomainScenarios() {
         check(modeOff.convergenceTarget == nil && modeOff.orchestrationDesired == nil && !modeOff.topoffOwned,
               "路由-6", "mode 非 active → 汇聚目标 nil（关断清理面——域随写 100 + off）")
     }
+
+    // ---- ⑥ 0.21.2 §3.2 strike 边沿信号（TopoffTickPlan.strikeFired + 锁存 TTL）----
+    // R1-P0 接线层盲区根治：验证窗满拍 violationTicks 即归零（先于 topoff tick 的
+    // 观测点可见最大 19，「≥20 判据」按字面接线永不触发）——显式边沿信号取代。
+
+    // 边沿-1：channelTick strike 拍置位 + 单拍有效——窗内 19 拍恒 false、第 20 拍
+    // （strikes 递增拍）true；非违规拍/幂等写拍/采样缺席拍恒 false。
+    do {
+        var s = TopoffChannelState()
+        s.activeTarget = 75
+        s.lastWrittenLimit = 75
+        s.lastWriteAt = tick(0)
+        var windowPlans: [TopoffTickPlan] = []
+        for n in 1...20 {
+            let plan = Topoff.channelTick(state: s, target: 75, now: tick(n),
+                                          percent: 90, externalConnected: true, isCharging: true)
+            windowPlans.append(plan)
+            s = plan.state
+        }
+        check(windowPlans.prefix(19).allSatisfy { !$0.strikeFired }
+                && windowPlans[19].strikeFired && windowPlans[19].state.strikes == 1,
+              "边沿-1", "验证窗：19 拍无边沿 → 第 20 拍（strike 拍）strikeFired=true（单拍有效——strikes 递增拍置位）")
+        let idle = Topoff.channelTick(state: s, target: 75, now: tick(21),
+                                      percent: 90, externalConnected: true, isCharging: true)
+        check(!idle.strikeFired && idle.state.strikes == 1,
+              "边沿-1", "strike 后续拍（违规带内）无边沿——单拍有效不跨拍")
+        let absent = Topoff.channelTick(state: s, target: 75, now: tick(22),
+                                        percent: nil, externalConnected: nil, isCharging: nil)
+        check(!absent.strikeFired, "边沿-1", "采样缺席拍恒无边沿")
+    }
+
+    // 边沿-2：第 3 strike（降级拍）strikeFired=true 且 degraded=true **同拍**——
+    // 边沿在档但消费侧 !degraded 门拦截（「第 3 边沿不放电」的模型侧依据）。
+    do {
+        var s = TopoffChannelState()
+        s.activeTarget = 75
+        s.lastWrittenLimit = 75
+        var degradePlan: TopoffTickPlan?
+        for w in 0..<3 {
+            s.lastWriteAt = tick(w * 25)
+            for n in 1...20 {
+                degradePlan = Topoff.channelTick(state: s, target: 75, now: tick(w * 25 + n),
+                                                 percent: 90, externalConnected: true, isCharging: true)
+                s = degradePlan!.state
+                if degradePlan!.writeLimit != nil {
+                    s.lastWrittenLimit = degradePlan!.writeLimit; s.lastWriteAt = tick(w * 25 + n)
+                }
+            }
+        }
+        check(degradePlan?.strikeFired == true && s.degraded && s.strikes == 3,
+              "边沿-2", "降级拍：strikeFired=true ∧ degraded=true 同拍置位（消费侧 !degraded 拦截臂的输入形态）")
+    }
+
+    // 边沿-3：healTick 恒无 strike 边沿（稳态等待拍/探针开窗拍/观察窗拍/自愈失败拍/
+    // 恢复拍——strikes 只在 channelTick 递增；「degraded·healTick 无边不触发」模型侧）。
+    do {
+        var steady = TopoffChannelState()
+        steady.degraded = true
+        steady.lastWrittenLimit = 80
+        steady.activeTarget = 75
+        steady.lastHealProbeAt = tick(0)
+        let waiting = Topoff.healTick(state: steady, target: 75, now: tick(1),
+                                      percent: 90, externalConnected: true, isCharging: true)
+        let probe = Topoff.healTick(state: steady, target: 75, now: tick(0).addingTimeInterval(Topoff.healProbeInterval),
+                                    percent: 90, externalConnected: true, isCharging: true)
+        var probing = probe.state
+        probing.lastWrittenLimit = 75
+        let observing = Topoff.healTick(state: probing, target: 75, now: tick(1),
+                                        percent: 90, externalConnected: true, isCharging: true)
+        let restored = Topoff.healTick(state: probing, target: 75, now: tick(1),
+                                       percent: 75, externalConnected: true, isCharging: false)
+        check(!waiting.strikeFired && !probe.strikeFired && !observing.strikeFired && !restored.strikeFired,
+              "边沿-3", "healTick 全臂（等待/开窗/观察/恢复）恒无 strike 边沿")
+    }
+
+    // 边沿-4：锁存 TTL 钉死——N 拍置位、N+1 拍可读、N+2 拍失效且读即清；
+    // 置位拍不可读（同拍观测段先于 topoff tick——边沿对观测段不可见是设计意图）。
+    do {
+        let latched = StrikeEdgeLatch(setAtTick: 100)
+        check(!Topoff.strikeEdgeReadable(latch: latched, tick: 100),
+              "边沿-4", "置位拍 N 不可读（同拍置位在观测段之后——次序契约）")
+        check(Topoff.strikeEdgeReadable(latch: latched, tick: 101),
+              "边沿-4", "N+1 拍可读（TTL=1 tick）")
+        check(!Topoff.strikeEdgeReadable(latch: latched, tick: 102),
+              "边沿-4", "N+2 拍失效（陈旧边沿冷却后不再触发——R2-P3-2）")
+        let consumedAtRead = Topoff.strikeEdgeConsume(latch: latched, tick: 101)
+        check(consumedAtRead.readable && consumedAtRead.next.setAtTick == nil,
+              "边沿-4", "可读拍读即清（消费后无在档边沿）")
+        let consumedExpired = Topoff.strikeEdgeConsume(latch: latched, tick: 102)
+        check(!consumedExpired.readable && consumedExpired.next.setAtTick == nil,
+              "边沿-4", "失效拍读即清（过期残留不滞留）")
+        let untouched = Topoff.strikeEdgeConsume(latch: latched, tick: 100)
+        check(!untouched.readable && untouched.next.setAtTick == 100,
+              "边沿-4", "置位拍读不清（消费点在 topoff tick 之前——置位后残留，下拍可读）")
+    }
+
+    // 边沿-5：一拍陈旧边沿不复活——置位后隔多拍（冷却结束/重插门开）永不可读；
+    // 空锁存恒不可读（「边∧冷却丢失不补发」的结构性保证——登记面）。
+    do {
+        let stale = StrikeEdgeLatch(setAtTick: 100)
+        check([103, 150, 10_000].allSatisfy { !Topoff.strikeEdgeReadable(latch: stale, tick: $0) },
+              "边沿-5", "陈旧边沿永不可读（tick 序号单调——冷却结束后无补发）")
+        check(!Topoff.strikeEdgeReadable(latch: StrikeEdgeLatch(), tick: 101),
+              "边沿-5", "空锁存（无在档边沿）恒不可读")
+    }
+
+    // 边沿-6：伴随组合真值表（Topoff.strikeAccompaniment——观测段触发条件的边沿项）：
+    // 可读 ∧ !degraded ∧ !suspected → 成立；降级拍（第 3 边沿）→ 不成立；校准抑制
+    // → 不成立（抑制期冻结）；无边沿 → 不成立。
+    do {
+        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false),
+              "边沿-6", "边沿可读 ∧ 承载态 ∧ 非抑制 → 伴随成立（触发 + 门 a 放行）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: true, calibrationSuspected: false),
+              "边沿-6", "第 3 边沿（降级拍）→ degraded 拦截 → 不放电（R2-P3-3 单列）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: true),
+              "边沿-6", "校准抑制期 → 冻结（放电对抗充满防误触发）")
+        check(!Topoff.strikeAccompaniment(edgeReadable: false, degraded: false, calibrationSuspected: false),
+              "边沿-6", "无边沿（含 healTick 无边）→ 不成立（非边沿拍静默）")
+    }
 }

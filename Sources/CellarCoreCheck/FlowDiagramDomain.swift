@@ -19,6 +19,7 @@ import Foundation
 func runFlowDiagramDomainScenarios() throws {
     // 入参工厂（默认外接 + 充电使能 + V×I 零——把注意力集中在被测判定上）。
     // v0.19.5 §D1：末位透传 previous 前态（默认 nil = 首代保守，既有场景零改动）。
+    // 0.21.2 §2.1：增透传 systemLoadMW 直读键（默认 nil = 既有场景零改动）。
     func makeModel(
         externalConnected: Bool = true,
         isCharging: Bool = true,
@@ -26,6 +27,7 @@ func runFlowDiagramDomainScenarios() throws {
         batteryPowerMW: Int? = nil,
         batteryVoltageMV: Int = 0,
         batteryAmperageMA: Int = 0,
+        systemLoadMW: Int? = nil,
         previous: FlowDiagramPreviousSample? = nil
     ) -> FlowDiagramModel {
         flowDiagramModel(
@@ -35,6 +37,7 @@ func runFlowDiagramDomainScenarios() throws {
             batteryPowerMW: batteryPowerMW,
             batteryVoltageMV: batteryVoltageMV,
             batteryAmperageMA: batteryAmperageMA,
+            systemLoadMW: systemLoadMW,
             previous: previous
         )
     }
@@ -156,12 +159,14 @@ func runFlowDiagramDomainScenarios() throws {
                     "流向-13", "SP 在位/BP 缺席 + !isCharging → 回退 holding（direct=SP）")
     }
 
-    // 场景 14：电池态（!ext）→ .battery，edge=load=|V×I|（21.006），direct=nil
-    // （系统节点无阈值——现状口径）。
+    // 场景 14：电池态（!ext）→ .battery，edge=−|V×I|（−21.006——0.21.2 §2.2
+    // 符号化补缺口：batteryEdgeW 契约「受电 + / 放电 −」，电池供电态即放电方向；
+    // 旧实现存 abs、消费点 powerBSText 再翻符号——契约归位后显示文本逐字节不变），
+    // load=|V×I|（21.006），direct=nil（系统节点无阈值——现状口径）。
     do {
         let model = makeModel(externalConnected: false, isCharging: false, batteryVoltageMV: 11_670, batteryAmperageMA: -1_800)
-        expectEqual(model, FlowDiagramModel(kind: .battery, batteryEdgeW: 21.006, directEdgeW: nil, systemLoadW: 21.006),
-                    "流向-14", "电池供电 → .battery（edge/load 同取 |V×I|）")
+        expectEqual(model, FlowDiagramModel(kind: .battery, batteryEdgeW: -21.006, directEdgeW: nil, systemLoadW: 21.006),
+                    "流向-14", "电池供电 → .battery（edge=−|V×I| 放电符号契约；load 同取 |V×I|）")
     }
 
     // 场景 15：V×I 幅值 <0.05 W → batteryEdgeW=nil（不得产出「−0.0 W」）；系统节点
@@ -385,5 +390,52 @@ func runFlowDiagramDomainScenarios() throws {
             expectEqual(model, legacy.expected, "流向-34",
                         "旧场景带前态回归（BP=\(legacy.bp), charging=\(legacy.charging)）→ .assist 语义不变")
         }
+    }
+
+    // ---- 0.21.2 §2.1 SystemLoad 直读键优先（系统节点数据源升级）----
+
+    // 场景 35：直读键在场即用——SL 与 SP−BP 派生**不守恒**时直读胜出（直读键
+    // 优先的判别性场景：守恒下两者等价、分歧时以直读实测为准）。charging 臂。
+    do {
+        let model = makeModel(systemPowerInMW: 62_700, batteryPowerMW: 18_600, systemLoadMW: 40_000)
+        expectEqual(model, FlowDiagramModel(kind: .charging, batteryEdgeW: 18.6, directEdgeW: 44.1, systemLoadW: 40.0),
+                    "流向-35", "直读键优先：SL=40.0 在场 → systemLoadW=40.0（非派生 44.1——直读实测为准）")
+    }
+
+    // 场景 36：守恒下等价（SL = SP−BP）——直读与派生同值（三臂抽查 assist）。
+    do {
+        let previous = FlowDiagramPreviousSample(systemPowerInMW: 28_000, batteryPowerMW: -6_500, kind: nil)
+        let model = makeModel(systemPowerInMW: 29_900, batteryPowerMW: -6_500, systemLoadMW: 36_400, previous: previous)
+        expectEqual(model, FlowDiagramModel(kind: .assist, batteryEdgeW: -6.5, directEdgeW: 29.9, systemLoadW: 36.4),
+                    "流向-36", "守恒下等价：SL=36.4 = SP−BP → systemLoadW 同值（assist 臂直读/派生一致）")
+    }
+
+    // 场景 37：部分键缺席场更优——SP 缺席（② 回退 holding）+ SL 在场 → 系统节点
+    // 显 SL（旧实现恒 nil）。
+    do {
+        let holding = makeModel(isCharging: false, systemPowerInMW: nil, batteryPowerMW: nil,
+                                batteryVoltageMV: 11_670, batteryAmperageMA: 1_800, systemLoadMW: 21_006)
+        expectEqual(holding, FlowDiagramModel(kind: .holding, batteryEdgeW: nil, directEdgeW: nil, systemLoadW: 21.006),
+                    "流向-37", "部分键缺席（SP nil）+ SL 在场 → holding 系统节点显 21.0（直读在场即用）")
+        let charging = makeModel(isCharging: true, systemPowerInMW: 62_700, batteryPowerMW: nil,
+                                 batteryVoltageMV: 11_670, batteryAmperageMA: 1_800, systemLoadMW: 41_694)
+        expectEqual(charging, FlowDiagramModel(kind: .charging, batteryEdgeW: 21.006, directEdgeW: nil, systemLoadW: 41.694),
+                    "流向-37", "部分键缺席（BP nil）+ SL 在场 → charging 系统节点显 41.7（direct 保持 nil 现状）")
+    }
+
+    // 场景 38：未确认窗口臂**不消费**直读键（显式 nil 契约钉死——本臂 nil 是
+    // supplyLineText「直供 · SP W」识别式的判定依据 + 防负载虚高事故形态回潮）；
+    // 电池供电臂不消费（D1 电池态 |V×I| 1s 采样新鲜度规则）。
+    do {
+        let previous = FlowDiagramPreviousSample(systemPowerInMW: 62_700, batteryPowerMW: 0, kind: nil)
+        let unconfirmed = makeModel(systemPowerInMW: 62_700, batteryPowerMW: -18_600,
+                                    systemLoadMW: 44_100, previous: previous)
+        check(unconfirmed.kind == .charging && unconfirmed.systemLoadW == nil
+                && unconfirmed.batteryEdgeW == nil && unconfirmed.directEdgeW == 62.7,
+              "流向-38", "未确认窗口（BP 负未确认换代）→ systemLoadW 保持显式 nil（直读键不进本臂）")
+        let onBattery = makeModel(externalConnected: false, isCharging: false,
+                                  batteryVoltageMV: 11_670, batteryAmperageMA: -1_800, systemLoadMW: 30_000)
+        check(onBattery.kind == .battery && onBattery.systemLoadW == 21.006,
+              "流向-38", "电池供电态系统负载维持 |V×I|=21.0（直读键不进本臂——D1 新鲜度规则）")
     }
 }

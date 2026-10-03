@@ -680,11 +680,28 @@ extension DaemonCore {
     func autoDischargeObservationLocked(
         now: Date, snapshot: BatterySnapshot, client: SMCClient, events: inout [LogEvent]
     ) {
+        // 0.21.2 §3.2 strike 边沿锁存消费（读即清——TTL 钉死：N 置位、N+1 可读、
+        // N+2 失效且读即清；陈旧边沿冷却后不再触发，Topoff 纯函数钉面）。伴随
+        // 成立 = 边沿可读 ∧ !degraded（第 3 边沿 = 降级拍拦截）∧ 非校准抑制
+        //（抑制期冻结）；次序契约照「巡检命中 > 自动触发 > 编排链」先例——本方法
+        // 挂点先于 topoff 状态机推进，锁存一拍消费即不动求值序（方案 §3.2 R1-P0）。
+        let (edgeReadable, latchConsumed) = Topoff.strikeEdgeConsume(
+            latch: strikeEdgeLatch, tick: tickSequence
+        )
+        strikeEdgeLatch = latchConsumed
+        let strikeAccompanied = Topoff.strikeAccompaniment(
+            edgeReadable: edgeReadable,
+            degraded: topoffState.degraded,
+            calibrationSuspected: calibrationCoexistenceState.suspected
+        )
         guard Discharge.autoTriggerReady(
             enabled: policy.autoDischargeEnabled,
             mode: policy.mode,
             externalConnected: snapshot.externalConnected,
-            // 门 a（0.21.1 §1.1）：同执法段（观测段承接同款判定链）。
+            // 门 a（0.21.1 §1.1）：同执法段（观测段承接同款判定链）。0.21.2 §3.2
+            // strike 边沿伴随拍放行 charging=true（失效证据本身 = 打断手段）——
+            // 非边沿拍门 a 原样；strikeEdgeLatched 非 nil 即收紧模式（无边沿直接
+            // 静默）。
             isCharging: snapshot.isCharging,
             percent: snapshot.percent,
             // 门 b（0.21.1 §1.1）：窗覆盖静默——fullOnce 临时放开窗 ∨ chargingDisabled
@@ -705,7 +722,10 @@ extension DaemonCore {
             oscillationSuspended: oscillationState.suspended,
             now: now,
             lastAutoCompletion: lastAutoDischargeCompletedAt,
-            adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion
+            adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion,
+            // 0.21.2 §3.2：strike 边沿伴随收紧（27 观测段专用——非 nil = 收紧模式，
+            // 边沿锁存为触发必要条件；26 执法段缺省 nil 零 diff，红线）。
+            strikeEdgeLatched: strikeAccompanied
         ) else { return }
         do {
             if try dischargeToLimitLocked(now: now, initiator: .auto, events: &events) == .started {

@@ -57,6 +57,15 @@ public enum Discharge {
     /// （振荡熔断抑制——2h 滑窗 ≥2 次 autostart 完成后锁存，循环成本硬上界）
     /// ∧ 冷却（从未完成 ∨ 距完成 ≥ 30min）∧ 重插（从未完成 ∨ 完成后见过适配器
     /// 翻转）。
+    ///
+    /// 0.21.2 §3.2 strike 边沿伴随（**27 观测段收紧专用**，`strikeEdgeLatched`
+    /// 缺省 nil = 既有判定链零 diff——26 执法段回归锚）：
+    /// - 非 nil（收紧模式）：**边沿锁存不成立（false）→ 直接静默**——含无边沿/
+    ///   降级拍/校准抑制三臂（组合判定经 `Topoff.strikeAccompaniment`，daemon
+    ///   传入前已归并）；
+    /// - 边沿拍（true）：**门 a 放行**——strike 后仍 charging=true 正是「agent
+    ///   不跟域」的失效证据，放电即打断手段；非边沿拍门 a 原样（防对抗）。
+    /// 26 不变（无 strike 链——缺省 nil，门 a 原样；26 过冲即时停充）。
     public static func autoTriggerReady(
         enabled: Bool?,
         mode: String,
@@ -69,11 +78,14 @@ public enum Discharge {
         oscillationSuspended: Bool,
         now: Date,
         lastAutoCompletion: Date?,
-        adapterCycleSinceCompletion: Bool
+        adapterCycleSinceCompletion: Bool,
+        strikeEdgeLatched: Bool? = nil
     ) -> Bool {
         // 门 b：窗覆盖静默（nil = 汇聚目标 ≠ policy 上限的显式放开窗——直接沉默，
         // margin 比较也无从谈起；非 nil 时即当前生效目标）。
         guard let effectiveTarget else { return false }
+        // 0.21.2 §3.2：收紧模式无边沿（false——含降级拍/校准抑制归并臂）→ 静默。
+        if let strikeEdgeLatched, !strikeEdgeLatched { return false }
         let cooldownPassed = lastAutoCompletion.map {
             now.timeIntervalSince($0) >= autoDischargeCooldown
         } ?? true
@@ -83,7 +95,7 @@ public enum Discharge {
             && externalConnected
             && !actionActive
             && dischargeCapable
-            && !isCharging                                   // 门 a
+            && (!isCharging || strikeEdgeLatched == true)     // 门 a（边沿拍放行）
             && percent >= effectiveTarget + autoDischargeTriggerMarginPercent
             && !oscillationSuspended                         // 门 c
             && cooldownPassed

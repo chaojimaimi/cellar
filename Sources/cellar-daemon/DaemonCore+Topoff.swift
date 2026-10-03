@@ -157,6 +157,14 @@ extension DaemonCore {
                     externalConnected: snapshot.externalConnected,
                     isCharging: snapshot.isCharging)
             topoffState = plan.state
+            // 0.21.2 §3.2 strike 边沿锁存置位（N 拍——本拍观测段已先运行，边沿
+            // 对其不可见是设计意图；N+1 拍 autoDischargeObservationLocked 读即清，
+            // TTL 语义 Topoff.strikeEdgeReadable/Consume 纯函数钉面）。写域成败
+            // 不影响置位——边沿是 strike 事件信号，非写事件信号。
+            if plan.strikeFired {
+                strikeEdgeLatch = StrikeEdgeLatch(setAtTick: tickSequence)
+                Self.persistLog("topoff strike 边沿 #\(topoffState.strikes)：锁存置位（tick=\(tickSequence)，TTL 1 tick——下拍观测段消费，降级拍由 !degraded 门拦截）")
+            }
             if let limit = plan.writeLimit {
                 _ = topoffExecuteWriteLocked(limit: limit, now: now, events: &events)
             }

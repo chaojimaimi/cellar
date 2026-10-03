@@ -171,11 +171,68 @@ public struct TopoffTickPlan: Equatable, Sendable {
     /// 并行独立，验证窗满仍走 strike 原路径）。默认 false 保源兼容（既有构造点
     /// 零 diff）。
     public var notifyOnly: Bool = false
+    /// 0.21.2 §3.2：**strike 边沿信号**（channelTick 内 strikes 递增拍置 true——
+    /// 单拍有效；照 notifyOnly 缺省先例默认 false 保源兼容，既有构造点零 diff）。
+    /// WHY（R1-P0 接线层盲区根治）：验证窗满拍 violationTicks 即归零——先于
+    /// topoff tick 运行的观测点可见最大 19，「≥20 判据」按字面接线**永不触发**
+    /// 且纯函数测试全绿；显式边沿信号让 daemon 无需比对 strikes 前后值（决策层
+    /// 显式优于 daemon 侧比对）。daemon 消费 = 边沿锁存一拍（TTL 钉死见
+    /// `StrikeEdgeLatch`）供观测段自动放电收紧消费。
+    public var strikeFired: Bool = false
 
-    public init(writeLimit: Int?, state: TopoffChannelState, notifyOnly: Bool = false) {
+    public init(writeLimit: Int?, state: TopoffChannelState, notifyOnly: Bool = false, strikeFired: Bool = false) {
         self.writeLimit = writeLimit
         self.state = state
         self.notifyOnly = notifyOnly
+        self.strikeFired = strikeFired
+    }
+}
+
+// MARK: - 0.21.2 §3.2 strike 边沿锁存（观测段自动放电收紧的边沿信号管线）
+
+/// strike 边沿锁存态（daemon 锁内内存态，**不持久化**——重启即清零，下一 strike
+/// 边沿最迟 10 min 后随验证窗满再来——方案 §6「边沿丢失」登记面的兜底节奏）。
+public struct StrikeEdgeLatch: Equatable, Sendable {
+    /// 置位拍的 tick 序号（nil = 无在档边沿）。
+    public var setAtTick: Int?
+
+    public init(setAtTick: Int? = nil) {
+        self.setAtTick = setAtTick
+    }
+}
+
+extension Topoff {
+    /// 锁存可读判定（**TTL 钉死——N 拍置位、N+1 拍可读、N+2 拍失效**，R2-P3-2）：
+    /// 严格相等 `tick == setAtTick + 1`——陈旧边沿在冷却结束/重插门开后的旧拍序号
+    /// 永不重新满足（tick 序号单调递增），「边∧冷却丢失不补发」由本判定结构性保证。
+    public static func strikeEdgeReadable(latch: StrikeEdgeLatch, tick: Int) -> Bool {
+        latch.setAtTick.map { tick == $0 + 1 } ?? false
+    }
+
+    /// 读即清消费（纯函数）：返回 `(本拍可读, 消费后锁存)`。可读拍与失效拍
+    ///（tick ≥ setAtTick + 2）均清空——「读即清」钉面；置位拍（tick == setAtTick）
+    /// 不清（同拍观测段先于 topoff tick 运行，置位对观测段不可见是设计意图——
+    /// 次序契约照「巡检命中 > 自动触发 > 编排链」先例，0.21.2 方案 §3.2）。
+    public static func strikeEdgeConsume(
+        latch: StrikeEdgeLatch, tick: Int
+    ) -> (readable: Bool, next: StrikeEdgeLatch) {
+        let readable = strikeEdgeReadable(latch: latch, tick: tick)
+        var next = latch
+        if let setAt = latch.setAtTick, tick > setAt {
+            next.setAtTick = nil
+        }
+        return (readable, next)
+    }
+
+    /// strike 伴随成立判定（0.21.2 §3.2 触发条件的边沿项组合，纯函数——daemon
+    /// 只消费）：边沿锁存可读 ∧ `!degraded`（**第 3 边沿 = 降级拍**——degraded
+    /// 与 strikeFired 同拍置位，消费拍拦截）∧ 非校准抑制（校准抑制期 strike 链
+    /// 本就冻结——channelTick 不调用无边沿产生；本门为防御纵深（现接线下
+    /// 消费先于校准检测=结构性永真；残余 1 tick 窗已登记，防未来接线变更下抑制期消费）。
+    public static func strikeAccompaniment(
+        edgeReadable: Bool, degraded: Bool, calibrationSuspected: Bool
+    ) -> Bool {
+        edgeReadable && !degraded && !calibrationSuspected
     }
 }
 
@@ -323,6 +380,8 @@ extension Topoff {
                 return TopoffTickPlan(writeLimit: nil, state: s)
             }
             // strike：重申×3 封顶 → 诚实降级（第 3 strike 的降级写 80 即第三次重写）。
+            // 0.21.2 §3.2：两臂（重申/降级）均为 strikes 递增拍 → strikeFired=true
+            // 边沿（单拍有效；降级拍边沿由消费侧 !degraded 门拦截——第 3 边沿不放电）。
             s.violationTicks = 0
             s.strikes += 1
             s.lastViolationAt = now
@@ -332,13 +391,13 @@ extension Topoff {
                 // P2 评审修法：播种 lastHealProbeAt——降级稳态整 1h 后才首探（不被
                 // 下一拍探针打破；与 re-degradation 路径 <1h 等剩余窗的行为对齐）。
                 s.lastHealProbeAt = now
-                return TopoffTickPlan(writeLimit: degradedLimit, state: s)
+                return TopoffTickPlan(writeLimit: degradedLimit, state: s, strikeFired: true)
             }
             // 重申（冷却门内）：重写域 + 通知；冷却未到 → 不写（窗已重置继续观察）。
             let cooldownElapsed = s.lastWriteAt.map {
                 now.timeIntervalSince($0) >= reassertionCooldown
             } ?? true
-            return TopoffTickPlan(writeLimit: cooldownElapsed ? target : nil, state: s)
+            return TopoffTickPlan(writeLimit: cooldownElapsed ? target : nil, state: s, strikeFired: true)
         }
         s.violationTicks = 0
         return TopoffTickPlan(writeLimit: nil, state: s)

@@ -144,9 +144,13 @@ struct DashboardView: View {
     // MARK: - sub80 状态明细（0.21.0 §5 功能概览页）
 
     /// sub80 通道状态明细（功能概览页——参数驱动组件 Sub80StatusView 复用，仅
-    /// 传明细/进度参数：横幅/徽章/回落行留在充电控制页宿主，概览页不重复渲染）。
-    /// **26/无 sub80 能力机器不渲染（capabilities 门——红线：GUI 明细 26 不渲染
-    /// 或按现状渲染）**；旧 daemon（sub80State 缺席）同门收敛不渲染。
+    /// 传明细/进度参数）。**0.21.2 §1 决策反转声明**：本注释推翻 0.21.0 §5
+    /// 「回落行留在充电控制页宿主，概览页不重复渲染」的原判定（原注释见
+    /// git 历史）——回落进度行现接入下方电量卡（`gaugeFallingFrom`），AlDente
+    /// 主界面先例 + 用户亲历痛点（盯着仪表板看不到回落）支撑；横幅/徽章/明细
+    /// 仍按各自宿主语义不重复渲染。**26/无 sub80 能力机器不渲染（capabilities
+    /// 门——红线：GUI 明细 26 不渲染或按现状渲染）**；旧 daemon（sub80State
+    /// 缺席）同门收敛不渲染。
     @ViewBuilder
     private var sub80DetailRegion: some View {
         if let status = statusController.daemonStatus,
@@ -159,6 +163,23 @@ struct DashboardView: View {
                 healProbeTicks: status.sub80HealProbeTicks
             )
         }
+    }
+
+    // MARK: - 0.21.2 §1 电量卡回落进度（观测补全——0.21.0 §5 决策反转）
+
+    /// 回落进度当前电量（显示条件与充电控制页面板**同款**：sub80 能力 ∧
+    /// sub80State == .active ∧ 当前电量 > 目标——「回落中 X→Y」，进度语义不
+    /// 承诺时长；nil = 不渲染）。**26/无 sub80 能力机器恒 nil——红线门控**；
+    /// 旧 daemon（sub80State 缺席）同门收敛不渲染。渲染组件 = CellarUI
+    /// Sub80FallingProgressRow（与充电控制页共享子组件——golden 覆盖；本组装
+    /// 点无 golden，真机走查兜底）。
+    private var gaugeFallingFrom: Int? {
+        guard let status = statusController.daemonStatus,
+              status.capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+              status.sub80State == .active,
+              let percent = status.lastPercent,
+              percent > status.upperLimit else { return nil }
+        return percent
     }
 
     // MARK: - 原生限充区（Phase 5 v1.7 M3 §4.1）
@@ -241,7 +262,8 @@ struct DashboardView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // 藏酒环面板（mock hero 列宽 1.45fr:1fr）。
+            // 藏酒环面板（mock hero 列宽 1.45fr:1fr）。0.21.2 §1：电量卡接入
+            // 回落进度行（条件门控见 gaugeFallingFrom——26 恒 nil 不渲染）。
             panel(title: theme.word(.dashboardGaugeTitle),
                   subtitle: bandRange.map {
                       CellarL10n.s("dashboard.panel.gauge.subtitle", $0.lowerBound, $0.upperBound)
@@ -250,6 +272,10 @@ struct DashboardView: View {
                     GaugeView(state: gaugeState, size: .hero)
                         .frame(width: 196, height: 196)
                     stateBadge
+                    if let from = gaugeFallingFrom,
+                       let target = statusController.daemonStatus?.upperLimit {
+                        Sub80FallingProgressRow(from: from, target: target)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

@@ -95,4 +95,40 @@ func runBatteryTelemetryDomainScenarios() throws {
         let offDecoded = try JSONDecoder().decode(AppConfig.self, from: try JSONEncoder().encode(config))
         check(offDecoded.menuBarBatteryIconVisible == false, "遥测-5", "显式 false round-trip 保真（与 nil 语义可区分）")
     }
+
+    // 遥测-6（0.21.2 §2.3 守恒自检——27.0.1 活体样本断言，SMC-NOTES §11.7 实测
+    // 形态）：放电态活体证据 SystemPowerIn(0) = SystemLoad(13923) + BatteryPower
+    // (−13923)——恒等式「SystemPowerIn ≈ SystemLoad + BatteryPower」在 27.0.1
+    // 延续的测试域钉面（内部断言，不上 UI）。BatteryPower 为 UInt64 回绕负值
+    //（18446744073709537693）——B-4 按位保留纪律直接适用。
+    do {
+        var props = makeProps()
+        props["ExternalConnected"] = false
+        props["IsCharging"] = false
+        props["PowerTelemetryData"] = [
+            "SystemPowerIn": 0,
+            "SystemLoad": 13_923,
+            "BatteryPower": NSNumber(value: UInt64(bitPattern: Int64(-13_923))),
+        ]
+        let snapshot = try BatterySnapshotParser.parse(props, timestamp: Date(timeIntervalSince1970: 1_700_000_000))
+        guard let telemetry = snapshot.telemetry else {
+            check(false, "遥测-6", "27.0.1 活体样本 → telemetry 应非 nil")
+            return
+        }
+        check(telemetry.systemPowerInMW == 0 && telemetry.systemLoadMW == 13_923
+                && telemetry.batteryPowerMW == -13_923,
+              "遥测-6", "27.0.1 活体放电样本（§11.7）：SP=0 / SL=13923 / BP=−13923（UInt64 回绕按位还原）")
+        // 守恒恒等式：SP ≈ SL + BP（放电态 0 = 13923 − 13923；mW 精确闭环）。
+        if let sp = telemetry.systemPowerInMW, let sl = telemetry.systemLoadMW,
+           let bp = telemetry.batteryPowerMW {
+            let residual = abs(Double(sp) - Double(sl + bp))
+            check(residual < 0.5, "遥测-6",
+                  "守恒自检：SystemPowerIn(\(sp)) ≈ SystemLoad(\(sl)) + BatteryPower(\(bp))——残差 \(residual) mW（27.0.1 活体延续）")
+        }
+        // 守恒下游一致性：电池供电态系统节点维持 |V×I|（0.21.2 §2.1 直读键不进
+        // 电池臂——D1 电池态 App 1s 采样新鲜度规则；直读键只在 SP−BP 派生臂消费）。
+        let model = flowModel(of: snapshot)
+        check(model.kind == .battery && model.systemLoadW == 21.006 && model.batteryEdgeW == -21.006,
+              "遥测-6", "活体样本下游：电池态系统节点 |V×I|=21.0（D1 新鲜度规则）+ 电池边放电符号 −21.0（0.21.2 §2.2）")
+    }
 }

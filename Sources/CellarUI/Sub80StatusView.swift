@@ -17,6 +17,33 @@ import SwiftUI
 // 全参数带缺省值：全缺省 → EmptyView（26/无 sub80 能力机器宿主不嵌入本组件，
 // 天然零渲染）。显隐判定在宿主页——组件只做纯展示。
 
+/// 回落进度行（0.21.2 §1 自 Sub80StatusView 提取的**共享子组件**——充电控制页
+/// 宿主与仪表板电量卡（环形图）双宿主复用；AlDente 主界面先例 + 用户亲历痛点
+/// 「盯着仪表板看不到回落」支撑 0.21.0 §5 决策反转，方案 §1）。「回落中
+/// X%→Y%」进度语义不承诺时长（§11.5.1 斜率负载强相关实测事实）；caption +
+/// secondaryText 信息态、monospacedDigit 数值——渲染形态与 Sub80StatusView 内
+/// 嵌行逐字节同源（既有 golden 零 diff）。显示条件门控在宿主页——组件纯展示。
+public struct Sub80FallingProgressRow: View {
+    /// 回落进度当前电量（宿主门控传入：sub80State == .active ∧ percent > target）。
+    public let from: Int
+    /// 回落进度目标上限（与 from 成对）。
+    public let target: Int
+
+    @Environment(\.cellarTheme) private var theme
+
+    public init(from: Int, target: Int) {
+        self.from = from
+        self.target = target
+    }
+
+    public var body: some View {
+        Text(CellarL10n.s("panel.sub80.falling", "\(from)", "\(target)"))
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(theme.secondaryText)
+    }
+}
+
 public struct Sub80StatusView: View {
     /// 降级横幅（daemon 回读 sub80State == .degraded）。
     public let degraded: Bool
@@ -182,10 +209,9 @@ public struct Sub80StatusView: View {
     }
 
     /// 回落进度行（「回落中 82%→75%」——不承诺时长；monospacedDigit 数值）。
+    /// 0.21.2 §1：渲染体移交共享子组件 Sub80FallingProgressRow（仪表板电量卡
+    /// 双宿主复用）——本组件内渲染形态逐字节同源，既有 golden 零 diff。
     private func fallingLine(from: Int, target: Int) -> some View {
-        Text(CellarL10n.s("panel.sub80.falling", "\(from)", "\(target)"))
-            .font(.caption)
-            .monospacedDigit()
-            .foregroundStyle(theme.secondaryText)
+        Sub80FallingProgressRow(from: from, target: target)
     }
 }
