@@ -61,6 +61,7 @@ typealias MsgSendBoolLongLong = @convention(c) (AnyObject, Selector, Int64, Int6
 typealias MsgSendVoidNoArg = @convention(c) (AnyObject, Selector) -> Void
 typealias MsgSendIdStr = @convention(c) (AnyObject, Selector, NSString) -> AnyObject
 typealias MsgSendUCharErr = @convention(c) (AnyObject, Selector, UnsafeMutablePointer<Unmanaged<NSError>?>?) -> UInt8
+typealias MsgSendBoolErr = @convention(c) (AnyObject, Selector, UnsafeMutablePointer<Unmanaged<NSError>?>?) -> Bool
 typealias MsgSendBoolUCharErr = @convention(c) (AnyObject, Selector, UInt8, UnsafeMutablePointer<Unmanaged<NSError>?>?) -> Bool
 
 let msgSendIdSel = unsafeBitCast(msgSendPtr, to: MsgSendIdSel.self)
@@ -71,14 +72,16 @@ let msgSendBoolLongLong = unsafeBitCast(msgSendPtr, to: MsgSendBoolLongLong.self
 let msgSendVoidNoArg = unsafeBitCast(msgSendPtr, to: MsgSendVoidNoArg.self)
 let msgSendIdStr = unsafeBitCast(msgSendPtr, to: MsgSendIdStr.self)
 let msgSendUCharErr = unsafeBitCast(msgSendPtr, to: MsgSendUCharErr.self)
+let msgSendBoolErr = unsafeBitCast(msgSendPtr, to: MsgSendBoolErr.self)
 let msgSendBoolUCharErr = unsafeBitCast(msgSendPtr, to: MsgSendBoolUCharErr.self)
 
 // ── 已知-good 读回面（S3 定谳）：PowerUISmartChargeClient ────────────
+func classAsAny(_ p: Any) -> AnyObject { p as AnyObject }
 guard let s3Cls = objc_getClass("PowerUISmartChargeClient") else {
     print("bpath.verdict=smartcharge-class-not-found")
     exit(3)
 }
-let s3Alloc = msgSendIdSel(s3Cls, sel_registerName("alloc"))
+let s3Alloc = msgSendIdSel(classAsAny(s3Cls), sel_registerName("alloc"))
 guard let s3 = msgSendIdStr(s3Alloc, sel_registerName("initWithClientName:"), "Cellar" as NSString) as AnyObject? else {
     print("bpath.verdict=smartcharge-init-failed")
     exit(3)
@@ -115,12 +118,13 @@ func encodingOf(_ cls: AnyObject, _ name: String, meta: Bool) -> String? {
     var count: UInt32 = 0
     let list = meta
         ? class_copyMethodList(object_getClass(cls)!, &count)
-        : class_copyMethodList(cls as! AnyClass, &count)
-    defer { free(list!) }
+        : class_copyMethodList(unsafeBitCast(cls, to: AnyClass.self), &count)
+    defer { if list != nil { free(list!) } }
     for j in 0..<Int(count) {
         let m = list![j]
-        if sel_getName(method_getName(m)) == name {
-            return String(cString: method_getTypeEncoding(m))
+        if String(cString: sel_getName(method_getName(m))) == name {
+            guard let enc = method_getTypeEncoding(m) else { continue }
+            return String(cString: enc)
         }
     }
     return nil
@@ -131,14 +135,14 @@ let selSetLimitTo = sel_registerName("setChargeLimitTo:forLimitType:")
 let selClearAll = sel_registerName("clearAllChargeLimits")
 let selLoadToken = sel_registerName("loadChargeLimitTokenForPreferenceKey:")
 
-print("bpath.enc.sharedInstance=\(encodingOf(bCls, "sharedInstance", meta: true) ?? "ABSENT")")
-print("bpath.enc.setChargeLimitTo=\(encodingOf(bCls, "setChargeLimitTo:forLimitType:", meta: false) ?? "ABSENT")")
-print("bpath.enc.clearAllChargeLimits=\(encodingOf(bCls, "clearAllChargeLimits", meta: false) ?? "ABSENT")")
-print("bpath.enc.loadChargeLimitToken=\(encodingOf(bCls, "loadChargeLimitTokenForPreferenceKey:", meta: false) ?? "ABSENT")")
-print("bpath.s3.isMCLSupported=\(msgSendBoolUCharErr(s3, selS3Supported, nil))")
+print("bpath.enc.sharedInstance=\(encodingOf(classAsAny(bCls), "sharedInstance", meta: true) ?? "ABSENT")")
+print("bpath.enc.setChargeLimitTo=\(encodingOf(classAsAny(bCls), "setChargeLimitTo:forLimitType:", meta: false) ?? "ABSENT")")
+print("bpath.enc.clearAllChargeLimits=\(encodingOf(classAsAny(bCls), "clearAllChargeLimits", meta: false) ?? "ABSENT")")
+print("bpath.enc.loadChargeLimitToken=\(encodingOf(classAsAny(bCls), "loadChargeLimitTokenForPreferenceKey:", meta: false) ?? "ABSENT")")
+print("bpath.s3.isMCLSupported=\(msgSendBoolErr(s3, selS3Supported, nil))")
 
 // +sharedInstance（类方法——msgSend 直打 Class）。
-let shared = msgSendIdSel(bCls, selShared)
+let shared = msgSendIdSel(classAsAny(bCls), selShared)
 if shared is NSNull {
     print("bpath.verdict=sharedinstance-failed")
     exit(3)
@@ -209,7 +213,7 @@ case "set":
     print("bpath.set.limitType=\(limitType)（语义未知——默认 0，照实登记）")
     let before = s3Readback()
     print("criterion4.before.s3_readback=\(before.map(String.init) ?? "nil")")
-    bpathSet(n, limitType: limitType, encoding: encodingOf(bCls, "setChargeLimitTo:forLimitType:", meta: false))
+    bpathSet(n, limitType: limitType, encoding: encodingOf(classAsAny(bCls), "setChargeLimitTo:forLimitType:", meta: false))
     dualReadback(tag: "bpath.set")
     if n == 85 {
         let rb = s3Readback()
@@ -229,7 +233,7 @@ case "clear":
 case "c5":
     // 判据⑤ 装配：MCL=80（B 路写；失败回退 S3 面写）——域 75 由 daemon topoff 承载，
     // 停充点为充电行为观察项（root 域用户态不可读——观察指引输出）。
-    bpathSet(80, limitType: 0, encoding: encodingOf(bCls, "setChargeLimitTo:forLimitType:", meta: false))
+    bpathSet(80, limitType: 0, encoding: encodingOf(classAsAny(bCls), "setChargeLimitTo:forLimitType:", meta: false))
     let rb = s3Readback()
     print("criterion5.mcl_set=\(rb.map(String.init) ?? "nil")（期望 80）")
     if rb != 80 {
