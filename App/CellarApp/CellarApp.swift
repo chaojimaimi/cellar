@@ -53,11 +53,17 @@ struct CellarApp: App {
         statusController.onScheduleEvent = { [notifications] notification in
             notifications.deliverSchedule(notification)
         }
-        // 0.22.0 §4.2 sub80 机制关闭系统通知（UD-7 形态第三出口）：
-        // deliverSuppressionNotice 直投（边沿判定在 StatusController.ingest，
-        // 1h 静态限频在通知服务侧——菜单栏独占场景横幅不可见的告警补全）。
-        statusController.onSuppressionNotice = { [notifications] in
-            notifications.deliverSuppressionNotice()
+        // 0.22.1 suppression 自动恢复结果通知（评审 P1-4——0.22.0 的
+        // onSuppressionNotice 边沿直投退役，通知一律由恢复写完成回调驱动，
+        // 防「先手动指引后已恢复」双通知）：true = API 写成功投「已自动恢复」；
+        // false = 写失败投既有手动指引。两个通知各自 1h 静态限频在通知服务侧
+        // （冷却重试拍失败静默的兜底；菜单栏独占场景告警补全语义保留）。
+        statusController.onSuppressionRecoveryOutcome = { [notifications] recovered in
+            if recovered {
+                notifications.deliverSuppressionRecovered()
+            } else {
+                notifications.deliverSuppressionNotice()
+            }
         }
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in

@@ -192,6 +192,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// 指引「在 Cellar 重新应用上限」（API 路径——保机制使能且保域执法，§11.9
     /// 三分支），次选系统设置设具体上限；与既有横幅 settings.sub80.suppressed
     /// 同源措辞。授权未授予 → add 静默失败（既有语义，不崩不挂）。
+    /// 0.22.1：消费面收缩为恢复写失败臂（成功改投 deliverSuppressionRecovered；
+    /// 首拍失败指引 + 冷却重试拍失败经本窗 1h 静默——不重复轰炸）。
     func deliverSuppressionNotice(now: Date = Date()) {
         if let last = Self.lastSuppressionDelivery,
            now.timeIntervalSince(last) < Self.suppressionCooldownSeconds {
@@ -207,6 +209,34 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
                 Self.log.error("suppression 通知投递失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// suppression 自动恢复成功通知独立限频（内存级静态 1 h 窗——App 重启清零；
+    /// 与 deliverSuppressionNotice 限频同形态、独立静态时间戳互不相干）。
+    private static var lastSuppressionRecoveredDelivery: Date?
+
+    /// suppression 自动恢复成功通知直投（0.22.1 §1.3；照 deliverSuppressionNotice
+    /// 形态——静态 id 兼防限频外堆叠）。冷却重试拍成功也投（评审 P3-7：用户可能
+    /// 已开始手动操作，须告知已自动恢复）——本通知自身 1h 限频兜底防轰炸。文案
+    /// 如实口径：端到端含 daemon 冷却重写（0-10 min）+ agent 分钟级跟随，不写
+    /// 「约 1 分钟」（评审 P1-1）。授权未授予 → add 静默失败（既有语义）。
+    func deliverSuppressionRecovered(now: Date = Date()) {
+        if let last = Self.lastSuppressionRecoveredDelivery,
+           now.timeIntervalSince(last) < Self.suppressionCooldownSeconds {
+            return
+        }
+        Self.lastSuppressionRecoveredDelivery = now
+        let content = UNMutableNotificationContent()
+        content.title = "Cellar"
+        content.body = CellarL10n.s("notification.sub80Recovered")
+        let request = UNNotificationRequest(
+            identifier: "cellar.sub80-recovered", content: content, trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Self.log.error("suppression 恢复通知投递失败：\(error.localizedDescription)")
             }
         }
     }

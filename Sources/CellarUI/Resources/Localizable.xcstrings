@@ -3078,6 +3078,23 @@
         }
       }
     },
+    "notification.sub80Recovered": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System Settings had turned off the native limiting mechanism — Cellar has re-enabled it automatically. The charge limit will resume enforcement within a few minutes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到系统设置关闭了原生限充机制，Cellar 已自动重新启用——充电上限将在几分钟内恢复执法。"
+          }
+        }
+      }
+    },
     "notification.sub80Suppressed": {
       "extractionState": "manual",
       "localizations": {

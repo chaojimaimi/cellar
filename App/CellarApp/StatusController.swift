@@ -91,10 +91,19 @@ final class StatusController: ObservableObject {
     /// 映射，不新增 case、不动 daemon 字面量→通知映射）。
     var onScheduleEvent: ((ScheduleNotification) -> Void)?
 
-    /// sub80 机制关闭边沿出口（0.22.0 §4.2；CellarApp 注入
-    /// NotificationService.deliverSuppressionNotice 直投——UD-7 形态第二出口
-    /// 同款，限频由通知服务侧独立 1h 静态窗承担）。
-    var onSuppressionNotice: (() -> Void)?
+    /// suppression 自动恢复结果出口（0.22.1 §1.3；CellarApp 注入通知直投）。
+    /// **通知一律由恢复写完成回调驱动**（评审 P1-4——0.22.0 的 onSuppressionNotice
+    /// 边沿直投退役，防「先手动指引后已恢复」双通知）：true = API 写成功投
+    /// 「已自动恢复」；false = 写失败投既有手动指引。防轰炸由通知服务侧两个
+    /// 独立 1h 静态限频窗承担（冷却重试拍失败静默的兜底）。
+    var onSuppressionRecoveryOutcome: ((Bool) -> Void)?
+
+    /// suppression 恢复写上次派发时刻（0.22.1 §1.2；会话内存态，App 重启即清）。
+    /// ⚠️ internal 非 private（LED/reconcile 退避先例）——WHY：派发臂在外迁
+    /// extension 文件 StatusController+LimitExecution.swift，跨文件需读写。
+    /// **派发时刻即落值**（评审 P2-1）：防在途窗重复派发（setMCLLimit 挂起时
+    /// NSLock 排队无界堆积——0.20.1 wedge 同通道实证）；结果回调不回写本值。
+    var lastSuppressionRecoveryAt: Date?
 
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
@@ -346,14 +355,21 @@ final class StatusController: ObservableObject {
                     onScheduleEvent?(.restored)
                 }
             }
-            // sub80 机制关闭边沿（0.22.0 §4.2）：边沿 = 非 true → true
-            //（false/nil → true；decodeIfPresent 的 nil = 26/旧 daemon 不触发）。
-            // 首样本破例——baseline nil ∧ 首包已 suppressed → 通知（.writeFailed
-            // 破例先例：菜单栏独占场景用户可能一直没看到横幅，首包即真事件）。
-            // 须在基线推进前比对（与 scheduleActiveId 边沿同拍）。
-            if status.sub80MechanismSuppressed == true,
-               notificationBaseline?.sub80MechanismSuppressed != true {
-                onSuppressionNotice?()
+            // sub80 机制关闭自动恢复（0.22.1 §1.2）：判定输入钉死取 ingest 入参
+            // status——self.daemonStatus 本拍下方才赋值，按属性取值会吃到上一拍
+            // 陈旧 mode/wire（评审 P2-2）。三分支判定（首包破例/边沿/10 min 冷却
+            // 重试）在 SuppressionRecovery.shouldAttempt 纯函数（CellarCoreCheck
+            // 场景域钉死；26/旧 daemon current nil 与 mode 非 active 全拒）。
+            // 旧 0.22.0 边沿直投通知退役（评审 P1-4）——通知一律由恢复写完成
+            // 回调驱动，防「先手动指引后已恢复」双通知。
+            if SuppressionRecovery.shouldAttempt(
+                previous: notificationBaseline?.sub80MechanismSuppressed,
+                current: status.sub80MechanismSuppressed,
+                modeActive: status.mode == "active",
+                lastAttemptAt: lastSuppressionRecoveryAt,
+                now: Date()
+            ) {
+                dispatchSuppressionRecovery()
             }
             notificationBaseline = status
             for event in events {

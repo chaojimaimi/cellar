@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.1-alpha]
+
+### Fixed
+
+- **「系统设置关闭原生限充机制」自动恢复**：现场实证（2026-10-04）系统设置 UI 把充电上限设为 100% 会整体关闭原生限充机制（FeatureState=0），daemon 的文件层自愈与系统 agent 形成 52 轮「覆写→重写」拉锯且赢不了——agent 以自身通道持有关闭态，裸 defaults 写翻不转。0.22.1 起 App 检测到该锁存即经 agent 自身 API 通道写入 100%（保机制使能）→ daemon 冷却到期（最长 10 分钟）重写域值 → agent 分钟级跟随停在上限 → 读回一致自动解除，端到端最长约 10-12 分钟；恢复写失败时保留原「手动指引」通知兜底。daemon 零改动（仅版本串）、wire 零变化。
+- **CLI 版本串修正**：`cellar --version` 停在 0.20.0-alpha（0.20.1 起漏更），现与 DaemonXPC.daemonVersion 同步至 0.22.1-alpha，注释补「随发版必更」提醒。
+
 ## [0.22.0-alpha]
 
 ### Added

@@ -161,6 +161,44 @@ extension StatusController {
         }
     }
 
+    // MARK: - 0.22.1 suppression 自动恢复（App 侧恢复写执行臂；方案 §1.4）
+
+    /// 恢复写派发（判定函数命中拍调用，ingest 同拍——主 actor 入口）：
+    /// `MCLClient.setLimit(100)` 经 Task.detached 承载（阻塞 ObjC 调用离主
+    /// actor——MCLSetLimitExecutor 既有线程纪律），走 agent 自身 API 通道保
+    /// FeatureState=1——§11.11 定谳：daemon 的 defaults 裸写翻不转 agent 对
+    /// 机制的关闭持有态（52 轮拉锯实证），UI 手动设 80 有效正因走了 agent
+    /// 通道，恢复写同理。后续链全部既有机制：daemon 锁存期重写受
+    /// reassertionCooldown 门控 → 冷却到期重写域值 → agent 分钟级跟随停在
+    /// 上限 → 读回一致锁存释放（端到端最长 ~12 min，方案 §0）。
+    /// **派发时刻即落 lastSuppressionRecoveryAt**（评审 P2-1：防在途窗重复
+    /// 派发——setMCLLimit 挂起时 NSLock 排队无界堆积，0.20.1 wedge 同通道
+    /// 实证）；完成回主 actor 按结果分流通知（评审 P1-4：通知一律由完成回调
+    /// 驱动）——成功 → recovered；失败 → 手动指引（各自 1h 静态限频兜底，
+    /// 冷却重试拍失败静默）+ os_log 错误可见化（MCLSetFailure 描述）。
+    func dispatchSuppressionRecovery() {
+        lastSuppressionRecoveryAt = Date()
+        let client = mclClient
+        Task.detached { [weak self] in
+            // 内层 detached 承载阻塞 ObjC 调用（外层 Task.detached 语境即后台，
+            // MCLSetLimitExecutor 同款双层形态——语义显式化）。
+            let result = await Task.detached { client.setLimit(100) }.value
+            // 结果分流（Result 无 isSuccess——stdlib 仅 get()，switch 取布尔）。
+            let recovered: Bool
+            switch result {
+            case .success:
+                recovered = true
+                Self.log.info("suppression 自动恢复写成功：MCL set 100（agent 通道保 FeatureState=1）——daemon 冷却到期重写域值、agent 跟随后读回一致即锁存释放")
+            case .failure(let failure):
+                recovered = false
+                Self.log.error("suppression 自动恢复写失败：\(String(describing: failure), privacy: .public)——冷却窗（10 min）后自动重试；通知侧转手动指引")
+            }
+            await MainActor.run {
+                self?.onSuppressionRecoveryOutcome?(recovered)
+            }
+        }
+    }
+
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "limit-execution")
 
     /// 0.21.1 §3.2 补偿重试退避阈值（M1a P3-2——照 WP3 读回失配退避 ≥3 同形态）。

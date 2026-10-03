@@ -449,6 +449,10 @@ struct Main {
         // doctor 检查 9 路线再分流 + 检查 8/9 口径统一 + 检查 3 身份分流——纯函数
         // 面，RobustnessDomain）。
         runRobustnessDomainScenarios()
+        // 0.22.1 suppression 自动恢复决策场景域（方案 §1.1 判定规则钉死 + §4
+        // 清单 ≥7 case：边沿/首包破例/current nil·false 全拒/mode 非 active
+        // skip/冷却窗三分支——纯函数面，SuppressionRecoveryDomain）。
+        runSuppressionRecoveryDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
