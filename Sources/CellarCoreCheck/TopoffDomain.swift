@@ -315,6 +315,69 @@ func runTopoffDomainScenarios() {
               "自愈-3", "20 连续违规 → 自愈失败：回降级稳态（域随写 80；无封顶持续诚实重试）")
     }
 
+    // 自愈-4（0.22.0 §4.1 外接电源门）：电池态到期拍不启动探针、lastHealProbeAt
+    // 不推进（不消耗 due）——插电后首拍即探。
+    do {
+        var s = TopoffChannelState()
+        s.degraded = true
+        s.lastWrittenLimit = 80
+        s.activeTarget = 75
+        s.lastHealProbeAt = tick(0)
+        let dueOnBattery = Topoff.healTick(state: s, target: 75, now: tick(0).addingTimeInterval(Topoff.healProbeInterval),
+                                           percent: 50, externalConnected: false, isCharging: false)
+        check(dueOnBattery.writeLimit == nil && !dueOnBattery.state.healProbeActive
+                && dueOnBattery.state.lastHealProbeAt == tick(0),
+              "自愈-4", "电池态到期 → 门拦（nil plan 不启动；lastHealProbeAt 不推进——违规/证据判定均要求外接）")
+        // 时刻继续前移（门内 due 持续成立），仍不启动——证明「不消耗 due」。
+        let later = Topoff.healTick(state: dueOnBattery.state, target: 75,
+                                    now: tick(0).addingTimeInterval(Topoff.healProbeInterval + 600),
+                                    percent: 50, externalConnected: false, isCharging: false)
+        check(later.writeLimit == nil && !later.state.healProbeActive
+                && later.state.lastHealProbeAt == tick(0),
+              "自愈-4", "电池态续拍 → 仍不启动（due 未被消耗，门独立于到期判定）")
+        // 插电后首拍即探（lastHealProbeAt 重锚 + 域写 target + 观察窗开）。
+        let plugged = Topoff.healTick(state: dueOnBattery.state, target: 75,
+                                      now: tick(0).addingTimeInterval(Topoff.healProbeInterval + 660),
+                                      percent: 50, externalConnected: true, isCharging: true)
+        check(plugged.writeLimit == 75 && plugged.state.healProbeActive
+                && plugged.state.lastHealProbeAt == tick(0).addingTimeInterval(Topoff.healProbeInterval + 660),
+              "自愈-4", "插电首拍 → 即探（探针启动 + lastHealProbeAt 重锚——降级期电池使用的空转根治）")
+    }
+
+    // 自愈-5（0.22.0 §4.1，评审 P2-4）：nil 采样缺席态到期拍同样不启动
+    //（externalConnected nil 与 false 同门——采样缺席不猜测电源态）。
+    do {
+        var s = TopoffChannelState()
+        s.degraded = true
+        s.lastWrittenLimit = 80
+        s.activeTarget = 75
+        s.lastHealProbeAt = tick(0)
+        let dueNilSample = Topoff.healTick(state: s, target: 75, now: tick(0).addingTimeInterval(Topoff.healProbeInterval),
+                                           percent: nil, externalConnected: nil, isCharging: nil)
+        check(dueNilSample.writeLimit == nil && !dueNilSample.state.healProbeActive
+                && dueNilSample.state.lastHealProbeAt == tick(0),
+              "自愈-5", "nil 采样缺席态到期 → 门拦（不启动不推进——decodeIfPresent nil 零触及）")
+    }
+
+    // 自愈-6（0.22.0 §4.1 观察窗语义回归零变化）：观察窗中拔电不走门——窗照常
+    // 推进（弱信号拍计数），20 tick 无差别超时臂照常收尾（补写 degradedLimit）。
+    do {
+        var s = TopoffChannelState()
+        s.degraded = true
+        s.activeTarget = 75
+        s.lastWrittenLimit = 75
+        s.healProbeActive = true
+        s.lastHealProbeAt = tick(0)
+        var plan: TopoffTickPlan?
+        for n in 1...20 {
+            plan = Topoff.healTick(state: s, target: 75, now: tick(n),
+                                   percent: 75, externalConnected: false, isCharging: false)
+            s = plan!.state
+        }
+        check(!s.healProbeActive && plan?.writeLimit == 80 && s.degraded,
+              "自愈-6", "观察窗中拔电 → 门不适用（窗照常推进 + 超时臂收尾补写 80——最小改动不扩权）")
+    }
+
     // ---- ⑤b §3.7 关断清理状态不变量（P3-3 场景钉死——路由前置条件面）----
 
     // 清理-1：daemon 关断清理分支的触发前置（纯函数可钉面）——**仅 mode 非 active**

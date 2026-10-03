@@ -23,6 +23,9 @@ struct GeneralSections: View {
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var displaySettings: DisplaySettingsController
     @EnvironmentObject private var orchestrationSettings: OrchestrationSettings
+    /// 0.22.0 §4.3：Tp00 CPU 参考温度消费源（CellarApp 两 scene 链均注入——
+    /// 缺注入运行时 crash，照五对象既有纪律）。
+    @EnvironmentObject private var cpuFanMonitor: CpuFanMonitor
     @Environment(\.cellarTheme) private var theme
     /// 通知授权态（nil = 查询中；getNotificationSettings 异步回主线程刷新）。
     @State private var notificationAuthorized: Bool?
@@ -229,12 +232,15 @@ struct GeneralSections: View {
             // 注入当前源温度（battery 源 = 1s 遥测电池温度 / cpuSkin 源 = daemon
             // 回显——FanStatus 无电池温度回显字段，battery 侧只有 App 层快照可给）。
             // v0.19.7：pendingField 接 fan 专用细粒度 pending；onApply 走排队通道。
+            // 0.22.0 §4.3：cpuTempC 注入 Tp00 参考温度（CpuFanMonitor @Published
+            // 直注——<10℃ 可信度门在组件渲染层；nil 锚点 = 既有构造零扰动）。
             FanSectionView(
                 fan: statusController.fanStatus,
                 pendingField: statusController.fanPendingField,
                 onApply: { statusController.setFan($0, field: $1) },
                 showsTitle: false,
-                currentTempC: currentFanTempC
+                currentTempC: currentFanTempC,
+                cpuTempC: cpuFanMonitor.cpuTempC
             )
         }
     }

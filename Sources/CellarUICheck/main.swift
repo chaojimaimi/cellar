@@ -590,6 +590,35 @@ private func buildCases() -> [SnapshotCase] {
                         cpuSkinHysteresisCentiC: 400
                     ),
                     onApply: { _, _ in }, currentTempC: 31.0)),
+                // 0.22.0 §4.3 CPU 参考温度行 2 态 ×3 风格 ×2 外观 = 12 张（450 → 462，
+                // 全部全新文件——新增非扰动；golden PNG 随批次 CI macos-26 权威
+                // regen 对账，0.21.3 embeddedOff 同款流程）：
+                // ①cpuTemp 正常态（45.0 ≥10℃ → 「CPU 45.0 °C（参考）」行渲染——
+                //   风扇行邻位形态钉死）；
+                // ②cpuTempCold 不可信态（5.0 <10℃ 可信度门不渲染——与 nil 同形，
+                //   钉死 §11.3.1 核心 park 归零不可信读数的渲染分支）。
+                // ⚠️ 既有 FanSection_* 构造零改动（cpuTempC 默认 nil 锚点 → 缺席
+                // 路径输出逐字节同现状）。--regen --only=FanSection_cpuTemp 只跑本组。
+                ("cpuTemp", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .twoStage, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
+                    ),
+                    onApply: { _, _ in }, currentTempC: 31.0, cpuTempC: 45.0)),
+                ("cpuTempCold", FanSectionView(
+                    fan: FanStatus(
+                        enabled: true, strategy: .twoStage, state: .automatic,
+                        targetRPM: nil, currentRPM: nil, thresholdCentiC: 3700,
+                        conflictFlag: false, speedPercent: 50, stage2Percent: 80,
+                        stage2RiseCentiC: 300, temperatureSource: 0, cpuSkinTempC: nil,
+                        cpuSkinSupported: true, cpuSkinThresholdCentiC: 5500,
+                        cpuSkinHysteresisCentiC: 400
+                    ),
+                    onApply: { _, _ in }, currentTempC: 31.0, cpuTempC: 5.0)),
             ]
             for (stateName, section) in fanSections {
                 cases.append(SnapshotCase(

@@ -18,10 +18,19 @@ import SQLite3
 /// 仅由 actor 方法/构造器调用——SQLite 调用只发生在 actor 执行器（或构造器
 /// 所在线程）上，实例状态只有 `handle` 一项。
 public actor StatsStore {
-    /// Schema 当前版本（迁移序：user_version 0 → 1，v1.3 定版）。
-    private static let schemaVersion: Int32 = 1
+    /// Schema 当前版本（迁移序：user_version 0 → 1 → 2；0.22.0 §2.2 能耗六列）。
+    private static let schemaVersion: Int32 = 2
     /// 保留窗口：原始行 35 天（> 30 天月视图，边界不缺数据——§2.1）。
     public static let retentionInterval: TimeInterval = 35 * 24 * 3600
+
+    /// 采样行 SELECT 列清单（readSample 列序单一真相——insert/latest/rawRows
+    /// 三处共用，防列序漂移；0.22.0 §2.2 尾接能耗六列）。
+    private static let sampleColumns = """
+    ts, percent, temp_centi, power_mw, external, charging, cycle,
+    max_cap_pct, nominal_mah, design_mah,
+    acc_load, acc_load_count, acc_discharge, acc_discharge_count,
+    daily_min_soc, daily_max_soc
+    """
 
     /// 默认位置：用户域 `~/Library/Application Support/Cellar/stats.sqlite`
     /// （UD-3，AppSide.swift 用户域先例；**不进** /Library/Cellar——那是 daemon 策略域）。
@@ -85,9 +94,8 @@ public actor StatsStore {
         _ = runWithRecovery { db in
             try Self.stepToDone(db, """
             INSERT OR REPLACE INTO samples
-              (ts, percent, temp_centi, power_mw, external, charging, cycle,
-               max_cap_pct, nominal_mah, design_mah)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+              (\(Self.sampleColumns))
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             """) { statement in
                 // ts 截为整秒（Schema v1 秒级主键；同秒重采样由 OR REPLACE 收敛）。
                 sqlite3_bind_int64(statement, 1, Int64(sample.timestamp.timeIntervalSince1970))
@@ -100,6 +108,13 @@ public actor StatsStore {
                 Self.bindOptional(statement, 8, sample.maxCapacityPercent)
                 Self.bindOptional(statement, 9, sample.nominalChargeCapacityMAh)
                 Self.bindOptional(statement, 10, sample.designCapacityMAh)
+                // 能耗六列（0.22.0 §2.2，全可空——快照键缺席 → NULL 不造 0）。
+                Self.bindOptional(statement, 11, sample.accSystemLoadMWs)
+                Self.bindOptional(statement, 12, sample.accSystemLoadCount)
+                Self.bindOptional(statement, 13, sample.accBatteryDischarge)
+                Self.bindOptional(statement, 14, sample.accBatteryDischargeCount)
+                Self.bindOptional(statement, 15, sample.dailyMinSoc)
+                Self.bindOptional(statement, 16, sample.dailyMaxSoc)
             }
         }
         // 滚动窗口（工单 3）：insert 顺带异步 prune——Task 继承 actor 隔离，串行
@@ -117,6 +132,16 @@ public actor StatsStore {
         StatsBucketing.bucket(samples: rawRows(in: range), bucketSeconds: bucketSeconds, range: range)
     }
 
+    /// 能耗差分聚合查询（0.22.0 §2.2）：range 过滤取 ts 升序原始行 →
+    /// EnergyAggregation 纯函数（聚合不藏 SQL 同构照 query → StatsBucketing）。
+    /// 桶径能耗卡专属（24h→3600s / 7d、30d→86400s，与曲线卡解耦）。失败返回
+    /// 空摘要（卡片门控隐藏，不挂页）。
+    public func energyBuckets(range: Range<Date>, bucketSeconds: Int) -> EnergySummary {
+        EnergyAggregation.aggregate(
+            samples: rawRows(in: range), bucketSeconds: bucketSeconds, range: range
+        )
+    }
+
     /// 删除早于 cutoff 的原始行（滚动窗口；`ts < cutoff` 半开——恰在边界的保留）。
     public func prune(olderThan cutoff: Date) {
         let cutoffSeconds = Int64(cutoff.timeIntervalSince1970)
@@ -127,13 +152,11 @@ public actor StatsStore {
         }
     }
 
-    /// 最新一条采样（页头「记录自 X」+ 最大容量趋势消费；空库 → nil）。
+    /// 最新一条采样（页头「记录自 X」+ 最大容量趋势 + 今日 SOC 区间行消费；空库 → nil）。
     public func latest() -> StatsSample? {
         runWithRecovery { db in
             try Self.rows(db, """
-            SELECT ts, percent, temp_centi, power_mw, external, charging, cycle,
-                   max_cap_pct, nominal_mah, design_mah
-            FROM samples ORDER BY ts DESC LIMIT 1
+            SELECT \(Self.sampleColumns) FROM samples ORDER BY ts DESC LIMIT 1
             """).first
         } ?? nil
     }
@@ -213,7 +236,7 @@ public actor StatsStore {
             // NORMAL：遥测数据可容忍断电丢失窗口，性能优先（§2.1）。
             try exec(db, "PRAGMA journal_mode = WAL")
             try exec(db, "PRAGMA synchronous = NORMAL")
-            try migrateToV1(db)
+            try migrate(db)
             return db
         } catch {
             sqlite3_close(db)
@@ -221,14 +244,15 @@ public actor StatsStore {
         }
     }
 
-    /// Schema v1 迁移（user_version 0 → 1）。> 当前版本 = 未来版本库 → 显式报错
+    /// Schema 迁移（user_version 0 → 1 → 2）。> 当前版本 = 未来版本库 → 显式报错
     /// （本构建不认识该 schema，绝不盲写——诚实纪律）。
-    private nonisolated static func migrateToV1(_ db: OpaquePointer) throws {
+    private nonisolated static func migrate(_ db: OpaquePointer) throws {
         let version = Int32(truncatingIfNeeded: scalar(db, "PRAGMA user_version") ?? 0)
         switch version {
         case 0:
-            // Schema v1（§2.1 定版）：power_mw 为推导值（|V|×|I|/1000，符号源
-            // isCharging——**禁止裸 V×I**，Amperage 符号未定纪律）；三个容量列可空。
+            // Schema v2 直建（0.22.0 §2.2；v1 基线 + 能耗六可空列）：power_mw 为
+            // 推导值（|V|×|I|/1000，符号源 isCharging——**禁止裸 V×I**，Amperage
+            // 符号未定纪律）；容量与能耗族全可空。
             try exec(db, """
             CREATE TABLE IF NOT EXISTS samples (
               ts INTEGER PRIMARY KEY,
@@ -240,10 +264,37 @@ public actor StatsStore {
               cycle INTEGER NOT NULL,
               max_cap_pct INTEGER,
               nominal_mah INTEGER,
-              design_mah INTEGER
+              design_mah INTEGER,
+              acc_load INTEGER,
+              acc_load_count INTEGER,
+              acc_discharge INTEGER,
+              acc_discharge_count INTEGER,
+              daily_min_soc INTEGER,
+              daily_max_soc INTEGER
             )
             """)
             try exec(db, "PRAGMA user_version = \(schemaVersion)")
+        case 1:
+            // v1 → v2（0.22.0 §2.2）：6 条 ALTER + user_version **包单事务**
+            // （BEGIN IMMEDIATE … COMMIT，失败 ROLLBACK）——逐语句隐式提交的
+            // 形态在迁移中途崩溃会留「版本 1 + 部分列已加」半态，重跑 duplicate
+            // column 非损坏类错误 → init 永抛统计静默死亡（评审 P2-1）。SQLite
+            // 中 PRAGMA user_version 赋值事务性生效，单事务后中途崩溃可整体
+            // 回滚，重开重入安全。旧行新列 NULL（不参与能耗差分——配对要求
+            // 两端非 NULL）。
+            try exec(db, "BEGIN IMMEDIATE")
+            do {
+                for column in ["acc_load", "acc_load_count", "acc_discharge",
+                               "acc_discharge_count", "daily_min_soc", "daily_max_soc"] {
+                    try exec(db, "ALTER TABLE samples ADD COLUMN \(column) INTEGER")
+                }
+                try exec(db, "PRAGMA user_version = \(schemaVersion)")
+                try exec(db, "COMMIT")
+            } catch {
+                // 尽力回滚（库级故障时 ROLLBACK 本身也可能失败——不掩原错误）。
+                try? exec(db, "ROLLBACK")
+                throw error
+            }
         case schemaVersion:
             break   // 已是当前版本（幂等重开）
         default:
@@ -369,7 +420,14 @@ public actor StatsStore {
             cycleCount: requiredInt(6),
             maxCapacityPercent: optionalInt(7),
             nominalChargeCapacityMAh: optionalInt(8),
-            designCapacityMAh: optionalInt(9)
+            designCapacityMAh: optionalInt(9),
+            // 能耗六列（0.22.0 §2.2；可空列 SQLITE_NULL → nil，optionalInt 先例）。
+            accSystemLoadMWs: optionalInt(10),
+            accSystemLoadCount: optionalInt(11),
+            accBatteryDischarge: optionalInt(12),
+            accBatteryDischargeCount: optionalInt(13),
+            dailyMinSoc: optionalInt(14),
+            dailyMaxSoc: optionalInt(15)
         )
     }
 
@@ -379,8 +437,7 @@ public actor StatsStore {
         let end = Int64(range.upperBound.timeIntervalSince1970)
         return runWithRecovery { db in
             try Self.rows(db, """
-            SELECT ts, percent, temp_centi, power_mw, external, charging, cycle,
-                   max_cap_pct, nominal_mah, design_mah
+            SELECT \(Self.sampleColumns)
             FROM samples WHERE ts >= ?1 AND ts < ?2 ORDER BY ts ASC
             """) { statement in
                 sqlite3_bind_int64(statement, 1, start)

@@ -52,6 +52,12 @@ public struct BatterySnapshot: Equatable, Sendable {
     /// 缺席/类型不符 → nil 容错——旧机型/结构漂移不影响快照可用性）。
     /// 更新节流实测 ~25-30s（显示面为「准实时」粒度）。
     public let telemetry: PowerTelemetry?
+    /// 今日最低电量 %（Pack 层 BatteryData.DailyMinSoc；0.22.0 §2.1 新增——
+    /// 系统侧原生日 SOC 窗口，SMC-NOTES §11.7 实测位于 Pack 层、非 root 可读）。
+    /// 重置时机未知（展示如实标注「系统记录」）；缺席/类型不符 → nil 容错。
+    public let dailyMinSoc: Int?
+    /// 今日最高电量 %（Pack 层 BatteryData.DailyMaxSoc；同上 0.22.0 §2.1 新增）。
+    public let dailyMaxSoc: Int?
     /// 快照时刻（调用方注入，见 BatterySnapshotParser.parse）。
     public let timestamp: Date
 }
@@ -102,6 +108,18 @@ public struct PowerTelemetry: Equatable, Sendable {
     public let voltageInMV: Int?
     /// 系统输入电流 mA（SystemCurrentIn）。
     public let currentInMA: Int?
+    /// 系统负载能量累加器 mW·s（AccumulatedSystemLoad；0.22.0 §2.1 能耗统计
+    /// 数据源——固件侧持续积分，App 关闭期间不丢失；定标 K=1.101 递增，
+    /// SMC-NOTES §11.8）。缺席/类型不符 → nil（26 红线：零触及）。
+    public let accSystemLoadMWs: Int?
+    /// 累加器样本计数（SystemLoadAccumulatorCount；≈样本序号 0.92/s——
+    /// 计数回退 = 累加器复位的独立判据，§11.8 活体捕获）。
+    public let accSystemLoadCount: Int?
+    /// 电池放电能量累加器 mW·s（AccumulatedBatteryDischarge；放电期**递减**，
+    /// K≈0.825——符号与标度均与系统通道不同，§11.8）。缺席/类型不符 → nil。
+    public let accBatteryDischarge: Int?
+    /// 放电累加器样本计数（BatteryDischargeAccumulatorCount；≈0.83/s）。
+    public let accBatteryDischargeCount: Int?
 }
 
 /// 电池监测层的类型化错误。

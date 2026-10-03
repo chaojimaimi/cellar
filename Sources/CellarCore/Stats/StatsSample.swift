@@ -25,6 +25,20 @@ public struct StatsSample: Equatable, Sendable {
     public let nominalChargeCapacityMAh: Int?
     /// 设计容量 mAh（Schema v1 同为可空列；快照域该字段非可选，恒有值）。
     public let designCapacityMAh: Int?
+    // MARK: 0.22.0 §2.2 能耗统计六列（Schema v2 全可空；旧行/键缺席机型 → nil
+    // ——配对差分要求两端非 NULL，NULL 行自然不参与能耗计算）。
+    /// 系统负载能量累加器 mW·s（AccumulatedSystemLoad；缺席 → nil）。
+    public let accSystemLoadMWs: Int?
+    /// 累加器样本计数（SystemLoadAccumulatorCount；计数回退 = 复位判据）。
+    public let accSystemLoadCount: Int?
+    /// 电池放电能量累加器 mW·s（AccumulatedBatteryDischarge；放电期递减）。
+    public let accBatteryDischarge: Int?
+    /// 放电累加器样本计数（BatteryDischargeAccumulatorCount）。
+    public let accBatteryDischargeCount: Int?
+    /// 今日最低电量 %（Pack 层系统键；重置时机未知——展示如实标注）。
+    public let dailyMinSoc: Int?
+    /// 今日最高电量 %（同上）。
+    public let dailyMaxSoc: Int?
 
     public init(
         timestamp: Date,
@@ -36,7 +50,13 @@ public struct StatsSample: Equatable, Sendable {
         cycleCount: Int,
         maxCapacityPercent: Int?,
         nominalChargeCapacityMAh: Int?,
-        designCapacityMAh: Int?
+        designCapacityMAh: Int?,
+        accSystemLoadMWs: Int? = nil,
+        accSystemLoadCount: Int? = nil,
+        accBatteryDischarge: Int? = nil,
+        accBatteryDischargeCount: Int? = nil,
+        dailyMinSoc: Int? = nil,
+        dailyMaxSoc: Int? = nil
     ) {
         self.timestamp = timestamp
         self.percent = percent
@@ -48,9 +68,16 @@ public struct StatsSample: Equatable, Sendable {
         self.maxCapacityPercent = maxCapacityPercent
         self.nominalChargeCapacityMAh = nominalChargeCapacityMAh
         self.designCapacityMAh = designCapacityMAh
+        self.accSystemLoadMWs = accSystemLoadMWs
+        self.accSystemLoadCount = accSystemLoadCount
+        self.accBatteryDischarge = accBatteryDischarge
+        self.accBatteryDischargeCount = accBatteryDischargeCount
+        self.dailyMinSoc = dailyMinSoc
+        self.dailyMaxSoc = dailyMaxSoc
     }
 
     /// 快照 → 采样（字段映射 + 功率推导集中在此，App 层采样器零重复）。
+    /// 0.22.0：累加器/SOC 六字段随遥测透传（快照缺席 → nil 入库 NULL）。
     public init(snapshot: BatterySnapshot) {
         self.init(
             timestamp: snapshot.timestamp,
@@ -66,7 +93,13 @@ public struct StatsSample: Equatable, Sendable {
             cycleCount: snapshot.cycleCount,
             maxCapacityPercent: snapshot.maxCapacityPercent,
             nominalChargeCapacityMAh: snapshot.nominalChargeCapacityMAh,
-            designCapacityMAh: snapshot.designCapacityMAh
+            designCapacityMAh: snapshot.designCapacityMAh,
+            accSystemLoadMWs: snapshot.telemetry?.accSystemLoadMWs,
+            accSystemLoadCount: snapshot.telemetry?.accSystemLoadCount,
+            accBatteryDischarge: snapshot.telemetry?.accBatteryDischarge,
+            accBatteryDischargeCount: snapshot.telemetry?.accBatteryDischargeCount,
+            dailyMinSoc: snapshot.dailyMinSoc,
+            dailyMaxSoc: snapshot.dailyMaxSoc
         )
     }
 

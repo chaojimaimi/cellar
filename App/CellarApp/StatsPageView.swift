@@ -60,6 +60,15 @@ struct StatsPageView: View {
             }
         }
 
+        /// 能耗桶径（0.22.0 §2.2 能耗卡专属映射——24h→3600s 小时柱 / 7d、30d
+        /// →86400s 日柱；与曲线卡桶径解耦）。
+        var energyBucketSeconds: Int {
+            switch self {
+            case .hours24: return 3600
+            case .days7, .days30: return 86_400
+            }
+        }
+
         var titleKey: String {
             switch self {
             case .hours24: return "stats.range.24h"
@@ -87,6 +96,11 @@ struct StatsPageView: View {
     @State private var firstSampleDate: Date?
     /// 最大容量趋势序列（≥2 点才显示卡片——数据积累如实，R-5）。
     @State var capacityPoints: [CapacityPoint] = []
+    /// 能耗聚合摘要（0.22.0 §3.2 能耗卡数据源；nil = 尚未查询）。
+    @State var energy: EnergySummary?
+    /// 最新采样（0.22.0 §3.3 今日 SOC 区间行——dailyMin/MaxSoc 系统键消费源；
+    /// 跨文件 internal 同 buckets 先例，StatsPageViewCards 消费）。
+    @State var latestSample: StatsSample?
     /// 当前范围（断档判定需读 bucketSeconds——StatsPageViewCards 投影消费）。
     @State var rangeWindow: RangeWindow = .hours24
     @State private var isLoading = true
@@ -112,6 +126,9 @@ struct StatsPageView: View {
                     batteryCard
                     temperatureCard
                     powerCard
+                    if energyShowsCard {
+                        energyCard
+                    }
                     if capacityPoints.count >= 2 {
                         capacityCard
                     }
@@ -144,8 +161,16 @@ struct StatsPageView: View {
             range: now.addingTimeInterval(-StatsStore.retentionInterval)..<now.addingTimeInterval(60),
             bucketSeconds: Self.overviewBucketSeconds
         ) ?? []
+        // 能耗差分聚合（0.22.0 §3.2 第三查询：能耗卡专属桶径）+ 最新采样
+        // （今日 SOC 区间行的系统键消费源）。
+        let energySummary = await sampler?.energyBuckets(
+            range: range, bucketSeconds: rangeWindow.energyBucketSeconds
+        )
+        let latest = await sampler?.latestSample()
         // 范围快速切换：被取消的旧任务在恢复主线程后放弃写态，防旧结果覆盖新范围。
         if Task.isCancelled { return }
+        energy = energySummary
+        latestSample = latest
         firstSampleDate = overviewBuckets.first?.start
         // 口径（v1.8 走查批 F5）：健康度 = 标称满充容量 / 设计容量——MaxCapacity
         // 键在部分 macOS 版本恒 100（语义漂移，BatterySnapshot 注记），旧口径已

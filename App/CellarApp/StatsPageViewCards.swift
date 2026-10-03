@@ -167,6 +167,122 @@ extension StatsPageView {
         }
     }
 
+    // MARK: - 能耗卡（0.22.0 §3.2）
+
+    /// 能耗卡门控（照容量卡「≥2 点才显示」数据积累如实先例）：查询窗内 ≥1 个
+    /// 有效能量对（任一通道累计 > 0）才显示——无累加器键机型（26 未证实）全零
+    /// 恒隐藏，26 红线零触及。有效对恒产正 mWh（Δacc ≥ 1 → K 加成 > 0），
+    /// 桶值和 > 0 与「≥1 有效对」等价。
+    var energyShowsCard: Bool {
+        guard let energy else { return false }
+        return energy.buckets.contains { $0.systemMWh > 0 || $0.dischargeMWh > 0 }
+    }
+
+    /// 能耗卡：柱图（系统耗电，小时/日柱随 range）+ 摘要行（总耗电/日均/电池
+    /// 放电）+ 今日 SOC 区间行 + 脚注（估算口径 + 复位计数——「如实呈现」纪律）。
+    var energyCard: some View {
+        panel(title: CellarL10n.s("stats.energy.title")) {
+            energyChart
+            VStack(alignment: .leading, spacing: 3) {
+                Text(CellarL10n.s("stats.energy.total", formatWh(energyTotalMWh)))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                if rangeWindow != .hours24 {
+                    Text(CellarL10n.s("stats.energy.dailyAvg", formatWh(energyTotalMWh / Double(rangeWindow.lookbackSeconds / 86_400))))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                if energyDischargeMWh > 0 {
+                    Text(CellarL10n.s("stats.energy.discharge", formatWh(energyDischargeMWh)))
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                if let socRangeText {
+                    Text(socRangeText)
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                if let footnote = energyFootnote {
+                    Text(footnote)
+                        .font(.caption2)
+                        .foregroundStyle(theme.tertiaryText)
+                }
+                // 数据未填满所选窗时卡内下沉提示（三张曲线卡同款口径）。
+                accumulatingNote
+            }
+        }
+    }
+
+    /// 柱图数据点（桶 start 全局唯一可作 id——DataPoint 先例）。
+    private struct EnergyBarPoint: Identifiable {
+        let date: Date
+        let wh: Double
+        var id: Date { date }
+    }
+
+    /// 系统耗电柱（BarMark；Y 轴 Wh——mWh 直显数值过大，/1000 换算展示层单点）。
+    private var energyBars: [EnergyBarPoint] {
+        (energy?.buckets ?? []).map { EnergyBarPoint(date: $0.start, wh: $0.systemMWh / 1000) }
+    }
+
+    private var energyChart: some View {
+        Chart {
+            ForEach(energyBars) { point in
+                BarMark(
+                    x: .value("time", point.date),
+                    y: .value("wh", point.wh)
+                )
+            }
+        }
+        .foregroundStyle(theme.accent)
+        .chartAxisTheme(theme, xStride: rangeWindow.xAxisStride.component,
+                        xStrideCount: rangeWindow.xAxisStride.count)
+        .chartYAxisLabel {
+            Text(CellarL10n.s("stats.unit.watthour"))
+                .font(.system(size: 10))
+                .foregroundStyle(theme.tertiaryText)
+        }
+        .frame(height: 140)
+    }
+
+    /// 范围总耗电（系统通道 mWh 累计）。
+    private var energyTotalMWh: Double {
+        (energy?.buckets ?? []).reduce(0) { $0 + $1.systemMWh }
+    }
+
+    /// 范围电池放电累计（mWh）。
+    private var energyDischargeMWh: Double {
+        (energy?.buckets ?? []).reduce(0) { $0 + $1.dischargeMWh }
+    }
+
+    /// 今日 SOC 区间行（0.22.0 §3.3）：最新样本系统键双非 nil ∧ 新鲜 → 「系统
+    /// 记录」（重置时机未知——展示不解释成因；跨会话启动窗口 latest 可能是隔日
+    /// 旧行，ts 距今 >10 min 不渲染系统行——code-review P3-2，落采样兜底）；
+    /// 键缺席 → 本页样本 min/max 兜底「（采样）」标注——**仅 24h 窗**（7d/30d
+    /// 窗 buckets 是多日跨度，标「今日」为事实性错位——code-review P3-1）；
+    /// 无数据不渲染。部分日覆盖不另标注——由 stats.accumulating 承接。
+    private var socRangeText: String? {
+        if let min = latestSample?.dailyMinSoc, let max = latestSample?.dailyMaxSoc,
+           let latestTs = latestSample?.timestamp,
+           Date().timeIntervalSince(latestTs) <= 600 {
+            return CellarL10n.s("stats.energy.soc.system", min, max)
+        }
+        guard rangeWindow == .hours24, let first = buckets.first else { return nil }
+        let min = buckets.reduce(first.minPercent) { Swift.min($0, $1.minPercent) }
+        let max = buckets.reduce(first.maxPercent) { Swift.max($0, $1.maxPercent) }
+        return CellarL10n.s("stats.energy.soc.sample", min, max)
+    }
+
+    /// 脚注（caption2）：`固件累加器估算 · 复位 N 次`——N = 系统 + 放电复位
+    /// 合计，N>0 才缀（该日低估如实呈现）；全零 → 仅估算标注。
+    private var energyFootnote: String? {
+        guard let energy else { return nil }
+        let total = energy.resets + energy.dischargeResets
+        return total > 0
+            ? CellarL10n.s("stats.energy.footnote", total)
+            : CellarL10n.s("stats.energy.estimate")
+    }
+
     // MARK: - 最大容量趋势卡
 
     /// 全保留窗小时桶趋势；≥2 点才显示（StatsPageView 门控）——容量变化以周
@@ -354,6 +470,14 @@ extension StatsPageView {
         case .discharging: return theme.warning
         }
     }
+}
+
+// MARK: - Wh 格式化（0.22.0 §3.2 单 helper 集中一处）
+
+/// mWh → Wh 文案（能耗卡全部 Wh 值唯一出口）：≥100 Wh 取整、否则 1 位小数。
+private func formatWh(_ mWh: Double) -> String {
+    let wh = mWh / 1000
+    return wh >= 100 ? String(format: "%.0f", wh) : String(format: "%.1f", wh)
 }
 
 // MARK: - 图表坐标轴主题（token 化）

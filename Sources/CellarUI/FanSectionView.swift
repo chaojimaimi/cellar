@@ -55,6 +55,12 @@ public struct FanSectionView: View {
     /// battery 源取 batterySnapshot.temperatureC / cpuSkin 源取 FanStatus.cpuSkinTempC；
     /// nil = 无数据显示「—」。默认 nil——不传的既有调用点零扰动）。
     public let currentTempC: Double?
+    /// CPU 核心参考温度 °C（0.22.0 §4.3；App 层 CpuFanMonitor Tp00 读数透传）。
+    /// 可信度门钉在渲染层：§11.3.1 定谳 Tp 键核心 park 时寄存器清零（静息冷态
+    /// 0.0/6.7℃ = 不可信信号）——`< 10℃` 与 nil 同形不渲染该行；本组件只做
+    /// 展示（热暂停判定仍走电池温度原通道，零交集）。默认 nil——既有构造点
+    /// 零扰动（golden 零漂移锚点）。
+    public let cpuTempC: Double?
 
     @State private var showConfirm: Bool
     @State private var strategy: FanStrategy
@@ -74,7 +80,8 @@ public struct FanSectionView: View {
         initialConfirmVisible: Bool = false,
         stateOverride: FanStateWord? = nil,
         showsTitle: Bool = true,
-        currentTempC: Double? = nil
+        currentTempC: Double? = nil,
+        cpuTempC: Double? = nil
     ) {
         self.fan = fan
         self.pendingField = pendingField
@@ -83,6 +90,7 @@ public struct FanSectionView: View {
         self.stateOverride = stateOverride
         self.showsTitle = showsTitle
         self.currentTempC = currentTempC
+        self.cpuTempC = cpuTempC
         _showConfirm = State(initialValue: initialConfirmVisible)
         // 六值 @State 播种调 seedAll 等价逻辑（静态纯函数 seedValues——与 seedAll
         // 回灌共用单一真相）。⚠️ init 内不得直接调 seedAll：未安装态对 @State
@@ -182,6 +190,11 @@ public struct FanSectionView: View {
                 } else {
                     statusRow
                 }
+                // 0.22.0 §4.3 CPU 参考温度行（风扇行邻位；可信度门在渲染层——
+                // <10℃ 核心 park 归零不可信读数与 nil 同形不渲染，§11.3.1）。
+                if let cpuTempC, cpuTempC >= 10 {
+                    cpuTempRow(cpuTempC)
+                }
             }
 
             if fan != nil && !staleDaemon {
@@ -259,6 +272,20 @@ public struct FanSectionView: View {
 
     private var effectiveState: FanStateWord {
         stateOverride ?? fan?.state ?? .off
+    }
+
+    /// CPU 参考温度行（0.22.0 §4.3）：「CPU xx.x°C（参考）」——只展示不触发
+    /// 任何逻辑；调用点已过可信度门（≥10℃），本行内不重复判定。
+    private func cpuTempRow(_ value: Double) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "thermometer.medium")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.secondaryText)
+            Text(CellarL10n.s("fan.cpuTemp", String(format: "%.1f", value)))
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// 八态词/符号/色（v1.12 抽静态函数——左/右双行共用单一真相，防两行词表漂移）。

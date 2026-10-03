@@ -67,6 +67,14 @@ public enum BatterySnapshotParser {
             // PowerTelemetryData 嵌套字典（v1.11 T1）：提取模式照 AdapterDetails
             // 先例——缺席/类型不符 → 整字段 nil 容错，不影响快照可用性。
             telemetry: props["PowerTelemetryData"].flatMap { powerTelemetry(from: $0) },
+            // 今日 SOC 窗口（0.22.0 §2.1）：Pack 层 BatteryData 查找（照 0.21.0
+            // §4 packDicts 先例——Pack 顶层 → 其 BatteryData 子字典；§11.7 实测
+            // DailyMinSoc/DailyMaxSoc 位于 Pack 层 BatteryData）。可选回退面无
+            // 错误面可掩：packProperties 缺席/键缺席/类型不符 → nil（26 红线：
+            // 全字段可选，缺席机型零触及）。顶层 BatteryData 不查——两键实测
+            // 仅 Pack 层在场，双字典序多余且会掩 Pack 层语义。
+            dailyMinSoc: packProperties.flatMap { intValueAcross(packDicts($0), "DailyMinSoc") },
+            dailyMaxSoc: packProperties.flatMap { intValueAcross(packDicts($0), "DailyMaxSoc") },
             timestamp: timestamp
         )
     }
@@ -202,6 +210,9 @@ public enum BatterySnapshotParser {
     /// PowerTelemetryData 直接字典（v1.11 T1 本机 ioreg 实测形状）→ PowerTelemetry。
     /// 缺席/类型不符 → nil；字段级类型不符 → 该字段 nil（照 adapter(from:) 先例）。
     /// 数值统一走 intValue（B-4 按位保留——BatteryPower 放电态回绕负值还原）。
+    /// 0.22.0 §2.1：同字典加累加器四键（能耗统计数据面；缺席/类型不符 → 该字段
+    /// nil——26 机器键在场性未证实，全可选零触及）。⚠️ AccumulatedBatteryPower
+    /// **不解析**（§11.8 定谳：放电期冻结 Δ=0/0，非可用能量表——剔除不消费）。
     private static func powerTelemetry(from value: Any?) -> PowerTelemetry? {
         guard let dict = value as? [String: Any] else { return nil }
         return PowerTelemetry(
@@ -210,7 +221,11 @@ public enum BatterySnapshotParser {
             batteryPowerMW: intValue(dict["BatteryPower"]),
             adapterEfficiencyLossMW: intValue(dict["AdapterEfficiencyLoss"]),
             voltageInMV: intValue(dict["SystemVoltageIn"]),
-            currentInMA: intValue(dict["SystemCurrentIn"])
+            currentInMA: intValue(dict["SystemCurrentIn"]),
+            accSystemLoadMWs: intValue(dict["AccumulatedSystemLoad"]),
+            accSystemLoadCount: intValue(dict["SystemLoadAccumulatorCount"]),
+            accBatteryDischarge: intValue(dict["AccumulatedBatteryDischarge"]),
+            accBatteryDischargeCount: intValue(dict["BatteryDischargeAccumulatorCount"])
         )
     }
 }

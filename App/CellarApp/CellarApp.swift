@@ -53,6 +53,12 @@ struct CellarApp: App {
         statusController.onScheduleEvent = { [notifications] notification in
             notifications.deliverSchedule(notification)
         }
+        // 0.22.0 §4.2 sub80 机制关闭系统通知（UD-7 形态第三出口）：
+        // deliverSuppressionNotice 直投（边沿判定在 StatusController.ingest，
+        // 1h 静态限频在通知服务侧——菜单栏独占场景横幅不可见的告警补全）。
+        statusController.onSuppressionNotice = { [notifications] in
+            notifications.deliverSuppressionNotice()
+        }
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in
             notifications.requestAuthorization()
@@ -121,6 +127,10 @@ struct CellarApp: App {
                     // v0.19.20：编排偏好注入主窗口链（通用页编排节快捷指令名输入框
                     // 的唯一数据源——同上纪律；面板不消费，MenuBarExtra 链不注入）。
                     .environmentObject(orchestrationSettings)
+                    // 0.22.0 §4.3：CPU/风扇采样器注入主窗口链（通用页风扇节 Tp00
+                    // 参考温度行消费源——@EnvironmentObject 缺注入运行时 crash，
+                    // 照 displaySettings 既有纪律；幸存实例 = 组合根同一 @StateObject）。
+                    .environmentObject(cpuFanMonitor)
                     // v1.3 统计采样器注入：统计页查询经 StatsSampler actor 后台
                     // 执行（主线程零 SQLite，红线 4）——注入幸存实例，临时实例
                     // 靠采样循环 weak-self 复查自熄（StatsSampler 注记）。

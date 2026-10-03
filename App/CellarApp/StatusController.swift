@@ -91,6 +91,11 @@ final class StatusController: ObservableObject {
     /// 映射，不新增 case、不动 daemon 字面量→通知映射）。
     var onScheduleEvent: ((ScheduleNotification) -> Void)?
 
+    /// sub80 机制关闭边沿出口（0.22.0 §4.2；CellarApp 注入
+    /// NotificationService.deliverSuppressionNotice 直投——UD-7 形态第二出口
+    /// 同款，限频由通知服务侧独立 1h 静态窗承担）。
+    var onSuppressionNotice: (() -> Void)?
+
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
     // MARK: v0.19.20 编排执行通道（WP-2）
@@ -250,6 +255,9 @@ final class StatusController: ObservableObject {
     /// 主窗口可见性换档（与 setPanelVisible 同语义的第二个表面）。
     func setMainWindowVisible(_ visible: Bool) {
         mainWindowVisible = visible
+        // 0.22.0 §4.3：通用页 CPU 参考温度行消费——CpuFanMonitor 双表面 OR 门
+        // 合并裁决（refreshMclSampling 多表面先例；单面板门会让主窗消费面恒 nil）。
+        cpuFanMonitor?.setMainWindowVisible(visible)
         refreshCadence()
     }
 
@@ -337,6 +345,15 @@ final class StatusController: ObservableObject {
                 } else {
                     onScheduleEvent?(.restored)
                 }
+            }
+            // sub80 机制关闭边沿（0.22.0 §4.2）：边沿 = 非 true → true
+            //（false/nil → true；decodeIfPresent 的 nil = 26/旧 daemon 不触发）。
+            // 首样本破例——baseline nil ∧ 首包已 suppressed → 通知（.writeFailed
+            // 破例先例：菜单栏独占场景用户可能一直没看到横幅，首包即真事件）。
+            // 须在基线推进前比对（与 scheduleActiveId 边沿同拍）。
+            if status.sub80MechanismSuppressed == true,
+               notificationBaseline?.sub80MechanismSuppressed != true {
+                onSuppressionNotice?()
             }
             notificationBaseline = status
             for event in events {

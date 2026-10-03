@@ -147,17 +147,17 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 838 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 867 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (800+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
                             # pure logic, ≥80% · currently 92.06%)
-swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 444
-                            # authoritative (0.21.2 baseline; 0.21.3 adds 6 Orchestration
-                            # cases — verify 450 after CI snapshot-regen) + localization
-                            # gate (493 keys × en/zh-Hans)
+swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 450
+                            # authoritative (0.21.3 baseline; 0.22.0 adds 12 FanSection CPU
+                            # reference-temperature cases — verify 462 after CI snapshot-regen)
+                            # + localization gate (504 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

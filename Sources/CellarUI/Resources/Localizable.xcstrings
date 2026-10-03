@@ -1905,6 +1905,23 @@
         }
       }
     },
+    "fan.cpuTemp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU %@ °C (reference)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CPU %@ °C（参考）"
+          }
+        }
+      }
+    },
     "fan.desc": {
       "extractionState": "manual",
       "localizations": {
@@ -3057,6 +3074,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "已达充电上限 %lld%%，已停止充电"
+          }
+        }
+      }
+    },
+    "notification.sub80Suppressed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The native limiting mechanism was turned off in System Settings — reapply the limit in Cellar to restore enforcement, or set a concrete limit (e.g. 80%) in System Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统设置充电上限 100% 已关闭原生限充机制——请在 Cellar 重新应用上限以恢复执法；或在系统设置设一个具体上限（如 80%）。"
           }
         }
       }
@@ -5271,6 +5305,142 @@
         }
       }
     },
+    "stats.energy.dailyAvg": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Wh/day average"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日均 %@ Wh"
+          }
+        }
+      }
+    },
+    "stats.energy.discharge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Battery discharge: %@ Wh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电池放电 %@ Wh"
+          }
+        }
+      }
+    },
+    "stats.energy.estimate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Firmware accumulator estimate"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固件累加器估算"
+          }
+        }
+      }
+    },
+    "stats.energy.footnote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Firmware accumulator estimate · %lld resets"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固件累加器估算 · 复位 %lld 次"
+          }
+        }
+      }
+    },
+    "stats.energy.soc.sample": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today's range %lld–%lld%% (sampled)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今日电量区间 %lld–%lld%%（采样）"
+          }
+        }
+      }
+    },
+    "stats.energy.soc.system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today's range %lld–%lld%% (system-recorded)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今日电量区间 %lld–%lld%%（系统记录）"
+          }
+        }
+      }
+    },
+    "stats.energy.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Energy Usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "耗电统计"
+          }
+        }
+      }
+    },
+    "stats.energy.total": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total this range: %@ Wh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "范围总耗电 %@ Wh"
+          }
+        }
+      }
+    },
     "stats.maxCapacity.caliber": {
       "extractionState": "manual",
       "localizations": {
@@ -5403,6 +5573,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "W"
+          }
+        }
+      }
+    },
+    "stats.unit.watthour": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wh"
           }
         }
       }
@@ -7990,8 +8177,7 @@
           }
         }
       }
-    }
-,
+    },
     "panel.action.fullOnceOpen": {
       "extractionState": "manual",
       "localizations": {

@@ -542,6 +542,15 @@ extension Topoff {
                 now.timeIntervalSince($0) >= healProbeInterval
             } ?? true
             guard due else { return TopoffTickPlan(writeLimit: nil, state: s) }
+            // 0.22.0 §4.1 外接电源门：违规判定与恢复证据均要求 externalConnected
+            //（isViolationTick/isEnforcementEvidence）——电池供电态探针的 20 tick
+            // 观察窗必然走无差别超时臂（每次纯空转 ~10 min + 两笔域写）。到期 ∧
+            // 非插电（false 与 nil 采样缺席同门）→ 返回 nil plan 不启动、不消耗
+            // due（lastHealProbeAt 不推进）——插电后首拍即探。观察窗中拔电维持
+            // 既有语义（超时臂收尾）——门只钉稳态启动拍，不扩权。
+            guard externalConnected == true else {
+                return TopoffTickPlan(writeLimit: nil, state: s)
+            }
             s.healProbeActive = true
             s.healProbeTicks = 0
             s.violationTicks = 0
