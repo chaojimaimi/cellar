@@ -38,8 +38,24 @@ public enum Topoff {
     /// 0.21.3 §1.3 suppressed 锁存阈值：连续覆写签名命中 ≥2 次 → 域机制被外部
     /// 压制（UI-100 三键覆写形态）——wire sub80MechanismSuppressed 数据源（App
     /// 通用页警示行 + doctor 检查 20 FAIL 臂）。锁存后重写限频复用
-    /// reassertionCooldown 10 min；解除 = 读回一致清零（方案 §1.3 钉死）。
+    /// reassertionCooldown 10 min；0.22.3 §1 起解除 = **连续 2 次一致读回 ∧ 过
+    /// 瞬态守卫**（单次一致不再释放——2026-10-04 10:19 虚假释放事件根治）。
     public static let suppressionThreshold = 2
+    /// 0.22.3 §1 锁存释放的瞬态守卫（秒）：streak 计数要求 `now − lastWriteAt ≥ 120s`
+    /// （自身 10 min 限频重写的瞬态窗外）——结构性排除「读到自己的重写」形态；
+    /// 守卫窗内的一致读回不计不减（无证据）。真健康释放延迟 ~3 min（120s 守卫 +
+    /// 2×30s 采样），横幅多挂两三分钟可接受（方案 §1 钉死）。
+    public static let suppressionTransientGuard: TimeInterval = 120
+    /// 0.22.3 §2 owned 拍周期域读回节奏：**别名赋值同源钉死 reassertionCooldown**
+    /// （评审 P2-4——读回节奏 = 重写限频节奏，防双常量漂移）。owned（非 degraded）
+    /// 态任何静默漂移 ≤10 min 首次命中（健康稳态成本 = 2 子进程/10 min，登记）。
+    public static let periodicReadbackInterval: TimeInterval = Topoff.reassertionCooldown
+    /// 0.22.3 §3 失速判定门槛（秒）：锚点龄 ≥ 30 min ∧ percent ≥ 锚点 percent →
+    /// stallDue（本拍强制域读回 + 触发拍刷新锚点——30 min 节奏封顶防复读风暴）。
+    public static let stallThreshold: TimeInterval = 1800
+    /// 0.22.3 §3 失速期连续一致读回升级阈值：≥2 次 → persistLog 升级 WARN
+    /// （第二传感器——域文件看着对但充电行为不跟随的可见面；wire 无通道）。
+    public static let stallConsistentWarnThreshold = 2
     /// 关断清理域随写值（§3.7——先值后态+通知）。
     public static let shutdownLimit = 100
     /// 0.20.1 热修：topoff 子进程看门狗超时（秒）——真机 wedge 事件（走查②：strike
@@ -155,6 +171,22 @@ public enum TopoffWriter {
     }
 }
 
+/// 0.22.3 §3 失速锚点（观测层第二传感器——percent 停驻在 target+2 以上的锚定）。
+/// ⚠️ 方案钉的 `(percent: Int, at: Date)?` tuple 形态在 `TopoffChannelState` 的
+/// `Equatable` 合成上不可行（tuple 成员不满足协议合成——编译实证），以最小嵌套
+/// struct 承载同语义（代码现实适配，字段与判据一字不差）。
+public struct TopoffStallAnchor: Equatable, Sendable {
+    /// 锚定时刻的电量。
+    public var percent: Int
+    /// 锚定时刻。
+    public var at: Date
+
+    public init(percent: Int, at: Date) {
+        self.percent = percent
+        self.at = at
+    }
+}
+
 /// topoff 通道运行时状态（daemon 锁内内存态）。0.20.2 §2 起**诚实性五字段**
 ///（degraded / strikes / off / lastViolationAt / lastHealProbeAt）经
 /// TopoffPersistedState 跨重启持久化（写入点钉在 sub80 门内、触发源仅 strike/
@@ -193,6 +225,25 @@ public struct TopoffChannelState: Equatable, Sendable {
     /// 防持续覆写 30s churn）。**内存态不持久化**（重启丢计数可接受——登记于
     /// 方案 §1.3：覆写源（MDM/系统设置驻留）跨重启仍在则 ≤2 拍内重新锁存）。
     public var suppressionConsecutive: Int
+    /// 0.22.3 §1：签名一致的连续计数（锁存释放持续性判据——首次一致 streak=1
+    /// 保持锁存，连续第二次一致 → 释放；签名命中 → 清零）。**内存态不持久化**
+    /// （与 suppressionConsecutive 同类——重启丢 streak 无害：锁存态下周期读回
+    /// ≤10 min 重采，最坏多挂一个守卫窗）。
+    public var suppressionConsistentStreak: Int
+    /// 0.22.3 §2：上次周期域读回时刻（daemon 预检臂 3 判定输入；nil = 远古——
+    /// 首拍即读）。**读尝试即推进（无论成败）**——失败不加速重试，每失败周期
+    /// 10 min 盲区有界（评审 P2-2）。内存态不持久化（重启即首拍读回——停机漂移
+    /// 的最便宜对账）。
+    public var lastPeriodicReadbackAt: Date?
+    /// 0.22.3 §2：确认拍请求（channelTick 签名命中 ∧ 未锁存拍置位——下一拍 daemon
+    /// 必读，30s 内完成「连续两次」锁存判定；读尝试即清）。内存态。
+    public var pendingSuppressionConfirmation: Bool
+    /// 0.22.3 §3：失速锚点（nil = 无在档锚点；重置条件见 `Topoff.stallTick`）。
+    /// 内存态不持久化（Discharge 先例同款纪律——判定/态进 CellarCore 场景域可测）。
+    public var stallAnchor: TopoffStallAnchor?
+    /// 0.22.3 §3：失速期连续一致读回计数（≥ Topoff.stallConsistentWarnThreshold
+    /// → daemon persistLog 升级 WARN；签名命中/锚点重置即归零）。内存态。
+    public var stallConsistentCount: Int
 
     public init() {
         violationTicks = 0
@@ -202,6 +253,11 @@ public struct TopoffChannelState: Equatable, Sendable {
         healProbeTicks = 0
         off = false
         suppressionConsecutive = 0
+        suppressionConsistentStreak = 0
+        lastPeriodicReadbackAt = nil
+        pendingSuppressionConfirmation = false
+        stallAnchor = nil
+        stallConsistentCount = 0
     }
 }
 
@@ -400,8 +456,10 @@ extension Topoff {
     /// topoff 通道每拍推进（承载态，§3.2/§3.3）：
     /// 24h 无违反 strikes 复位 → 幂等写（目标变化/上次未落盘——写后动力学重置）→
     /// **0.21.3 §1.2 域读回三分支**（覆写签名 → 重写自愈 + 清零不耗 strike +
-    /// suppressionConsecutive 计数/锁存/限频；签名一致 → 锁存解除 + 正常计数；
-    /// 读失败 → fail-open 既有计数）→ 行为验证窗（连续 20 违规 tick → strike）→
+    /// suppressionConsecutive 计数/锁存/限频/确认拍置位；签名一致 → **0.22.3 §1
+    /// 释放持续性**——首次一致 streak=1 保持锁存，连续第二次一致 ∧ 过 120s 瞬态
+    /// 守卫才解除；读失败 → fail-open 既有计数）→ 行为验证窗（连续 20 违规 tick
+    /// → strike）→
     /// strike <3 重申（冷却门内重写域+通知）/ ≥3 诚实降级（域随写 80，编排钳由
     /// 路由层承接）。采样缺席拍不推进窗（证据不足防误降级）。
     /// `domainReadback`：daemon 预判命中才读并注入读回结果——预判 = 违规拍
@@ -437,10 +495,9 @@ extension Topoff {
         guard let percent, let externalConnected, let isCharging else {
             return TopoffTickPlan(writeLimit: nil, state: s)
         }
-        // 0.21.3 §1.2 域读回消费（三分支，G7b 外部覆写快速自愈；daemon 注入时机
-        // = 违规拍预判命中 ∨ **suppressed 锁存期补采样**——锁存态下对非违规
-        // owned 拍也采样，防「覆写源停止后再无违规拍 → 域永不读回 → 锁存永久
-        // 滞留」半死态〔review P1〕；健康稳态仍零子进程）：
+        // 0.21.3 §1.2 域读回消费（三分支，G7b 外部覆写快速自愈；0.22.3 §2 起 daemon
+        // 注入时机扩为四臂——违规拍预判 ∨ suppressed 锁存期补采样 ∨ **周期到期**
+        // 〔健康稳态 2 子进程/10 min 盯防〕∨ 确认拍；臂面见 daemon 侧预检）：
         // - 覆写签名命中（双键口径：limit ≠ lastWritten ∨ FeatureState ≠ 1——
         //   UI-100 三键覆写在两键必命中；enabled 键不参与签名，残留影响走 §4.4
         //   真机走查）→ 重写意图（writeLimit=target）+ violationTicks 清零**不耗
@@ -450,15 +507,19 @@ extension Topoff {
         //   ，R2-P2：限频只封 writeLimit，不改变证据归类——否则 20 tick 后
         //   strike→degraded 违背「覆写不降级」钉死语义）。**非违规拍的覆写**
         //   （锁存期补采样引入）同样走本臂——域值错误与充电态无关，重写即自愈；
-        // - 签名一致 → suppressionConsecutive 清零（**锁存解除唯一路径**——
-        //   违规拍与锁存期补采样拍同权，wire「随轮询自然消失」的兑现面），
+        // - 签名一致 → **0.22.3 §1 释放持续性**：锁存期首次一致 streak=1 保持
+        //   锁存，连续第二次一致 ∧ 过 120s 瞬态守卫才清零解除（单次一致不再
+        //   释放——2026-10-04 10:19 虚假释放根治；未锁存一致 → 两计数全清），
         //   违规拍随后落正常计数（既有链——strike 只计 agent 无视）；
         // - 读失败/未读（nil）→ fail-open 既有计数（读失败不阻断防线）。
         if let readback = domainReadback {
-            let overridden = readback.limit != s.lastWrittenLimit
-                || readback.featureState != 1
+            // 0.22.3 §1：签名证据簿记（计数/持续性 streak/120s 瞬态守卫/确认拍
+            // 置位）收敛进 `consumeSuppressionEvidence` 共用 helper（healTick
+            // degraded 簿记同源——单一语义防实现漂移）；本函数只保留 writeLimit
+            // 意图与 violationTicks 推进（覆写拍清零不耗 strike——既有语义）。
+            let overridden = Topoff.consumeSuppressionEvidence(
+                state: &s, readback: readback, now: now)
             if overridden {
-                s.suppressionConsecutive += 1
                 s.violationTicks = 0
                 if s.suppressionConsecutive >= suppressionThreshold {
                     let cooldownElapsed = s.lastWriteAt.map {
@@ -470,7 +531,10 @@ extension Topoff {
                 }
                 return TopoffTickPlan(writeLimit: target, state: s)
             }
-            s.suppressionConsecutive = 0
+            // 签名一致：锁存期**首次一致 streak=1 保持锁存**（释放唯一路径 =
+            // 连续第二次一致 ∧ 过 120s 瞬态守卫——helper 内；10:19 单次一致虚假
+            // 释放根治）；未锁存一致 → 两计数全清。落正常违规计数（既有链——
+            // strike 只计 agent 无视）。
         }
         if isViolationTick(percent: percent, target: target,
                            externalConnected: externalConnected, isCharging: isCharging) {
@@ -527,15 +591,26 @@ extension Topoff {
     ///   **P1-② 无差别超时臂**：窗满 20 tick 无违反无证据（活 agent 钉 target 正点
     ///   充电微顶/死通道 + native 钳 80 等弱信号形态）→ 探针结束回降级稳态（补写
     ///   degradedLimit 维持稳态不变量）+ 下小时再探——不再永久滞留。
+    /// - parameter domainReadback: **0.22.3 §2 degraded 态签名簿记**（可选注入——
+    ///   channelTick 0.21.3 同款注入形态，纯函数保持；daemon 周期臂 3 含 degraded）。
+    ///   签名命中 → suppressionConsecutive++（≥2 锁存照旧——wire 恢复可见 → App
+    ///   恢复链在降级态同样可点火）；一致 → §1 streak 语义（降级态锁存释放同样需
+    ///   持续一致）。**仅簿记**：80 钳/探针/writeLimit 意图零变化（签名自愈写不进
+    ///   healTick——降级态域值由探针与稳态钳维护）。nil = 未注入/读失败（fail-open）。
     public static func healTick(
         state: TopoffChannelState,
         target: Int,
         now: Date,
         percent: Int?,
         externalConnected: Bool?,
-        isCharging: Bool?
+        isCharging: Bool?,
+        domainReadback: (limit: Int?, featureState: Int?)? = nil
     ) -> TopoffTickPlan {
         var s = state
+        // 0.22.3 §2：degraded 态签名簿记（与 channelTick 同一 helper——计数/streak/
+        // 守卫/确认拍置位单一语义）。置于全部相位分支之前——稳态与探针期同权消费；
+        // 其余语义（80 钳/探针/writeLimit）零变化。
+        Topoff.consumeSuppressionEvidence(state: &s, readback: domainReadback, now: now)
         if !s.healProbeActive {
             // 稳态：每小时重探（P2 播种后首探整 1h）。
             let due = s.lastHealProbeAt.map {
@@ -605,5 +680,115 @@ extension Topoff {
             return TopoffTickPlan(writeLimit: degradedLimit, state: s)
         }
         return TopoffTickPlan(writeLimit: nil, state: s)
+    }
+}
+
+// MARK: - 0.22.3 §1-§3 锁存释放持续性 / 周期读回 / 失速检测（纯函数——CellarCoreCheck
+// 场景域钉死，daemon 只消费）
+
+extension Topoff {
+    /// 0.22.3 §1 域读回签名证据簿记（channelTick / healTick 共用——单一语义防实现
+    /// 漂移；只动三个抑制簿记字段，violationTicks 推进与 writeLimit 意图归各调用链
+    /// 既有语义）。返回是否覆写签名命中（channelTick 据此走重写自愈臂）。
+    ///
+    /// - 签名命中（双键口径任一：limit ≠ lastWritten ∨ FeatureState ≠ 1）→
+    ///   suppressionConsecutive+1 + **streak 清零**（一致性证据被打断照旧清——
+    ///   10:19 形态的对称面）+ 未锁存拍置 `pendingSuppressionConfirmation`（下一拍
+    ///   确认拍必读——30s 内完成「连续两次」锁存判定）；
+    /// - 签名一致 → **释放持续性判据**：锁存期要求 `now − lastWriteAt ≥ 120s`
+    ///   瞬态守卫（结构性排除「读到自己的重写」形态）；守卫窗内不计不减（无证据）；
+    ///   窗外首次一致 streak=1 **保持锁存与计数**（继续限频重写与补采样），连续第二
+    ///   次一致 → 释放（suppressionConsecutive=0、streak=0）；未锁存一致 → 两计数
+    ///   全清（未锁存无「释放」概念——简化）；
+    /// - nil readback（读失败）→ 两计数均不动（失败不构成任何证据——fail-open）。
+    @discardableResult
+    public static func consumeSuppressionEvidence(
+        state: inout TopoffChannelState,
+        readback: (limit: Int?, featureState: Int?)?,
+        now: Date
+    ) -> Bool {
+        guard let readback else { return false }   // 读失败：两计数均不动
+        let overridden = readback.limit != state.lastWrittenLimit
+            || readback.featureState != 1
+        if overridden {
+            state.suppressionConsistentStreak = 0
+            state.suppressionConsecutive += 1
+            if state.suppressionConsecutive < suppressionThreshold {
+                // degraded 态置位无害（code-review P3：臂④非 degraded 不可达，
+                // 位滞留至下一周期读 ≤10 min 清除；降级恢复后残留位触发一次
+                // 即时读，有益无害）。
+                state.pendingSuppressionConfirmation = true
+            }
+            return true
+        }
+        if state.suppressionConsecutive >= suppressionThreshold {
+            // 锁存期：瞬态守卫门外才计一致性证据。
+            let guardElapsed = state.lastWriteAt.map {
+                now.timeIntervalSince($0) >= suppressionTransientGuard
+            } ?? true
+            guard guardElapsed else { return false }   // 守卫窗内：不计不减
+            state.suppressionConsistentStreak += 1
+            if state.suppressionConsistentStreak >= 2 {
+                // 连续第二次一致 → 释放（方案 §1 钉死字面 2——与锁存阈值
+                // suppressionThreshold 仅数值巧合，语义独立勿合并常量）。
+                state.suppressionConsecutive = 0
+                state.suppressionConsistentStreak = 0
+            }
+            // 首次一致（streak=1）→ 保持锁存与计数。
+        } else {
+            // 未锁存一致 → 两计数全清（简化——streak 仅锁存期有意义）。
+            state.suppressionConsecutive = 0
+            state.suppressionConsistentStreak = 0
+        }
+        return false
+    }
+
+    /// 0.22.3 §2 周期读回到期判定（daemon 预检臂 3 纯函数钉面）：nil = 远古——
+    /// 首拍即读；`now − last ≥ periodicReadbackInterval` → due（≥ 边界钉面）。
+    public static func periodicReadbackDue(last: Date?, now: Date) -> Bool {
+        last.map { now.timeIntervalSince($0) >= periodicReadbackInterval } ?? true
+    }
+
+    /// 0.22.3 §3 失速锚点每拍推进（观测层第二传感器——「域文件看着对但充电行为
+    /// 不跟随」的行为兜底；已知形态〔机制关闭〕由 §2 周期读回先行命中，本判定为
+    /// 第二传感器）。返回 `(nextAnchor, stallDue)`。
+    ///
+    /// - 锚点重置（任一）：!owned ∨ !ext ∨ isCharging ∨ 采样缺席 ∨
+    ///   `percent < target + violationMarginPercent(2)`（合法回落 ~7%/30min 恒可辨
+    ///   ——percent 下降即刷新锚点，永不误报）；
+    /// - 锚点更新：无锚点 → 立 (percent, now)；percent 下降 → 刷新；
+    /// - stallDue：锚点龄 ≥ stallThreshold(30 min) ∧ percent ≥ 锚点 percent →
+    ///   **触发拍刷新锚点为 (percent, now)**（失速持续态 30 min 节奏封顶，防每
+    ///   30s 复读风暴——评审 P1-1）。
+    public static func stallTick(
+        anchor: TopoffStallAnchor?,
+        owned: Bool,
+        percent: Int?,
+        target: Int?,
+        externalConnected: Bool?,
+        isCharging: Bool?,
+        now: Date
+    ) -> (anchor: TopoffStallAnchor?, stallDue: Bool) {
+        guard owned, let percent, let target,
+              externalConnected == true, isCharging == false,
+              percent >= target + violationMarginPercent else {
+            return (nil, false)   // 重置条件（任一）→ 清锚点
+        }
+        guard let anchor else { return (TopoffStallAnchor(percent: percent, at: now), false) }
+        if now.timeIntervalSince(anchor.at) >= stallThreshold, percent >= anchor.percent {
+            // stallDue：触发拍刷新锚点（30 min 节奏封顶）。
+            return (TopoffStallAnchor(percent: percent, at: now), true)
+        }
+        if percent < anchor.percent {
+            // percent 下降 → 刷新锚点（合法回落恒可辨）。
+            return (TopoffStallAnchor(percent: percent, at: now), false)
+        }
+        return (anchor, false)   // 停驻未到期：保持锚点
+    }
+
+    /// 0.22.3 §3 失速期一致读回计数推进（daemon 消费——stallDue 拍强制读回后按
+    /// 签名分类计数；连续 ≥ stallConsistentWarnThreshold → persistLog 升级 WARN）。
+    public static func stallConsistentCountNext(current: Int, overridden: Bool) -> Int {
+        overridden ? 0 : current + 1
     }
 }

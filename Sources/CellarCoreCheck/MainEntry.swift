@@ -453,6 +453,11 @@ struct Main {
         // 清单 ≥7 case：边沿/首包破例/current nil·false 全拒/mode 非 active
         // skip/冷却窗三分支——纯函数面，SuppressionRecoveryDomain）。
         runSuppressionRecoveryDomainScenarios()
+        // 0.22.3 锁存持续性与周期读回场景域（方案 §1-§6：释放持续性〔单次一致
+        // 不释放、连续两次 + 120s 瞬态守卫〕/确认拍置位与消费循环/周期到期纯函数/
+        // 失速锚点推进与 stallDue/healTick degraded 簿记/未锁存全清/nil readback/
+        // WARN 计数/doctor 行为启发——纯函数面，TopoffLatchDomain）。
+        runTopoffLatchDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

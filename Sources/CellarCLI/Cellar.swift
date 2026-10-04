@@ -12,7 +12,7 @@ struct Cellar: ParsableCommand {
         // WP2' L1：与 DaemonXPC.daemonVersion 同步——**随发版必更**（0.20.1 起
         // 漏更停在 0.20.0，0.22.1 批修正；防 CLI 对 stale daemon 诊断混淆，评审
         // F-3 同款核对依据）。
-        version: "0.22.2-alpha",
+        version: "0.22.3-alpha",
         subcommands: [
             StatusCommand.self,
             DoctorCommand.self,

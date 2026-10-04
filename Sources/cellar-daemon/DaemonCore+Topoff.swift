@@ -109,6 +109,23 @@ extension DaemonCore {
         // 0.20.1 观测性：每 tick 一行持久轨迹（wedge 事件教训——LogEvent 内存环随进程
         // 消失致事后不可溯源；本行落 daemon.log，卡死时最后一行即 wedge 现场）。
         Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) desired=\(route.orchestrationDesired.map(String.init) ?? "nil") percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
+        // 0.22.3 §3 失速检测（观测层第二传感器——锚点维护 + stallDue 判定；纯函数
+        // Topoff.stallTick 钉面，daemon 只消费）。置于 owned 分支外——!owned 重置
+        // 条件全拍生效（mode 关 / 全开窗 / 编排开 ≥80 等非承载拍锚点必清）；校准
+        // 抑制拍 isCharging=true 天然落重置条件，锚点不滞留。
+        let stallAnchorBefore = topoffState.stallAnchor
+        let stallPlan = Topoff.stallTick(
+            anchor: topoffState.stallAnchor,
+            owned: route.topoffOwned,
+            percent: snapshot.percent,
+            target: route.convergenceTarget,
+            externalConnected: snapshot.externalConnected,
+            isCharging: snapshot.isCharging,
+            now: now)
+        topoffState.stallAnchor = stallPlan.anchor
+        if stallPlan.anchor == nil, topoffState.stallConsistentCount != 0 {
+            topoffState.stallConsistentCount = 0   // 锚点重置 → 失速计数归零
+        }
         // §3.7 关断清理状态不变量（0.21.1 §2.2 重定版——**仅 mode 非 active 臂**）：
         // mode 非 active → 域随写 100 + off（幂等，守卫允许带 off 重试直至写成功）。
         // 覆盖：disable/SIGHUP/退出恢复事件路径、**重启 fresh 角点**（mode 非 active
@@ -146,34 +163,78 @@ extension DaemonCore {
             // 单通道互斥簿记 → 状态机推进。
             if topoffState.off { topoffState.off = false }
             discardStaleOrchestrationPendingLocked(events: &events)
-            // 0.21.3 §1.2 域读回预判（G7b——外部覆写快速自愈）：`Topoff.isViolationTick`
-            // 纯函数预判命中 **∨ suppressed 锁存期**（review P1：锁存态下对非违规
-            // owned 拍也补采样——覆写源停止后再无违规拍时，锁存仍可在下一拍经
-            // 一致读回解除；否则 suppressionConsecutive 唯一清零点在违规拍 =
-            // 永久滞留半死态〔警示行/doctor 20 假 FAIL〕。成本有界：仅锁存期
-            // 2 子进程/30s）才读（健康稳态零子进程）；读回结果注入 channelTick
-            // 新参 domainReadback（保持纯函数，覆写判定进场景域——一致读回在
-            // 非违规拍同样清零解锁）。读失败 → 注入 nil（fail-open 按既有违规
-            // 计数，不阻断防线）。degraded 态走 healTick（无读回面——探针观察
-            // 语义独立，方案 §1.2 未扩展）。
+            // 0.22.3 §3 失速拍观测（stallDue → 本拍强制域读回 + persistLog「失速
+            // 检测触发」；锚点已在 stallTick 触发拍刷新——30 min 节奏封顶，防每
+            // 30s 复读风暴）。
+            var stallTriggered = false
+            if stallPlan.stallDue {
+                stallTriggered = true
+                Self.persistLog("topoff 失速检测触发：电量 \(snapshot.percent)% 停驻（锚点 \(stallAnchorBefore.map { String($0.percent) } ?? "?")%）≥ \(Int(Topoff.stallThreshold / 60)) min ∧ 外接 ∧ 未充电 ∧ target \(convergenceTarget)%——本拍强制域读回（行为兜底第二传感器）")
+            }
+            // 0.22.3 §2 域读回预检四臂（0.21.3 §1.2 两臂扩版）+ §3 失速拍——**共用
+            // 单点单次 TopoffWriter.read**（臂 3+4 同拍天然去重）：
+            // ① 锁存期补采样（既有，非 degraded——review P1 半死态根治）；
+            // ② 违规拍预判（既有，非 degraded）；
+            // ③ **周期到期**（0.22.3 核心——**单独放宽 `!degraded` 门**：预检本就
+            //    在 owned 分支内〔degraded 是 owned 子集〕，臂 3 含入降级态死寂面，
+            //    任何静默漂移 ≤10 min 重捕获；nil 视为远古首拍即读）；
+            // ④ 确认拍（pendingSuppressionConfirmation——上一拍未锁存签名命中 →
+            //    本拍必读，30s 内完成「连续两次」锁存判定；非 degraded）；
+            // ⑤ 失速拍（§3 行为兜底——degraded 同权）。
+            // **读尝试即推进 lastPeriodicReadbackAt（无论成败——评审 P2-2：失败不
+            // 加速重试，每失败周期 10 min 盲区有界）**、清确认拍请求。读失败 → 注入
+            // nil（fail-open 按既有违规计数，不阻断防线）；degraded 态读回注入
+            // healTick（签名簿记——wire 恢复可见 → App 恢复链降级态同样可点火）。
             var domainReadback: (limit: Int?, featureState: Int?)?
             let suppressedLatched = topoffState.suppressionConsecutive
                 >= Topoff.suppressionThreshold
-            if !topoffState.degraded,
-               suppressedLatched || Topoff.isViolationTick(
-                   percent: snapshot.percent, target: convergenceTarget,
-                   externalConnected: snapshot.externalConnected,
-                   isCharging: snapshot.isCharging
-               ) {
+            let violationPredicted = Topoff.isViolationTick(
+                percent: snapshot.percent, target: convergenceTarget,
+                externalConnected: snapshot.externalConnected,
+                isCharging: snapshot.isCharging)
+            let periodicDue = Topoff.periodicReadbackDue(
+                last: topoffState.lastPeriodicReadbackAt, now: now)
+            let readbackArm: String?
+            if !topoffState.degraded, suppressedLatched {
+                readbackArm = "锁存期补采样"          // 臂 ①
+            } else if !topoffState.degraded, violationPredicted {
+                readbackArm = "违规拍预判"            // 臂 ②
+            } else if periodicDue {
+                readbackArm = "周期采样"              // 臂 ③（含 degraded）
+            } else if !topoffState.degraded, topoffState.pendingSuppressionConfirmation {
+                readbackArm = "确认拍"                // 臂 ④
+            } else if stallTriggered {
+                readbackArm = "失速检测"              // 臂 ⑤
+            } else {
+                readbackArm = nil
+            }
+            if let readbackArm {
                 domainReadback = TopoffWriter.read(run: Self.runProcessCapture)
+                // 读尝试即推进周期簿记 + 清确认拍请求（无论读成败——评审 P2-2）。
+                topoffState.lastPeriodicReadbackAt = now
+                topoffState.pendingSuppressionConfirmation = false
                 if let readback = domainReadback {
                     let overridden = readback.limit != topoffState.lastWrittenLimit
                         || readback.featureState != 1
-                    // 注：计数以 channelTick 后的 plan.state 为准（幂等写分支不消费
-                    // 读回——重定目标拍不递增；锁存边沿日志取准确值）。
+                    // 注：计数以 channelTick/healTick 后的 plan.state 为准（幂等写
+                    // 分支不消费读回——重定目标拍不递增；锁存边沿日志取准确值）。
                     Self.persistLog(overridden
-                        ? "topoff 域读回（\(suppressedLatched ? "锁存期补采样" : "违规拍预判")）：外部覆写签名命中（读回 limit=\(readback.limit.map(String.init) ?? "缺席") featureState=\(readback.featureState.map(String.init) ?? "缺席") ≠ 写入 \(topoffState.lastWrittenLimit.map(String.init) ?? "nil")）→ 覆写自愈路径（重写目标 \(convergenceTarget)；锁存后 10 min 限频；violationTicks 清零不耗 strike）"
-                        : "topoff 域读回（\(suppressedLatched ? "锁存期补采样" : "违规拍预判")）：签名一致（域文件未被外部覆写）→ \(suppressedLatched ? "suppressionConsecutive 清零，锁存解除" : "违规拍正常计数（agent 无视域）")")
+                        ? "topoff 域读回（\(readbackArm)）：外部覆写签名命中（读回 limit=\(readback.limit.map(String.init) ?? "缺席") featureState=\(readback.featureState.map(String.init) ?? "缺席") ≠ 写入 \(topoffState.lastWrittenLimit.map(String.init) ?? "nil")）→ 覆写自愈路径（重写目标 \(convergenceTarget)；锁存后 10 min 限频；violationTicks 清零不耗 strike）"
+                        : "topoff 域读回（\(readbackArm)）：签名一致（域文件未被外部覆写）→ \(suppressedLatched ? "释放持续性判定（连续 2 次一致 ∧ 过 120s 瞬态守卫才解除——0.22.3 单次一致虚假释放根治）" : (violationPredicted ? "违规拍正常计数（agent 无视域）" : "未锁存一致（周期盯防——健康稳态）"))")
+                    // 0.22.3 §3 失速一致读回计数（失速拍触发读回才计——连续 ≥2 升级
+                    // WARN；签名命中 = 机制关闭已知形态归零，交重写自愈链承接）。
+                    if stallTriggered {
+                        let next = Topoff.stallConsistentCountNext(
+                            current: topoffState.stallConsistentCount, overridden: overridden)
+                        topoffState.stallConsistentCount = next
+                        if overridden {
+                            Self.persistLog("topoff 失速读回：覆写签名命中（失速成因 = 机制被关闭——重写自愈链承接，失速计数归零）")
+                        } else if next >= Topoff.stallConsistentWarnThreshold {
+                            Self.persistLog("topoff 失速升级（WARN）：连续 \(next) 次一致读回——域文件正确但充电行为未跟随目标（机制可能被系统关闭；行为可见面 = doctor 行为启发/通用页横幅——无 wire 通道，方案 §3 定位登记）")
+                        } else {
+                            Self.persistLog("topoff 失速一致读回 #\(next)（连续 \(Topoff.stallConsistentWarnThreshold) 次升级 WARN）")
+                        }
+                    }
                 } else {
                     Self.persistLog("topoff 域读回失败（fail-open——按既有违规计数）")
                 }
@@ -183,7 +244,8 @@ extension DaemonCore {
                     state: topoffState, target: convergenceTarget, now: now,
                     percent: snapshot.percent,
                     externalConnected: snapshot.externalConnected,
-                    isCharging: snapshot.isCharging)
+                    isCharging: snapshot.isCharging,
+                    domainReadback: domainReadback)
                 : Topoff.channelTick(
                     state: topoffState, target: convergenceTarget, now: now,
                     percent: snapshot.percent,

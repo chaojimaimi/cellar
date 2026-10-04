@@ -84,6 +84,7 @@ extension DoctorReportGenerator {
             return DoctorCheck(
                 name: "关断残留", status: .pass,
                 detail: "MCL 对账一致（读回 \(readback)%，期望 \(expected)%）"
+                    + stallBehaviorHeuristicNote(snapshot: inputs.snapshot, status: status)
             )
         }
         return DoctorCheck(
@@ -92,6 +93,39 @@ extension DoctorReportGenerator {
                 + "——打开 Cellar App 将自动对账补偿）。提示：在系统设置手动调整时"
                 + "请设一个具体上限（如 80%）或交给 Cellar 管理——切勿设 100% 来"
                 + "「关闭」限充（那是机制关闭位；停用请用 Cellar 的停用按钮）"
+                + stallBehaviorHeuristicNote(snapshot: inputs.snapshot, status: status)
         )
+    }
+
+    /// 0.22.3 §4 行为启发附注（纯函数；0.22.3 收敛判据——「恢复完成」= 域读回持续
+    /// 一致 **∧ 充电行为跟随目标**，域读回单眼会漏掉 10:19 形态：域文件看着对但
+    /// 机制已死——死寂态无违规拍〔不充电〕、域读回一致，只能由行为显性化）。
+    ///
+    /// - **数据源（评审 P0）**：`inputs.snapshot`（检查 5 电池读数，doctor 侧直读
+    ///   ——零 wire 变化。**勿用 wire `lastChargingEnabled`**：那是 SMC 充电许可
+    ///   控制键非电池充电态，死寂态满电停充时恒 true，主场景永不触发）；
+    /// - 触发：`isCharging == false ∧ externalConnected == true ∧ percent ≥
+    ///   upperLimit + 3` ∧ 排除三类合法态（评审 P1-2）：两窗在位（fullOnce /
+    ///   chargingDisabled——窗内充到 100 是显式放开意图）∧ 降级 80 驻留（上限 ≤77
+    ///   时 +3 命中）∧ CHIE 迟滞带挂载（hysteresis 值域 1-20，驻留 target+hys 可达 +3）；
+    /// - **附注行不改检查 status/退出码**（「若持续 ≥30 min」是启发声非硬判——
+    ///   单次 doctor 运行无法确证持续性，warn 会误伤脚本化退出码契约）；触发面落
+    ///   shutdownResidual 检查内自动继承其 27 ∧ daemon 在线门（26 红线由此保证）；
+    ///   与 suppressed FAIL 臂共存：FAIL（锁存在位）优先展示，本附注为无锁存时的
+    ///   行为启发面。
+    static func stallBehaviorHeuristicNote(
+        snapshot: BatterySnapshot?, status: DaemonStatus
+    ) -> String {
+        guard let snapshot,
+              snapshot.isCharging == false,
+              snapshot.externalConnected == true,
+              snapshot.percent >= status.upperLimit + 3,
+              status.fullOnceWindowActive != true,
+              status.chargingDisabledWindowActive != true,
+              status.sub80State != .degraded,
+              status.sub80Hysteresis != true
+        else { return "" }
+        return "；行为启发：电量 \(snapshot.percent)% 高于上限 \(status.upperLimit)%"
+            + " 且未在回落——若持续 ≥30 min，充电机制可能被系统关闭（通用页横幅/FAQ Q16）"
     }
 }

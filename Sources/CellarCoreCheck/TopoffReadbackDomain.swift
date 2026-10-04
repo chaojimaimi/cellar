@@ -10,7 +10,9 @@
 // ③ suppressionConsecutive 计数/锁存/10 min 限频/限频拍清零不计数/解除
 //    （§1.3；含 review P1：锁存期非违规拍补采样——一致读回解除半死态、仍覆写
 //    走限频自愈对称臂）+ sub80MechanismSuppressed / 两窗 wire 三键 round-trip
-//    + 旧 JSON 缺席
+//    + 旧 JSON 缺席。0.22.3 §1 起解除判据持续性化（单次一致 → streak=1 保持
+//    锁存，连续第二次 ∧ 过 120s 瞬态守卫才释放——读回-3/压制-4/压制-6 已随
+//    新语义更新；系统性覆盖见 TopoffLatchDomain 锁存持续域）
 //
 // 全部纯函数面（run 闭包注入 / 直接构造），不触碰真实 plist、不起 daemon。
 
@@ -163,8 +165,9 @@ func runTopoffReadbackDomainScenarios() {
     }
 
     // 读回-3：签名一致（agent 无视域——percent 越限 ∧ 域值未被外部动过）→ 正常
-    // 违规计数（既有链）+ suppressionConsecutive 清零（锁存解除 = 读回一致——
-    // 0.21.3 §1.3 钉死）。
+    // 违规计数（既有链）+ **0.22.3 §1 释放持续性**：首次一致 streak=1 保持锁存
+    // （单次一致不再解除——2026-10-04 10:19 虚假释放根治；now=150s 在 120s 瞬态
+    // 守卫窗外，证据有效）。
     do {
         var s = TopoffChannelState()
         s.activeTarget = 75
@@ -172,12 +175,13 @@ func runTopoffReadbackDomainScenarios() {
         s.lastWriteAt = tick(0)
         s.suppressionConsecutive = 5   // 锁存态（≥2）进入
         let plan = Topoff.channelTick(
-            state: s, target: 75, now: tick(1),
+            state: s, target: 75, now: tick(5),   // 150s > suppressionTransientGuard
             percent: 90, externalConnected: true, isCharging: true,
             domainReadback: (limit: 75, featureState: 1))
-        check(plan.state.violationTicks == 1 && plan.state.suppressionConsecutive == 0
+        check(plan.state.violationTicks == 1 && plan.state.suppressionConsecutive == 5
+                && plan.state.suppressionConsistentStreak == 1
                 && plan.writeLimit == nil && plan.notifyOnly,
-              "读回-3", "签名一致 → 锁存解除（清零）+ 正常违规计数（首拍轻量重申 notifyOnly——既有链原样）")
+              "读回-3", "签名一致 → streak=1 保持锁存（单次一致不释放——0.22.3）+ 正常违规计数（首拍轻量重申 notifyOnly——既有链原样）")
     }
 
     // 读回-4：读失败（nil——daemon 预判命中但 defaults read 启动失败）→ fail-open
@@ -309,9 +313,10 @@ func runTopoffReadbackDomainScenarios() {
               "压制-3", "40 拍全覆写（含锁存后限频拍）→ 零 strike 零降级（覆写不降级语义在限频拍同样成立）")
     }
 
-    // 压制-4：锁存解除 = 读回一致清零（覆盖失败重试后用户在系统设置改回具体值的
-    // 恢复路径；wire sub80MechanismSuppressed 随下拍回 false——App 警示行/doctor
-    // FAIL 自然回落）。
+    // 压制-4：锁存解除判据 0.22.3 §1 持续性化——读回一致（守卫窗外）→ streak=1
+    // **保持锁存**（≥7 深锁存同样不因单次一致解除；连续第二次一致才释放——
+    // 详见锁存持续域「持-2」）；wire sub80MechanismSuppressed 随释放拍回 false
+    // ——App 警示行/doctor FAIL 自然回落。
     do {
         var s = TopoffChannelState()
         s.activeTarget = 75
@@ -319,39 +324,49 @@ func runTopoffReadbackDomainScenarios() {
         s.lastWriteAt = tick(0)
         s.suppressionConsecutive = 7
         let plan = Topoff.channelTick(
-            state: s, target: 75, now: tick(1),
+            state: s, target: 75, now: tick(5),   // 150s > 120s 瞬态守卫
             percent: 90, externalConnected: true, isCharging: true,
             domainReadback: (limit: 75, featureState: 1))
-        check(plan.state.suppressionConsecutive == 0
-                && plan.state.suppressionConsecutive < Topoff.suppressionThreshold,
-              "压制-4", "读回一致 → suppressionConsecutive 清零（锁存解除——≥7 深锁存同样一步解除）")
+        check(plan.state.suppressionConsecutive == 7
+                && plan.state.suppressionConsistentStreak == 1,
+              "压制-4", "读回一致 → streak=1 保持锁存（≥7 深锁存同样不因单次一致解除——0.22.3 释放持续性）")
         // 非违规拍且无注入（未锁存期非违规拍 daemon 不采样 / 采样缺席防御臂）→
-        // 计数保持（锁存期的补采样注入见压制-6——review P1）。
+        // 计数与 streak 均保持（锁存期的补采样注入见压制-6——review P1）。
         let idlePlan = Topoff.channelTick(
-            state: s, target: 75, now: tick(2),
+            state: plan.state, target: 75, now: tick(6),
             percent: 75, externalConnected: true, isCharging: false)
-        check(idlePlan.state.suppressionConsecutive == 7 && idlePlan.writeLimit == nil,
+        check(idlePlan.state.suppressionConsecutive == 7 && idlePlan.writeLimit == nil
+                && idlePlan.state.suppressionConsistentStreak == 1,
               "压制-4", "非违规拍且无读回注入 → 计数保持（未锁存期非违规拍零采样——健康稳态零子进程）")
     }
 
-    // 压制-6（review P1 锁存半死态根治钉面）：锁存期**非违规拍**补采样（daemon
-    // 预判 = isViolationTick ∨ suppressed 锁存）注入读回一致 → 解除——覆写源停止
-    // 且再无违规拍的形态下，锁存仍可经本路径下一拍解除（wire「随轮询自然消失」
-    // 兑现；否则唯一清零点在违规拍 = 永久滞留假 FAIL）。
+    // 压制-6（review P1 锁存半死态根治钉面，0.22.3 §1 持续性化）：锁存期**非违规拍**
+    // 补采样（daemon 预判 = isViolationTick ∨ suppressed 锁存）注入读回一致 →
+    // 首拍 streak=1 保持锁存、第二拍释放——覆写源停止且再无违规拍的形态下，锁存
+    // 仍在两拍内解除（wire「随轮询自然消失」兑现；否则唯一清零点在违规拍 = 永久
+    // 滞留假 FAIL）。
     do {
         var s = TopoffChannelState()
         s.activeTarget = 75
         s.lastWrittenLimit = 75
         s.lastWriteAt = tick(0)
         s.suppressionConsecutive = 4   // 锁存态（≥2）；覆写源已停止（域回 75/1）
-        let plan = Topoff.channelTick(
-            state: s, target: 75, now: tick(1),
+        let first = Topoff.channelTick(
+            state: s, target: 75, now: tick(5),   // 150s > 120s 瞬态守卫
             percent: 75, externalConnected: true, isCharging: false,
             domainReadback: (limit: 75, featureState: 1))
-        check(plan.state.suppressionConsecutive == 0
-                && plan.state.suppressionConsecutive < Topoff.suppressionThreshold
-                && plan.writeLimit == nil && plan.state.violationTicks == 0,
-              "压制-6", "锁存期非违规拍读回一致 → 清零解除（writeLimit=nil 静默解锁——半死态根治）")
+        check(first.state.suppressionConsecutive == 4
+                && first.state.suppressionConsistentStreak == 1
+                && first.writeLimit == nil && first.state.violationTicks == 0,
+              "压制-6", "锁存期非违规拍读回一致（首拍）→ streak=1 保持锁存（writeLimit=nil 静默）")
+        let second = Topoff.channelTick(
+            state: first.state, target: 75, now: tick(6),
+            percent: 75, externalConnected: true, isCharging: false,
+            domainReadback: (limit: 75, featureState: 1))
+        check(second.state.suppressionConsecutive == 0
+                && second.state.suppressionConsistentStreak == 0
+                && second.writeLimit == nil && second.state.violationTicks == 0,
+              "压制-6", "锁存期非违规拍读回一致（第二拍）→ 释放（writeLimit=nil 静默解锁——半死态根治，两拍内解除）")
     }
 
     // 压制-7（review P1 对称臂）：锁存期非违规拍补采样读回**仍覆写**（覆写源驻留
