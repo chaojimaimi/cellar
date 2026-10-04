@@ -4064,6 +4064,40 @@
         }
       }
     },
+    "panel.discharge.autoOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto discharge: on"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动放电：开启"
+          }
+        }
+      }
+    },
+    "panel.discharge.autoSuspended": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto discharge: on · paused by cycle protection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动放电：开启 · 振荡保护已暂停"
+          }
+        }
+      }
+    },
     "panel.enableLimit": {
       "extractionState": "manual",
       "localizations": {
@@ -8378,6 +8412,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "已关断（限充释放）"
+          }
+        }
+      }
+    },
+    "settings.sub80.recovering": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-enabled automatically at %@ — the charge limit will resume enforcement within a few minutes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已自动重新启用（%@）——充电上限将在几分钟内恢复执法"
+          }
+        }
+      }
+    },
+    "settings.sub80.recoveryFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic recovery failed — follow the manual steps above"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动恢复失败，已转手动指引"
           }
         }
       }

@@ -137,9 +137,15 @@ struct ActionSectionView: View {
         return CellarL10n.s("panel.action.dischargeProgress", currentText, targetText)
     }
 
-    /// 放电区（按钮 + capabilities 两态文案；显示条件 §4.1 五条）。
+    /// 放电区（自动放电状态行 + 按钮 + capabilities 两态文案；按钮显示条件
+    /// §4.1 五条）。
     @ViewBuilder
     private var dischargeSection: some View {
+        // 0.22.2 §5 面板自动放电指示（信息行，手动按钮上方；教育价值 = 主窗
+        // 开关与面板按钮关系的可见化）。全 wire 可选 nil 容错——enabled 缺席
+        // （26/旧 daemon）不渲染，26 红线零触及。手动按钮隐藏（门五条件不满足）
+        // 时本行独占放电区——信息行非操作件，可接受（方案 §5）。
+        autoDischargeStatusLine
         let capabilities = statusController.capabilities
         if capabilities == nil {
             // nil 双语义细分（0.3.2）：当前版本 daemon 理应已上报——nil = 启动探测
@@ -191,6 +197,26 @@ struct ActionSectionView: View {
                 .controlSize(.small)
                 .disabled(statusController.busy)
                 .accessibilityLabel(CellarL10n.s("panel.action.dischargeAx"))
+            }
+        }
+    }
+
+    /// 0.22.2 §5 自动放电状态行（两态）：enabled ∧ suspended → 「自动放电：
+    /// 开启 · 振荡保护已暂停」（振荡熔断语义——suspended wire 唯一写入源 =
+    /// OscillationState 熔断锁存，2h 滑窗内 ≥2 次自动放电完成；「插拔重武装」
+    /// 是 adapterCycle 语义未上 wire 勿混）；enabled ∧ suspended != true →
+    /// 「自动放电：开启」；enabled != true（含 wire 缺席 nil）→ 不渲染。
+    @ViewBuilder
+    private var autoDischargeStatusLine: some View {
+        if statusController.daemonStatus?.autoDischargeEnabled == true {
+            if statusController.daemonStatus?.autoDischargeSuspended == true {
+                Text(CellarL10n.s("panel.discharge.autoSuspended"))
+                    .font(.caption)
+                    .foregroundStyle(theme.warning)
+            } else {
+                Text(CellarL10n.s("panel.discharge.autoOn"))
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
             }
         }
     }

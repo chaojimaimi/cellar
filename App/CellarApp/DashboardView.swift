@@ -172,13 +172,18 @@ struct DashboardView: View {
     /// 承诺时长；nil = 不渲染）。**26/无 sub80 能力机器恒 nil——红线门控**；
     /// 旧 daemon（sub80State 缺席）同门收敛不渲染。渲染组件 = CellarUI
     /// Sub80FallingProgressRow（与充电控制页共享子组件——golden 覆盖；本组装
-    /// 点无 golden，真机走查兜底）。
+    /// 点无 golden，真机走查兜底）。0.22.2 §2 isCharging 门同款（充电上升期
+    /// 不渲染；遥测快照优先、powerOverride 兜底、nil 保守渲染；勿用
+    /// lastChargingEnabled——控制键使能态非「正在充电」）。
     private var gaugeFallingFrom: Int? {
         guard let status = statusController.daemonStatus,
               status.capabilities?.contains(DaemonXPC.capabilitySub80) == true,
               status.sub80State == .active,
               let percent = status.lastPercent,
-              percent > status.upperLimit else { return nil }
+              percent > status.upperLimit,
+              !(statusController.batterySnapshot?.isCharging
+                  ?? statusController.powerOverride?.isCharging ?? false)
+        else { return nil }
         return percent
     }
 

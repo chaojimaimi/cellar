@@ -105,6 +105,21 @@ final class StatusController: ObservableObject {
     /// NSLock 排队无界堆积——0.20.1 wedge 同通道实证）；结果回调不回写本值。
     var lastSuppressionRecoveryAt: Date?
 
+    /// suppression 恢复写上次结果（0.22.2 §1.1 重试互搏防护输入；会话内存态，
+    /// 与 lastSuppressionRecoveryAt 同生命周期——App 重启即清）。⚠️ internal 同上
+    /// ——写入面在 StatusController+LimitExecution.swift 派发臂。nil = 尚无结果
+    /// （派发后在途回调前/本会话未派发过）；true = 上次写成功（持续锁存态不再
+    /// 冷却重试——防恢复写与对账补偿互搏）；false = 上次失败（冷却重试臂放行）。
+    var lastSuppressionRecoverySucceeded: Bool?
+
+    /// suppression 恢复结果横幅数据源（0.22.2 §4；通用页警示块第三行消费）。
+    /// at = 派发时刻（HH:mm 格式化上屏）、recovered = 写结果。仅内存态，App
+    /// 重启清零；赋值钉死在 dispatchSuppressionRecovery 的 MainActor.run 块内
+    /// （勿落组合根闭包）。⚠️ internal setter（偏离本类 private(set) 纪律，
+    /// magSafeLedPending 同款先例）——WHY：写入面在外迁 extension 文件
+    /// StatusController+LimitExecution.swift，private(set) 跨文件只读不可写。
+    @Published internal(set) var suppressionRecoveryInfo: (at: Date, recovered: Bool)?
+
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
     // MARK: v0.19.20 编排执行通道（WP-2）
@@ -355,21 +370,33 @@ final class StatusController: ObservableObject {
                     onScheduleEvent?(.restored)
                 }
             }
-            // sub80 机制关闭自动恢复（0.22.1 §1.2）：判定输入钉死取 ingest 入参
-            // status——self.daemonStatus 本拍下方才赋值，按属性取值会吃到上一拍
-            // 陈旧 mode/wire（评审 P2-2）。三分支判定（首包破例/边沿/10 min 冷却
-            // 重试）在 SuppressionRecovery.shouldAttempt 纯函数（CellarCoreCheck
-            // 场景域钉死；26/旧 daemon current nil 与 mode 非 active 全拒）。
+            // sub80 机制关闭自动恢复（0.22.1 §1.2 / 0.22.2 §1.1）：判定输入钉死
+            // 取 ingest 入参 status——self.daemonStatus 本拍下方才赋值，按属性取
+            // 值会吃到上一拍陈旧 mode/wire（评审 P2-2）。多分支判定（首包破例/
+            // 边沿/重试互搏防护/10 min 冷却重试）在 SuppressionRecovery.
+            // shouldAttempt 纯函数（CellarCoreCheck 场景域钉死；26/旧 daemon
+            // current nil 与 mode 非 active 全拒）。
             // 旧 0.22.0 边沿直投通知退役（评审 P1-4）——通知一律由恢复写完成
             // 回调驱动，防「先手动指引后已恢复」双通知。
+            // 回合清理（0.22.2 code-review P2）：锁存释放拍清零结果态——防观测
+            // 空洞（全表面关闭 60s 轮询档/睡眠）吞掉「释放→再压制」整循环后，
+            // 陈旧 lastSuppressionRecoverySucceeded==true 使成功门永久拒（本回
+            // 合零恢复）∧ 横幅以陈旧成功态虚假陈述「已自动重新启用」。锁存期
+            // wire 恒 true 不触发本清理（回合内防护不变）；吞边沿后回落冷却臂
+            // （旧 lastAttemptAt → 立即重派）。
+            if status.sub80MechanismSuppressed != true {
+                lastSuppressionRecoverySucceeded = nil
+                suppressionRecoveryInfo = nil
+            }
             if SuppressionRecovery.shouldAttempt(
                 previous: notificationBaseline?.sub80MechanismSuppressed,
                 current: status.sub80MechanismSuppressed,
                 modeActive: status.mode == "active",
                 lastAttemptAt: lastSuppressionRecoveryAt,
+                lastOutcomeSucceeded: lastSuppressionRecoverySucceeded,
                 now: Date()
             ) {
-                dispatchSuppressionRecovery()
+                dispatchSuppressionRecovery(status)
             }
             notificationBaseline = status
             for event in events {

@@ -57,6 +57,24 @@ struct GeneralSections: View {
                         .font(.caption)
                         .foregroundStyle(theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
+                    // 0.22.2 §4 恢复结果行（数据源 = 恢复写完成回调落地的
+                    // suppressionRecoveryInfo；仅本锁存期间显示——锁存释放整块
+                    // 消失，「横幅消失」本身即恢复完成信号；App 重启清零）。
+                    if let info = statusController.suppressionRecoveryInfo {
+                        if info.recovered {
+                            Text(CellarL10n.s(
+                                "settings.sub80.recovering",
+                                info.at.formatted(.dateTime.hour().minute())))
+                                .font(.caption)
+                                .foregroundStyle(theme.success)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text(CellarL10n.s("settings.sub80.recoveryFailed"))
+                                .font(.caption)
+                                .foregroundStyle(theme.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
             }
             fanSection

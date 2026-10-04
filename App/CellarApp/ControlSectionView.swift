@@ -281,12 +281,20 @@ struct ControlSectionView: View {
 
     /// 回落进度当前电量（sub80State == active ∧ 当前电量 > 目标——「回落中
     /// 82%→75%」，进度语义不承诺时长；nil = 不渲染）。26/无能力机器恒 nil。
+    /// 0.22.2 §2 isCharging 门：充电上升期（agent 未接管、电量爬坡）不渲染
+    /// ——「回落中」只在真回落（isCharging == false）时出现；数据源 = 1s 遥测
+    /// 快照优先、IOPS powerOverride 兜底（对账豁免臂同款先例），nil 保守渲染
+    /// （照常显示）。**勿用 lastChargingEnabled**（控制键使能态非「正在充电」
+    /// ——StatusController+LimitExecution.swift 对账臂同款自警）。
     private var fallingFrom: Int? {
         guard sub80Capable,
               statusController.daemonStatus?.sub80State == .active,
               let percent = statusController.daemonStatus?.lastPercent,
               let target = statusController.daemonStatus?.upperLimit,
-              percent > target else { return nil }
+              percent > target,
+              !(statusController.batterySnapshot?.isCharging
+                  ?? statusController.powerOverride?.isCharging ?? false)
+        else { return nil }
         return percent
     }
 
