@@ -24,17 +24,61 @@ public enum NativeLimitSet {
     /// 与既有命令命名同域（fullOnce / cancelAction / setOrchestration）。
     public static let restoreCommand = "restoreChargeLimit"
 
-    /// set 执行目标映射（0.21.3 §2.2 重定版——**映射层级钉死 R1-P2-2**：钉在
-    /// setTarget 使全部执行路径生效，含 shortcut 透传态——shortcut 收 100 同样
-    /// 正确）：target ≥80 → 原值直写；target <80 → **set 100**（恢复
-    /// pre-fullOnce 原生关闭态——域管。0.21.0 旧「钳 80」为三分支模型对齐前的
-    /// 有害形态：MCL 80 主导会顶掉域 75——G1/G2 实证，废除）。验收口径「≥80
-    /// set / <80 topoff（MCL 100 让域管）」：编排链的 <80 目标本就由 daemon 路由
-    /// 静默（Topoff.convergenceRoute topoffOwned → desired=nil），本映射只服务
-    /// 恢复臂与防御面——执行体永不向原生 MCL 写 <80 值，且 <80 时不留 MCL 80
-    /// 主导残留。
-    public static func setTarget(for pendingTarget: Int) -> Int {
-        pendingTarget >= minimumSetLimit ? pendingTarget : maximumSetLimit
+    /// set 执行目标映射（**0.22.4 模型 v2 退役版**——<80 → nil 不写）：
+    /// target ≥80 → 原值直写；target <80 → **nil**（无 set 值——执行体跳过）。
+    /// 历史：0.21.0「钳 80」为三分支模型对齐前的有害形态（MCL 80 主导顶掉域
+    /// 75——G1/G2 实证，0.21.3 废除）；0.21.3「<80 → set 100」基于旧期望表
+    /// 「域执法需 MCL=100」——已被 13:32 事故证伪（恢复写 80 成功 2s 后被自家
+    /// 补偿臂打回 100）：新模型 **域写值直接流入 MCL 执法（含 <80）**，MCL=100
+    /// = 无限制且诱发 agent 再关（M2/M4）。v2 口径：<80 时 MCL 无需任何 set——
+    /// 恢复臂 max(target,80) 开启垫脚石后域即时接管（M1），任何 100 写入都只会
+    /// 造 M2 环境拖慢收敛。生产调用点仅两处同链（全库 grep 定谳）：W4/W1 共用
+    /// 执行体 MCLSetLimitExecutor（expected ∈ {80,100,≥80} 恒非 nil——nil 分支
+    /// 防御性处理）与 W1 consumeOrchestrationPending（nil → skip 且不回报）。
+    public static func setTarget(for pendingTarget: Int) -> Int? {
+        pendingTarget >= minimumSetLimit ? pendingTarget : nil
+    }
+
+    /// 0.22.4 补偿臂静默门（W4 关断残留对账 30s 循环 + reconcileShutdownResidualNow
+    /// 即时变体共用；方案 §3.1 v2 终版门式，CellarCoreCheck 场景域钉死——App 只消费）。
+    ///
+    /// 根因模型 v2（13:32 事故定谳）：域写值直接流入 MCL 执法（agent 跟随域值，
+    /// 含 <80 区间），MCL=100 = 无限制且诱发 agent 自主再关（M2/M4）——补偿臂在
+    /// 域承载态写 100 与域 75 互搏（期望表旧模型「域执法需 MCL=100」证伪）。
+    ///
+    /// 静默判据：mode active ∧ 两窗不在位 ∧（自愈探针观察窗让位（F2——探针只在
+    /// degraded 态跑，本项先于 degraded 保留判定；不静默则 MCL 80 压制 75 观察
+    /// 窗 → 证据窗结构性不可达 → degraded 永不自愈）∨ 域承载（sub80State ==
+    /// .active ∧（upperLimit < 80 ∨ 编排关）——域自足区间，写手让位））。
+    ///
+    /// **显式排除（红队 F1/常规 P0 裁决记录，随代码落注）**：
+    /// - 编排开 ∧ ≥80：sub80State 虽 .active 但 NOT owned——W4 是本区间周期对账
+    ///   防线唯一执行者，静默即失防（门第一支 <80 命中不外溢）；
+    /// - degraded 稳态（无探针）：W4 写 80 =「域通道死亡最后防线」，与 D2 域镜像
+    ///   80 同值零对抗——保留写；
+    /// - sub80State == .off / nil：26/通道关——既有行为不变（26 红线：nil 恒不
+    ///   静默，恒走原对账）。
+    /// - mode 关 / 两窗在位：期望恒 100（放开语义），无互搏面——不静默（W4-now
+    ///   即时变体语义保留）。
+    public static func compensationSilenced(
+        modeActive: Bool,
+        fullOnceWindow: Bool,
+        chargingDisabledWindow: Bool,
+        healProbeActive: Bool,
+        sub80State: Sub80State?,
+        upperLimit: Int,
+        orchestrationEnabled: Bool
+    ) -> Bool {
+        guard modeActive else { return false }
+        // 两窗在位 = 显式放开意图（期望恒 100 与域随写 100 同值——无互搏面）。
+        guard !fullOnceWindow, !chargingDisabledWindow else { return false }
+        // F2 override：探针观察窗让位（先于 degraded 保留判定——探针只在 degraded
+        // 态，恒真时静默让 75 观察窗可达）。
+        if healProbeActive { return true }
+        // 域承载支：仅 .active 态参与（degraded 稳态防线保留 / off / nil 排除——
+        // 裁决记录见头注）。
+        guard sub80State == .active else { return false }
+        return upperLimit < minimumSetLimit || !orchestrationEnabled
     }
 
     /// §1.1 fallback 触发判定（R1-P2-3）：实例级失败连击达阈值 → 会话驻留快捷指令。

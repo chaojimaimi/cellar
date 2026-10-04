@@ -103,14 +103,10 @@ final class StatusController: ObservableObject {
     /// extension 文件 StatusController+LimitExecution.swift，跨文件需读写。
     /// **派发时刻即落值**（评审 P2-1）：防在途窗重复派发（setMCLLimit 挂起时
     /// NSLock 排队无界堆积——0.20.1 wedge 同通道实证）；结果回调不回写本值。
+    /// **0.22.4**：lastSuppressionRecoverySucceeded 结果锁存随 shouldAttempt
+    /// 删除 lastOutcomeSucceeded 参数（单一口径 = 冷却节奏）一并退役——本属性
+    /// 是唯一在册恢复写状态。
     var lastSuppressionRecoveryAt: Date?
-
-    /// suppression 恢复写上次结果（0.22.2 §1.1 重试互搏防护输入；会话内存态，
-    /// 与 lastSuppressionRecoveryAt 同生命周期——App 重启即清）。⚠️ internal 同上
-    /// ——写入面在 StatusController+LimitExecution.swift 派发臂。nil = 尚无结果
-    /// （派发后在途回调前/本会话未派发过）；true = 上次写成功（持续锁存态不再
-    /// 冷却重试——防恢复写与对账补偿互搏）；false = 上次失败（冷却重试臂放行）。
-    var lastSuppressionRecoverySucceeded: Bool?
 
     /// suppression 恢复结果横幅数据源（0.22.2 §4；通用页警示块第三行消费）。
     /// at = 派发时刻（HH:mm 格式化上屏）、recovered = 写结果。仅内存态，App
@@ -161,6 +157,10 @@ final class StatusController: ObservableObject {
     var reconcileFailureStreak = 0
     /// 退避窗内记录的期望值（nil = 无失败记录——与 streak 配对推进/复位）。
     var reconcileBackoffExpected: Int?
+    /// 0.22.4 静默门首拍日志旗标（会话内存态——首次静默打一条说明，稳态静默不
+    /// 刷日志；存储属性在主类声明，消费在 StatusController+LimitExecution.swift
+    /// 对账臂，internal 同 reconcileFailureStreak 先例）。
+    var compensationSilenceLogged = false
     /// WP3 失配退避（评审 R0-P2）：会话累计失配 ≥3 → 停用读回重跑（转纯行为
     /// 验证）+ 通用页如实展示。会话级（App 进程生命周期）。
     private var readbackMismatchCount = 0
@@ -370,22 +370,21 @@ final class StatusController: ObservableObject {
                     onScheduleEvent?(.restored)
                 }
             }
-            // sub80 机制关闭自动恢复（0.22.1 §1.2 / 0.22.2 §1.1）：判定输入钉死
-            // 取 ingest 入参 status——self.daemonStatus 本拍下方才赋值，按属性取
-            // 值会吃到上一拍陈旧 mode/wire（评审 P2-2）。多分支判定（首包破例/
-            // 边沿/重试互搏防护/10 min 冷却重试）在 SuppressionRecovery.
-            // shouldAttempt 纯函数（CellarCoreCheck 场景域钉死；26/旧 daemon
-            // current nil 与 mode 非 active 全拒）。
+            // sub80 机制关闭自动恢复（0.22.1 §1.2 / 0.22.2 §1.1 / **0.22.4 §3.3
+            // 单一口径**）：判定输入钉死取 ingest 入参 status——self.daemonStatus
+            // 本拍下方才赋值，按属性取值会吃到上一拍陈旧 mode/wire（评审 P2-2）。
+            // 多分支判定（首包破例/边沿与持续统一冷却/两窗不派发）在
+            // SuppressionRecovery.shouldAttempt 纯函数（CellarCoreCheck 场景域
+            // 钉死；26/旧 daemon current nil 与 mode 非 active 全拒）。0.22.4：
+            // lastOutcomeSucceeded 输入删除（0.22.2 成功门退役——补偿互搏面已随
+            // 补偿臂静默门消失），新增 fullOpenWindow（两窗任一在位不派发）。
             // 旧 0.22.0 边沿直投通知退役（评审 P1-4）——通知一律由恢复写完成
             // 回调驱动，防「先手动指引后已恢复」双通知。
-            // 回合清理（0.22.2 code-review P2）：锁存释放拍清零结果态——防观测
-            // 空洞（全表面关闭 60s 轮询档/睡眠）吞掉「释放→再压制」整循环后，
-            // 陈旧 lastSuppressionRecoverySucceeded==true 使成功门永久拒（本回
-            // 合零恢复）∧ 横幅以陈旧成功态虚假陈述「已自动重新启用」。锁存期
-            // wire 恒 true 不触发本清理（回合内防护不变）；吞边沿后回落冷却臂
-            // （旧 lastAttemptAt → 立即重派）。
+            // 回合清理（0.22.2 code-review P2 → 0.22.4 简化）：锁存释放拍清横幅
+            // 态——防观测空洞（全表面关闭 60s 轮询档/睡眠）吞掉「释放→再压制」
+            // 整循环后，横幅以陈旧结果态虚假陈述。锁存期 wire 恒 true 不触发本
+            // 清理；吞边沿后按冷却臂节奏恢复（lastAttemptAt 判定统一承担）。
             if status.sub80MechanismSuppressed != true {
-                lastSuppressionRecoverySucceeded = nil
                 suppressionRecoveryInfo = nil
             }
             if SuppressionRecovery.shouldAttempt(
@@ -393,7 +392,8 @@ final class StatusController: ObservableObject {
                 current: status.sub80MechanismSuppressed,
                 modeActive: status.mode == "active",
                 lastAttemptAt: lastSuppressionRecoveryAt,
-                lastOutcomeSucceeded: lastSuppressionRecoverySucceeded,
+                fullOpenWindow: status.fullOnceWindowActive == true
+                    || status.chargingDisabledWindowActive == true,
                 now: Date()
             ) {
                 dispatchSuppressionRecovery(status)
@@ -944,8 +944,9 @@ final class StatusController: ObservableObject {
     }
 
     /// 「恢复限充」（0.21.0 §1.3 恢复臂）：daemon 置 pending(`policy.upperLimit`)
-    /// → App 消费 set 回读回（<80 policy 分支执行体映射 set 100——0.21.3 §2.2，
-    /// 恢复 pre-fullOnce 原生关闭态由域管）。前置拒收
+    /// → App 消费 set 回读回（<80 policy 分支 0.22.4 起不写 MCL——setTarget 映射
+    /// 退役，恢复臂 max(target,80) 开启垫脚石后域写值直接执法〔M1〕）。
+    /// 前置拒收
     /// （编排开关关）→ daemonError 原文上屏（R3-P3-1 恢复臂前置拒收同适用）。
     func restoreChargeLimit() {
         runControl(
@@ -971,10 +972,14 @@ final class StatusController: ObservableObject {
         if processedOrchestrationTokens.count > 8 {
             processedOrchestrationTokens.removeFirst(processedOrchestrationTokens.count - 8)
         }
-        // 0.21.3 §2.2：执行值映射（<80 → set 100——恢复 pre-fullOnce 原生关闭态
-        // 由域管，不造 MCL 80 主导残留；≥80 恒等）+ 执行体路由（set 优先 /
-        // 驻留 fallback）。
-        let setValue = NativeLimitSet.setTarget(for: percent)
+        // 0.21.3 §2.2 → **0.22.4 模型 v2 退役版**：执行值映射 <80 → nil 不写
+        //（任何 100 补写只造 M2 环境拖慢域接管；域写值直接执法〔M1〕，W5 fullOnce
+        // 恢复臂与 W1 是同一条消费链——红队 F9 nil 语义钉死：skip **且不回报
+        // reportOrchestration**，daemon 侧 pending 由 TTL/丢弃语义自洽；红队已证
+        // 生产不可达——desired 经 nativeTarget 钳 80，pendingTarget<80 仅恢复臂
+        // 且 daemon 同拍 discardStale 撤销）。token 已入处理集（幂等——重复拍不
+        // 重评）+ 执行体路由（set 优先 / 驻留 fallback）。
+        guard let setValue = NativeLimitSet.setTarget(for: percent) else { return }
         let flavor = NativeLimitSet.executorFlavor(dwellingShortcut: executorDwellsShortcut)
         // 名字执行时读 UserDefaults（static 读取——规避 @StateObject 临时实例接线
         // 陷阱；OrchestrationSettings 输入框与执行侧同键）。

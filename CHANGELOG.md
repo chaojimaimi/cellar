@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.4-alpha]
+
+> 背景：2026-10-04 13:32 真机事件——App 恢复写 80 成功 2 秒后被自家「关断残留补偿臂」打回 100。根因 = 期望表旧模型「域执法需 MCL=100」被证伪：新经验模型（v2）为**域写值直接流入 MCL 执法（含 <80）**，MCL=100 = 无限制且诱发系统 agent 自主再关。本批根治写入者自我打架：补偿臂在域承载态/自愈探针期静默 + setTarget <80→100 映射退役 + 恢复重试解锁（单一冷却口径）+ 对账每跳新鲜 status。交互矩阵全格收敛（双轨评审 + 红队矩阵终签「完备」），daemon 零逻辑改动、wire 零变化、零 UI 改动。
+
+### Fixed
+
+- **补偿臂门控（13:32 互搏根治）**：关断残留对账（W4，30s 循环 + 即时变体）补偿前先过 `NativeLimitSet.compensationSilenced` 静默门——域承载态（sub80 .active ∧ 目标 <80 ∨ 编排关）与自愈探针观察窗不对账（域写值直接执法，补偿写 100 即互搏元凶）；**显式排除**：编排开∧≥80（本区间周期对账防线唯一执行者，红队 F1）、degraded 稳态（写 80 = 域通道死亡最后防线，与 D2 域镜像同值零对抗）、26/off/nil（既有行为，nil 恒不静默——红线）。每跳先经 XPC 直读新鲜 status 再判门（日程窗进出是 daemon 自治转换、缓存 wire ≤60s 陈旧会误判「窗在位」恰发一拍 100；失败跳过本跳不回退缓存）；fresh status 仅用于门与期望判定，不进 ingest（防通知/边沿基线双路径干扰）。
+- **setTarget <80→100 映射退役（W1）**：`NativeLimitSet.setTarget` 改 `-> Int?`——≥80 原值、<80 → nil 不写（编排链唯一消费点 `consumeOrchestrationPending` nil → skip 且不回报 reportOrchestration，daemon 侧 TTL/丢弃语义自洽；执行体协议与两实现同步适配，nil 防御分支走抛错不虚报成功）。旧「<80 set 100」基于已证伪模型，恢复臂开启垫脚石后域即时接管。
+- **恢复重试解锁（W3 单一口径）**：`SuppressionRecovery.shouldAttempt` 删除 `lastOutcomeSucceeded` 参数——0.22.2「成功后持续锁存不重试」防护的补偿互搏面已随门控消失，重试唯一口径 = 10 min 冷却节奏（锁存释放前稳定重试，13:32 链中「成功后永不再试」恢复停滞翼消除）；边沿臂不再旁路冷却（拍动亚态 b′ 下写节奏 ≥10 min 限速，首包破例保留立即——App 重启无在途风险）；新增 `fullOpenWindow` 输入——fullOnce/日程窗内不派发（窗语义 100，恢复写 80 对抗窗语义）。
+
+### Changed
+
+- daemon / CLI / App / 发布脚本四方版本 0.22.4-alpha（daemon 仅版本串零逻辑改动；wire 字段零变化）。
+- doctor 检查 20 失配文案补静默态口径：「域承载态/自愈探针期不对账属预期」（与 App 补偿臂同一纯函数判定单一真相；检查结论与退出码不变）。
+- docs：FAQ Q16 模型 v2 口径（域值直接执法、勿设 100% 教育不变）；SMC-NOTES §11.14 登记（模型 v2 全表 M1-M5 + 四层根因链 + M5/b′ 待定谳位）。
+
 ## [0.22.3-alpha]
 
 > 背景：2026-10-04 10:19 真机事件——suppression 锁存被单次瞬态一致读回虚假释放（恰逢 daemon 自身 10 min 限频重写留下的窗口，agent 再关有延迟），释放后无任何周期读回（读回只挂「违规拍 ∨ 锁存期」，非充电死寂态两者皆空），机制关闭不可见 → 电池 94→100 自由充满。本批根治两处结构性缺陷：**释放判据加持续性**、**owned 拍周期域读回补盲**，保证 0.22.2 已就位的恢复链（写开启值）永远看得见目标（任何静默漂移 ≤10.5 min 被重新捕获）。

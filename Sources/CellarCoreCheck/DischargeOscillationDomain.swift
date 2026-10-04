@@ -227,8 +227,8 @@ func runDischargeOscillationDomainScenarios() throws {
     check(route(false, 79).topoffOwned && route(false, 79).convergenceTarget == 79
               && route(false, 79).orchestrationDesired == nil,
           "矩阵-1", "target 79 ∧ 编排关 → 同行 1（topoff 不受编排开关门——域随写语义一致化对称面）")
-    check(NativeLimitSet.setTarget(for: 79) == 100, "矩阵-1",
-          "target 79 恢复臂 set 100（0.21.3 §2.2 映射——执行体永不向原生 MCL 写 <80 值 ∧ 不造 MCL 80 主导残留〔G1〕）")
+    check(NativeLimitSet.setTarget(for: 79) == nil, "矩阵-1",
+          "target 79 恢复臂不写 MCL（0.22.4 §3.2 映射退役：<80 → nil——执行体永不向原生 MCL 写 <80 值，也不再写 100 补值〔13:32 互搏元凶链〕；域写值直接执法）")
 
     // 矩阵-2：行 3/4（target ≥80 ∧ 编排开/关）——域随写 target、编排开断言 target、
     // 编排关静默；边界 80/81 双侧。

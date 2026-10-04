@@ -87,10 +87,26 @@ extension DoctorReportGenerator {
                     + stallBehaviorHeuristicNote(snapshot: inputs.snapshot, status: status)
             )
         }
+        // 0.22.4 静默态附注（方案 §3.4 复核 P3：域承载态/探针窗域值 target ≠
+        // 期望 80/100 会呈现失配，但 App 补偿臂在该态不对账属预期——与 App 对账
+        // 臂同一纯函数判定，单一真相）。status 仍为 INFO 不改（失配事实如实呈现，
+        // 文案补「属预期」口径防误导）。
+        let silenced = NativeLimitSet.compensationSilenced(
+            modeActive: status.mode == "active",
+            fullOnceWindow: status.fullOnceWindowActive == true,
+            chargingDisabledWindow: status.chargingDisabledWindowActive == true,
+            healProbeActive: status.sub80HealProbeActive == true,
+            sub80State: status.sub80State,
+            upperLimit: status.upperLimit,
+            orchestrationEnabled: status.orchestration?.enabled == true
+        )
         return DoctorCheck(
             name: "关断残留", status: .info,
-            detail: "MCL 读回 \(readback)% 与期望值 \(expected)% 不符（App 缺席窗残留"
-                + "——打开 Cellar App 将自动对账补偿）。提示：在系统设置手动调整时"
+            detail: "MCL 读回 \(readback)% 与期望值 \(expected)% 不符（"
+                + (silenced
+                    ? "当前为域承载态/自愈探针期——App 不对账属预期（域写值直接执法，勿干预）"
+                    : "App 缺席窗残留——打开 Cellar App 将自动对账补偿")
+                + "）。提示：在系统设置手动调整时"
                 + "请设一个具体上限（如 80%）或交给 Cellar 管理——切勿设 100% 来"
                 + "「关闭」限充（那是机制关闭位；停用请用 Cellar 的停用按钮）"
                 + stallBehaviorHeuristicNote(snapshot: inputs.snapshot, status: status)
