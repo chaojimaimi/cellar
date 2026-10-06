@@ -42,6 +42,9 @@ public enum SuppressionRecovery {
     /// 随后 API 写 100 让域接管——开态写 100 保持开，0.20-0.21 对账史定谳）。
     /// target 100 时退化为写 100 可接受：suppression 语义下 owned 拍
     /// target < 100 恒成立。
+    /// **与 `Topoff.degradedWriteValue(for:)` 公式互钉**（0.23.0 §④ 红队 F7 附注
+    /// ——同 `max(target, 80)` 形态，App 恢复写 vs daemon 降级稳态域写；公式
+    /// 任一侧改动必须同步审视另一侧）。
     public static func openValue(for target: Int) -> Int {
         max(target, 80)
     }

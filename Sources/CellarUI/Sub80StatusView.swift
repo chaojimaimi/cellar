@@ -4,16 +4,18 @@ import SwiftUI
 // MARK: - sub80 通道状态组件（0.20 WP2 §3.4；**参数驱动**——CellarUICheck 仅
 // import CellarCore/CellarUI，App 侧 ControlSectionView 薄桥接 StatusController；
 // 照 OrchestrationSectionView 先例）：
-// - 实验性徽章（目标 <80 ∧ sub80 能力）：「实验性」+ 说明文案（系统私有偏好域
-//   执法 + 失效自动回退 80%——方案 §3.4 原文）；
 // - 回落进度（sub80State == active ∧ percent > 目标）：「回落中 82%→75%」——
 //   进度语义不承诺时长（§11.5.1 斜率负载强相关实测事实）；
-// - 降级横幅（sub80State == degraded）：重申×3 封顶后的诚实降级告知；
-// - 迟滞执法横幅（0.21.0 §2.2，sub80Hysteresis == true）：CHIE 备用通道执法中
-//   （约 1 循环/天成本告知同行承载，§2.3）；
+// - 降级横幅（sub80State == degraded）：重申×3 封顶后的诚实降级告知——**0.23.0
+//   §④ F7 参数化**（回退值随实际域写值 %lld；标题去「<80」偏概全——degraded
+//   非 <80 专属，编排关 ≥85 域承载态同样可达）；
+// - 迟滞执法横幅（0.21.0 §2.2，sub80Hysteresis == true）：备用断电保护执法中
+//   （约 1 循环/天成本告知同行承载，§2.3；0.23.0 §⑤ 措辞去「实验性/CHIE」）；
 // - 状态明细 + 自愈进度（0.21.0 §5，state/healProbe 参数）：功能概览页 sub80
 //   明细（active/degraded/hysteresis/off + 自愈重探拍进度——参数驱动，缺省
 //   参保既有 golden 零 diff，新态走快照矩阵）。
+// **0.23.0 §③ 实验性摘帽**：原 experimentalTarget「实验性」徽章参数族删除
+//（sub80 已非实验特性——生产连日实证；l10n 死键随批清理）。
 // 全参数带缺省值：全缺省 → EmptyView（26/无 sub80 能力机器宿主不嵌入本组件，
 // 天然零渲染）。显隐判定在宿主页——组件只做纯展示。
 
@@ -47,8 +49,9 @@ public struct Sub80FallingProgressRow: View {
 public struct Sub80StatusView: View {
     /// 降级横幅（daemon 回读 sub80State == .degraded）。
     public let degraded: Bool
-    /// 实验性徽章目标（非 nil = 当前目标 <80——徽章 + 说明；nil = 不渲染）。
-    public let experimentalTarget: Int?
+    /// 降级横幅回退值（0.23.0 §④ F7 参数化——随实际域写值；默认 80 保既有构造
+    /// 形态。数据源 = sub80WrittenLimit，fresh 缺席按 max(target,80) 同源兜底）。
+    public let degradedWriteValue: Int
     /// 回落进度当前电量（非 nil ∧ fallingTarget 非 nil → 渲染回落行）。
     public let fallingFrom: Int?
     /// 回落进度目标上限（与 fallingFrom 成对）。
@@ -72,7 +75,7 @@ public struct Sub80StatusView: View {
 
     public init(
         degraded: Bool = false,
-        experimentalTarget: Int? = nil,
+        degradedWriteValue: Int = 80,
         fallingFrom: Int? = nil,
         fallingTarget: Int? = nil,
         hysteresisEnforcing: Bool = false,
@@ -82,7 +85,7 @@ public struct Sub80StatusView: View {
         healProbeTicks: Int? = nil
     ) {
         self.degraded = degraded
-        self.experimentalTarget = experimentalTarget
+        self.degradedWriteValue = degradedWriteValue
         self.fallingFrom = fallingFrom
         self.fallingTarget = fallingTarget
         self.hysteresisEnforcing = hysteresisEnforcing
@@ -98,7 +101,7 @@ public struct Sub80StatusView: View {
     }
 
     public var body: some View {
-        if degraded || experimentalTarget != nil || hysteresisEnforcing || showsDetail
+        if degraded || hysteresisEnforcing || showsDetail
             || (fallingFrom != nil && fallingTarget != nil) {
             VStack(alignment: .leading, spacing: 6) {
                 if degraded {
@@ -112,9 +115,6 @@ public struct Sub80StatusView: View {
                 }
                 if healProbeActive, let ticks = healProbeTicks {
                     healProgressLine(ticks)
-                }
-                if experimentalTarget != nil {
-                    experimentalBadge
                 }
                 if let from = fallingFrom, let target = fallingTarget {
                     fallingLine(from: from, target: target)
@@ -157,7 +157,8 @@ public struct Sub80StatusView: View {
     }
 
     /// 降级横幅（warning 色块——照滑杆 minNative 标注的 warning 语汇；标题行 +
-    /// 说明行，§3.2 降级态传播）。
+    /// 说明行，§3.2 降级态传播）。**0.23.0 §④ F7**：标题去「<80」偏概全（degraded
+    /// 非 <80 专属）；回退值随实际写值参数化（%lld）。
     private var degradedBanner: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
@@ -168,15 +169,15 @@ public struct Sub80StatusView: View {
                     .fontWeight(.semibold)
             }
             .foregroundStyle(theme.warning)
-            Text(CellarL10n.s("panel.sub80.degraded.banner"))
+            Text(CellarL10n.s("panel.sub80.degraded.banner", degradedWriteValue))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// 0.21.0 §2.2 迟滞执法横幅（单行——CHIE 备用通道挂载中；约 1 循环/天成本告知
-    /// 同行承载，§2.3。warning 弱化底色语汇照实验性徽章——同为实验性通道语义）。
+    /// 0.21.0 §2.2 迟滞执法横幅（单行——备用断电保护通道挂载中；约 1 循环/天成本
+    /// 告知同行承载，§2.3。warning 弱化底色语汇；0.23.0 §⑤ 措辞去「实验性/CHIE」）。
     private var hysteresisBanner: some View {
         HStack(spacing: 4) {
             Image(systemName: "bolt.badge.checkmark")
@@ -189,23 +190,6 @@ public struct Sub80StatusView: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(theme.warning.opacity(0.12), in: Capsule())
-    }
-
-    /// 实验性徽章（Capsule 底 warning 弱化底色）+ 说明文案（方案 §3.4 原文语汇）。
-    private var experimentalBadge: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(CellarL10n.s("panel.sub80.experimental"))
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(theme.warning.opacity(0.15), in: Capsule())
-                .foregroundStyle(theme.warning)
-            Text(CellarL10n.s("panel.sub80.experimental.desc"))
-                .font(.caption2)
-                .foregroundStyle(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     /// 回落进度行（「回落中 82%→75%」——不承诺时长；monospacedDigit 数值）。

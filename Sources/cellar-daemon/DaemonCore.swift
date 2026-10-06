@@ -125,30 +125,12 @@ final class DaemonCore: @unchecked Sendable {
     var scheduleState = ScheduleState()
     /// 充电日程状态持久化（schedule-state.json；路径注入缝照 calibrationStateStore 先例）。
     let scheduleStateStore: ScheduleStateStore
-    /// WP2' 自动放电冷却态（锁内普通变量，不持久化；崩溃重启即清零——重启后由
-    /// 崩溃恢复完成记录补记冷却，§3.7）。最近一次放电动作终止/取消时刻。
-    var lastAutoDischargeCompletedAt: Date?
-    /// WP2' 适配器翻转门（完成后见过外接状态翻转才可重触发；初值 true = 从未完成
-    /// 时判定直通，门只在完成记录存在后参与判定）。
-    var adapterCycleSinceAutoCompletion = true
-    /// WP2' 翻转门武装位（code-review P1：放电稳态遥测 ext=false，终止恢复 CHIE 后
-    /// 1-2 tick 内回跳 true——该回跳是放电自身的恢复痕迹而非物理重插，直接开门会
-    /// 击穿翻转门）。终止即 disarm；disarm 态的 false→true 回跳仅重新武装不开门；
-    /// 武装后的转移（真实拔/插）才开门。首 tick lastStatus nil 的恒真比较同理被
-    /// disarm 吸收（崩溃恢复已记冷却关门）。
-    var adapterCycleArmed = true
-    /// v0.19.6 意图降限观察（applyPolicyLocked 挂点）：上次观察到的有效上限。
-    /// 锁内普通变量不持久化（与冷却/翻转门同款纪律——重启即清，重启本就重置门）。
-    var lastObservedAutoDischargeLimit: Int?
-    /// 0.21.1 §1.1 门 c 振荡熔断运行态（判定纯函数 Discharge.noteOscillationCompletion
-    /// ——CellarCoreCheck 场景域钉死；daemon 只做簿记与告警副作用）。锁内内存态
-    /// **不持久化**——重启重置即解除（门 c 解除路径①）；用户重新 opt-in 清抑制
-    /// 为路径②（setLimits flag 翻转清两门先例处一并清本态）。
-    var oscillationState = Discharge.OscillationState()
-    /// 0.21.1 §1.1 门 c：当前在轨放电动作是否 autostart 发起（dischargeToLimitLocked
-    /// 启动成功臂置位；maintainDischargeLocked 完成臂消费——**完成计数仅 autostart**，
-    /// 方案门 c「autostart 放电完成」口径；noteDischargeTerminatedLocked 清零）。
-    var activeDischargeWasAutoStart = false
+    /// **0.23.0 自动放电自动机退役**：冷却态（lastAutoDischargeCompletedAt）/适配器
+    /// 翻转门（adapterCycleSinceAutoCompletion/adapterCycleArmed）/意图降限观察器
+    ///（lastObservedAutoDischargeLimit）/振荡熔断（oscillationState）/在轨发起方
+    /// 标记（activeDischargeWasAutoStart）/strike 边沿锁存（strikeEdgeLatch）及其
+    /// 时基（tickSequence）全部随批删除——手动放电 + CHIE 迟滞（opt-in）兜底承接
+    /// 「agent 全盲态自动介入」原价值面（方案 §0 定谳：该形态历史未现）。
     /// v0.19.20 编排运行时状态（结构体定义在 CellarCore NativeOrchestration.swift
     /// ——存储属性主体声明惯例；决策/回报逻辑全在 DaemonCore+Orchestration.swift）。
     /// **不持久化（R1 P2 取舍）**：重启后 lastApplied 丢失 → 首 tick valueChange
@@ -178,18 +160,6 @@ final class DaemonCore: @unchecked Sendable {
     /// calibrationStateStore 先例——可测。写入纪律：主锁内 tmp+rename 直写，
     /// 26 平台不生成状态文件）。
     let topoffStateStore: TopoffStateStore
-    /// 0.21.2 §3.2 strike 边沿锁存（结构体定义在 CellarCore Topoff.swift
-    /// ——TTL 纯函数 StrikeEdgeLatch 族钉面，daemon 只做置位/读即清簿记）。**锁内
-    /// 内存态不持久化**——重启即清，下一 strike 边沿最迟 10 min 后随验证窗满再来
-    ///（方案 §6「边沿丢失」登记面）。置位点 = topoffConvergenceRouteLocked 消费
-    /// plan.strikeFired 拍；消费点 = autoDischargeObservationLocked（读即清）。
-    var strikeEdgeLatch = StrikeEdgeLatch()
-    /// 0.21.2 §3.2 tick 序号（锁内内存态单调递增——performTickLocked 入口 +1，
-    /// 与 watchdog tick 时钟同点）。strike 边沿锁存 TTL 的时基：N 拍置位、N+1 拍
-    /// 可读、N+2 拍失效且读即清（Topoff.strikeEdgeReadable/Consume 纯函数消费）。
-    /// ⚠️ internal：DaemonCore+Topoff/+Discharge 跨文件访问——executable internal
-    /// 模块外不可达。
-    var tickSequence = 0
     /// 0.20 M1b P3-1：topoff 域写连续失败计数（日志降频——首条 error、后续合并
     /// 计数 warn；写成功即清零）。锁内内存态（纯日志面，不持久化）。⚠️ internal：
     /// DaemonCore+Topoff.swift 跨文件访问——executable internal 模块外不可达。
@@ -285,7 +255,7 @@ final class DaemonCore: @unchecked Sendable {
             if pending.kind == Discharge.dischargeToLimitKind {
                 // 统一完成记录（五落点之五）：崩溃恢复终止即记冷却——顺带给 daemon
                 // 重启后 30min 冷却 + 翻转门关闭（叠加 §3.7 良性分析）。
-                noteDischargeTerminatedLocked(now: Date())
+                noteDischargeTerminatedLocked()
                 // 0.20 M1a §2.2 #9（DaemonCore.swift:188-189 处置）：恢复写经控制面
                 // ——26 tahoe 路径行为不变（同一 client）；27 经 CHIE 探测直挂写
                 // 0x00（终止必须真实还原，防适配器禁用泄漏）。
@@ -495,8 +465,9 @@ final class DaemonCore: @unchecked Sendable {
     /// setLimits：更新上限并切回 active（规格 §0.4）→ 持久化（失败仅记日志）→
     /// policyChanged 全量重评估 → 返回状态。LimitPolicy 构造失败（含 60 地板）原样上抛。
     /// WP2'：auto == nil → 保持内存策略现值（缺席保持——CLI 不带键不重置开关）；
-    /// 0/1 → 更新 flag；**flag 自非 1 翻转为 1 时清空两门**（R2 P2-A：重新 opt-in =
-    /// 新意图；解决常插电设备「一适配器会话只触发一次」的窄口）。
+    /// 0/1 → 更新 flag。**0.23.0 自动放电自动机退役**：auto flag 仅作 policy 镜像
+    /// 照填（wire 兼容——旧 App/CLI 可发不报错），触发链不消费（原 opt-in 清两门
+    /// +振荡重置块随批删除）。
     func setLimits(upper: Int, hys: Int, auto: UInt64? = nil) throws -> DaemonStatus {
         _ = try LimitPolicy(upperLimit: upper, hysteresis: hys)
         var events: [LogEvent] = []
@@ -512,23 +483,6 @@ final class DaemonCore: @unchecked Sendable {
         } else {
             // 用户动作清除终态锁存（P0-2：setLimits/enable/disable/fullOnce 重启）。
             actionTrack.clearUserActionLatch()
-        }
-        // **flag 自非 1 翻转为 1 时清空两门**（R2 P2-A：重新 opt-in = 新意图；解决
-        // 常插电设备「一适配器会话只触发一次」的窄口）。置于隐式取消之后（code-review
-        // P2：取消会经完成记录重新关门——清门必须后置才能兑现「新意图」语义）。
-        // 0.21.1 §1.1 门 c：重新 opt-in 清振荡抑制（解除路径②——同「新意图」语义；
-        // 滑窗完成历史一并重置，防旧窗样本在 opt-in 后立即再触发）。
-        if autoFlag == true && policy.autoDischargeEnabled != true {
-            lastAutoDischargeCompletedAt = nil
-            adapterCycleSinceAutoCompletion = true
-            adapterCycleArmed = true
-            if oscillationState.suspended {
-                oscillationState = Discharge.OscillationState()
-                events.append(LogEvent(
-                    category: .control, level: .info,
-                    message: "振荡熔断抑制已随「自动放电」重新开启清除（新意图——2h 滑窗历史一并重置）"
-                ))
-            }
         }
         // 0.21.0 §1.3：滑杆改值覆盖临时放开（R2-P2-4 交互语义）——清窗后
         // valueChange 断言按新值重发（lastApplied=100 ≠ 新 target 自然触发），
@@ -811,6 +765,8 @@ final class DaemonCore: @unchecked Sendable {
     /// 锁内 tick（调用方负责解锁与 emit；WP2 起 internal——DaemonCore+OneShot.swift 的
     /// fullOnce 启动后调用；WP2' 放电维护分支在 DaemonCore+Discharge.swift）：
     /// backend 保证 → 采样 → 控制键读取 → 电量变化事件 → active 模式 enforce → lastStatus。
+    /// **0.23.0 自动放电自动机退役**：strike 边沿时基（tickSequence）/适配器翻转
+    /// 检测（noteAdapterCycleLocked）/自动触发插桩（执行段 + 观测段）随批删除。
     func performTickLocked(events: inout [LogEvent]) {
         // 0.20.1 §2.2 watchdog tick 时钟：**入口首行钉死**（R2-P1——27 观测路径
         // backend 缺席/采样失败/控制键读取失败臂全部 early-return，钉尾部不可达会
@@ -818,9 +774,6 @@ final class DaemonCore: @unchecked Sendable {
         tickClockLock.lock()
         lastTickAt = Date()
         tickClockLock.unlock()
-        // 0.21.2 §3.2 strike 边沿锁存时基：本拍序号（与 watchdog 时钟同入口首行
-        // ——早退臂亦递增，序号只要求单调不要求连续）。
-        tickSequence += 1
         // 0.20 M1a 合盖拒绝闸：合盖状态只读探测（每 tick 一次缓存——DaemonStatus.
         // clamshellClosed 数据源 + 运行中止判定输入；读取失败 → nil 诚实缺席，
         // mini-spike 结论与弱检查局限见 ClamshellProbe/DEVICES.md）。
@@ -835,17 +788,14 @@ final class DaemonCore: @unchecked Sendable {
             // ⚠️ 时序钉死（M1a R2-P3 采样失败时序用例锚）：**先采样后维护**——
             // 快照缺席拍不推进完成判定（维护路由含 snapshotAvailable 输入）。
             let snapshot = sampleAndPublishLocked(events: &events)
-            // 适配器翻转门（0.20 M1a：27 观测段承接——执法段步骤 4 在 27 不可达；
-            // 26 瞬态窗口既有语义不含本检测，仅 27 终态门控内生效）。
-            if orchestrationTerminalLocked, let snapshot {
-                noteAdapterCycleLocked(snapshot)
-            }
             // 0.20 M1a §2.1/§2.2 #5/#7：观测段路由（纯函数 Discharge.observationRoute
-            // ——CellarCoreCheck 场景域钉死真值表，daemon 只消费）：
+            // ——CellarCoreCheck 场景域钉死真值表，daemon 只消费）。**0.23.0 自动
+            // 放电自动机退役**：原 `.patrolResidual` 臂内的自动放电插桩删除——巡检
+            // 命中即本拍终点的钉死优先序自然退化为「巡检命中 > 编排链」。
             // - 27 终态 ∧ 放电活跃 ∧ 控制面可写 ∧ 快照在位 → 维护子分支（豁免
             //   backend 缺席成因的监控缺失计数——R2-P1；快照缺席/控制面缺席 →
             //   照常计数，90s 盲态止损保留）；
-            // - 27 终态 ∧ 空轨 → 残留巡检兜底 + 自动放电插桩；
+            // - 27 终态 ∧ 空轨 → 残留巡检兜底；
             // - 26 瞬态窗口 → 既有监控缺失计数（26 行为零变化）。
             switch Discharge.observationRoute(
                 orchestrationTerminal: orchestrationTerminalLocked,
@@ -868,20 +818,11 @@ final class DaemonCore: @unchecked Sendable {
                 }
             case .patrolResidual:
                 // §2.2 #7：27 残留巡检兜底（防崩溃/恢复失败泄漏 CHIE=0x8 致电池
-                // 持续耗电）。命中 tick 到此为止（照执法段钉死优先序：巡检命中 >
-                // 自动触发 > 编排链——无「恢复 0x00 后同拍又写 0x8」乒乓）。
-                var patrolHit = false
+                // 持续耗电）。命中 tick 到此为止（编排链对在轨动作本就静默——无
+                // 「恢复 0x00 后同拍又写 0x8」乒乓）。
                 if let client = smcClient,
                    let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                     lastStatus?.lastAction = patrolLiteral
-                    patrolHit = true
-                }
-                // 自动放电插桩（M1a——autoDischarge 能力诚实化：autoTriggerReady 在
-                // 27 执法段不可达，观测段承接同款判定与启动序列）。
-                if !patrolHit, let client = smcClient, let snapshot {
-                    autoDischargeObservationLocked(
-                        now: Date(), snapshot: snapshot, client: client, events: &events
-                    )
                 }
             case .noteMonitoringLoss:
                 noteDischargeMonitoringLossLocked(
@@ -940,7 +881,8 @@ final class DaemonCore: @unchecked Sendable {
         }
         // WP2' 适配器翻转检测（code-review P1 armed 语义）——0.20 M1a 提取为共用
         // 方法（27 观测段承接同款检测；执法段语义零变化）。
-        noteAdapterCycleLocked(snapshot)
+        // **0.23.0 自动放电自动机退役**：翻转检测（noteAdapterCycleLocked）唯一
+        // 消费者是自动触发重插门——随批退役，本挂点删除。
 
         // Phase 5 v1.4 终态观察（UD-5 第②点，空闲臂）：无在轨动作 ∧ 锁存字面量 ∈
         // 校准终态族（全等匹配）→ 补写上次校准记录——覆盖 done/timeout/safety 等
@@ -990,97 +932,52 @@ final class DaemonCore: @unchecked Sendable {
             if let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                 actionName = patrolLiteral
             } else {
-                // WP2' 自动触发插桩（优先序钉死：巡检命中 > 自动触发 > enforce，R1
-                // P2-3——巡检命中 tick 到此为止，无「恢复 0x00 后同 tick 又写 0x8」乒乓）。
-                // 判定链全过 → 锁内启动（locked 内部不 tick）；catch 记 warn 后落回
-                // 下方既有 enforce 块（不重入 performTickLocked——失败臂已做 CHIE
-                // 恢复/回滚，残留无约束窗口 ≤1 tick，下 tick 全量收敛，R1 P1-1）。
-                var autoStarted = false
+                // **0.23.0 自动放电自动机退役**：原 WP2' 自动触发插桩（巡检命中 >
+                // 自动触发 > enforce 优先序中段）删除——空轨 active 拍直达校准调度臂。
                 var calibrationStarted = false
                 let tickNow = Date()
-                if Discharge.autoTriggerReady(
-                    enabled: policy.autoDischargeEnabled,
-                    mode: policy.mode,
-                    externalConnected: snapshot.externalConnected,
-                    // 门 a（0.21.1 §1.1）：agent 尚在充电不放电——26 停充 SMC 直控
-                    // 即时生效，过冲拍 charging 通常已 false；门仅使 26 上「充电未停
-                    // 的瞬间」延迟一拍（30s）= 设计意图（26 回归场景钉边界）。
-                    isCharging: snapshot.isCharging,
-                    percent: snapshot.percent,
-                    // 门 b（0.21.1 §1.1）：effectiveTarget = upperLimit 常量——26 上
-                    // 两窗结构不可达（fullOnce 窗置位仅 27 复活臂 DaemonCore+OneShot.
-                    // swift:68-75；日程 chargingDisabled 进窗走 disable 全路径 mode
-                    // 变非 active 被 mode 门挡）——第二重 26 零变化锚（方案 §1.1，
-                    // 与 §4.5 互证）。
-                    effectiveTarget: policy.upperLimit,
-                    actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
-                    dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
-                    // 门 c（0.21.1 §1.1）：振荡熔断抑制态（2h ≥2 次 autostart 完成
-                    // 后锁存；解除 = 重启/重新 opt-in）。
-                    oscillationSuspended: oscillationState.suspended,
-                    now: tickNow,
-                    lastAutoCompletion: lastAutoDischargeCompletedAt,
-                    adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion
-                ) {
+                // Phase 5 v1.4 调度臂（空闲 active 臂内；原嵌于 !autoStarted 门——
+                // 自动放电退役后**校准臂结构语义保留**，门折叠为直接判定）：动作空闲
+                //（本分支前提）∧ 调度开启 ∧ 周期就绪 → 锁内自动启动（直调 Locked
+                // 版——本处已持锁，NSLock 不可重入，UD-6）。复用本拍 snapshot（免
+                // 重复拍电池，R2 P3）。
+                if let schedule = policy.calibrationSchedule, schedule.enabled,
+                   calibrationAutoStartReady(
+                       now: tickNow,
+                       lastStartedAt: calibrationAnchorDateLocked(),
+                       schedule: schedule
+                   ) {
                     do {
-                        if try dischargeToLimitLocked(now: tickNow, initiator: .auto, events: &events) == .started {
-                            autoStarted = true
-                            actionName = maintainDischargeLocked(
-                                now: tickNow, snapshot: snapshot, client: client, events: &events
+                        if try startCalibrationLocked(
+                            initiator: .auto, snapshot: snapshot, events: &events
+                        ) == .started {
+                            // 同拍 maintainCalibrationLocked 接管（R2 P1——使 enforce
+                            // 块跳过，防 enforce 按 idle 语境对着 chargeFull 相写
+                            // 停充，30s 后才被保活纠正）。
+                            calibrationStarted = true
+                            actionName = maintainCalibrationLocked(
+                                now: tickNow, snapshot: snapshot, backend: backend, events: &events
                             )
                         }
-                    } catch {
+                    } catch let rejection as CalibrationStartRejection
+                        where rejection == .persistenceFailed {
+                        // persistenceFailed 提级 warn（P3-1）：action.json 写失败 =
+                        // 动作未落盘的异常态，非静默顺延；下 tick 幂等重试，残留交
+                        // 启动崩溃恢复兜底。
                         events.append(LogEvent(
                             category: .control, level: .warn,
-                            message: "自动放电触发失败：\(error)"
+                            message: "自动校准启动失败：\(rejection)（持久化是动作存活的前提）"
+                        ))
+                    } catch {
+                        // 前置拒绝静默顺延（info 级，防窗口内每 30s 刷 error）：
+                        // 不写锚点——当日窗口内顺延重试，窗口过后自然跨日（UD-4）。
+                        events.append(LogEvent(
+                            category: .control, level: .info,
+                            message: "自动校准未启动：\(error)（静默顺延，窗口内下 tick 重判）"
                         ))
                     }
                 }
-                if !autoStarted {
-                    // Phase 5 v1.4 调度臂（空闲 active 臂内、autoTriggerReady 判定
-                    // **之后**——自动放电就绪优先占轨，校准下 tick 重判，R1 P2 次序
-                    // 钉死）：动作空闲（本分支前提）∧ 调度开启 ∧ 周期就绪 → 锁内
-                    // 自动启动（直调 Locked 版——本处已持锁，NSLock 不可重入，UD-6）。
-                    // 复用本拍 snapshot（免重复拍电池，R2 P3）。
-                    if let schedule = policy.calibrationSchedule, schedule.enabled,
-                       calibrationAutoStartReady(
-                           now: tickNow,
-                           lastStartedAt: calibrationAnchorDateLocked(),
-                           schedule: schedule
-                       ) {
-                        do {
-                            if try startCalibrationLocked(
-                                initiator: .auto, snapshot: snapshot, events: &events
-                            ) == .started {
-                                // 同拍 maintainCalibrationLocked 接管（R2 P1，照
-                                // autoDischarge autoStarted 门结构——使 enforce 块
-                                // 跳过，防 enforce 按 idle 语境对着 chargeFull 相写
-                                // 停充，30s 后才被保活纠正）。
-                                calibrationStarted = true
-                                actionName = maintainCalibrationLocked(
-                                    now: tickNow, snapshot: snapshot, backend: backend, events: &events
-                                )
-                            }
-                        } catch let rejection as CalibrationStartRejection
-                            where rejection == .persistenceFailed {
-                            // persistenceFailed 提级 warn（P3-1，对齐自动放电臂 catch
-                            // warn 先例）：action.json 写失败 = 动作未落盘的异常态，
-                            // 非静默顺延；下 tick 幂等重试，残留交启动崩溃恢复兜底。
-                            events.append(LogEvent(
-                                category: .control, level: .warn,
-                                message: "自动校准启动失败：\(rejection)（持久化是动作存活的前提）"
-                            ))
-                        } catch {
-                            // 前置拒绝静默顺延（info 级，防窗口内每 30s 刷 error）：
-                            // 不写锚点——当日窗口内顺延重试，窗口过后自然跨日（UD-4）。
-                            events.append(LogEvent(
-                                category: .control, level: .info,
-                                message: "自动校准未启动：\(error)（静默顺延，窗口内下 tick 重判）"
-                            ))
-                        }
-                    }
-                }
-                if !autoStarted && !calibrationStarted {
+                if !calibrationStarted {
                 // Phase 5 v1.6 日程臂（空闲 active 臂内、校准调度臂之后——UD-4 次序
                 // 钉死；执行体在 DaemonCore+Schedule.swift，本文件仅挂点——零新增
                 // 逻辑）：转移为 chargingDisabled 时当拍跳过 enforce（scheduleHandled
@@ -1134,7 +1031,7 @@ final class DaemonCore: @unchecked Sendable {
                     noteControlFailureLocked(error, events: &events, context: "策略执行")
                 }
                 }   // if !scheduleHandled（chargingDisabled 转移当拍跳过 enforce）
-                }   // if !autoStarted && !calibrationStarted（未自动启动才落常规 enforce 块）
+                }   // if !calibrationStarted（未自动启动校准才落常规 enforce 块）
             }
         } else {
             // disabled 档同样巡检（不变式无条件：CHIE=0x8 仅允许在动作活跃期存在）。
@@ -1163,21 +1060,6 @@ final class DaemonCore: @unchecked Sendable {
             action: actionTrack.action,
             timestamp: snapshot.timestamp
         )
-    }
-
-    /// WP2' 适配器翻转检测（code-review P1 armed 语义；0.20 M1a 自执法段步骤 4
-    /// 提取——执法段与 27 观测段共用）：终止后 disarm——放电稳态遥测 ext=false、
-    /// 恢复 CHIE 后 1-2 tick 内回跳 true 是放电自身恢复痕迹，仅重新武装不开门；
-    /// 武装后的转移（真实拔/插）才开重插门。首 tick lastStatus nil 的恒真比较被
-    /// disarm 吸收（崩溃恢复已记冷却关门，不误开）。
-    func noteAdapterCycleLocked(_ snapshot: BatterySnapshot) {
-        if snapshot.externalConnected != lastStatus?.lastExternalConnected {
-            if adapterCycleArmed {
-                adapterCycleSinceAutoCompletion = true
-            } else if snapshot.externalConnected {
-                adapterCycleArmed = true   // 放电后回跳：仅武装
-            }
-        }
     }
 
     /// 观测段（0.19.10 WP-B）：后端缺席分支的采样 + 电量变化事件 + lastStatus 供给
@@ -1350,7 +1232,8 @@ final class DaemonCore: @unchecked Sendable {
     ///（persistPolicyLocked v1.1 同款放宽先例；executable internal 模块外不可达）。
     /// F-1 纪律（v0.19.6）：upperLimit 禁止字段直写——`policy.<字段> =` 既有直写
     /// 先例的字段名单（schedule/fan/thermal/calibrationSchedule/magSafeLedMode）
-    /// 不含它，必须走本函数——意图降限重武装观察器的挂点在此。
+    /// 不含它，必须走本函数——**0.23.0**：原「意图降限重武装观察器」挂点随自动
+    /// 放电观察器退役删除，upperLimit 经本函数的收敛路径不变。
     func applyPolicyLocked(_ newPolicy: DaemonPolicy, events: inout [LogEvent]) {
         guard let limit = try? LimitPolicy(upperLimit: newPolicy.upperLimit, hysteresis: newPolicy.hysteresis) else {
             events.append(LogEvent(
@@ -1359,22 +1242,6 @@ final class DaemonCore: @unchecked Sendable {
             ))
             return
         }
-        // v0.19.6 意图降限观察（R1 P3：guard 通过后、policy 赋值前——被拒策略不得
-        // 幽灵播种/误日志）。无条件播种由 limitObservation 返回值承载，不做调用方
-        // 分支。日志插值安全性：rearm=true 蕴含 previous 非 nil（previous 为 nil 时
-        // `?? false` 兜底，map 闭包不执行），故 if 块内读到的 lastObservedAutoDischargeLimit
-        // 必为现值（覆盖发生在块后），`?? -1` 分支实际不可达（保留防御写法）。
-        let observation = Discharge.limitObservation(
-            previous: lastObservedAutoDischargeLimit, current: newPolicy.upperLimit
-        )
-        if observation.rearm {
-            adapterCycleSinceAutoCompletion = true
-            events.append(LogEvent(
-                category: .control, level: .info,
-                message: "有效上限下调（\(lastObservedAutoDischargeLimit ?? -1)% → \(newPolicy.upperLimit)%）：重置自动放电重插门（意图开门）"
-            ))
-        }
-        lastObservedAutoDischargeLimit = observation.nextObserved
         policy = newPolicy
         controller.updatePolicy(limit)
     }
@@ -1486,9 +1353,9 @@ final class DaemonCore: @unchecked Sendable {
             status.fullOnceWindowActive = orchestrationState.fullOnceWindowActive
             status.chargingDisabledWindowActive = chargingDisabledWindowActiveLocked
         }
-        // 0.21.1 §1.1 门 c：振荡熔断抑制态（App 横幅「自动放电已暂停」数据源——
-        // 恒填，内存态随回包透出；false = 未抑制）。
-        status.autoDischargeSuspended = oscillationState.suspended
+        // 0.21.1 §1.1 门 c → **0.23.0 恒 false**：振荡熔断随自动放电自动机退役，
+        // wire 字段保留（零 wire 变化——旧 App 横幅面恒不出现）。
+        status.autoDischargeSuspended = false
         status.lastAction = actionTrack.effectiveLastAction(status.lastAction)
         status.action = actionTrack.action
         status.capabilities = capabilities

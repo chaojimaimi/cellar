@@ -99,6 +99,9 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     case actionCancelled(kind: String)
     /// WP2' 自动放电启动（lastAction 转移 dischargeToLimit:autostart——daemon
     /// 自动触发时用户不在场，必须发通知；upperLimit = 触发时刻策略上限）。
+    /// **0.23.0 自动放电自动机退役（红队 F5 兼容保留面）**：新 daemon 恒不产
+    /// autostart 字面量（自动触发链已删）——本 case 保留仅为旧 daemon 混装窗内
+    /// 事件承载兼容，非死码。
     case autoDischargeStarted(upperLimit: Int)
     /// WP3 校准相位转移（lastAction 转移进入 calibration:hold / calibration:discharge；
     /// chargeFull 为启动相——启动是用户操作已知，不另发）。

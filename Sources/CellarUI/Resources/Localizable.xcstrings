@@ -171,6 +171,91 @@
         }
       }
     },
+    "about.update.available": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New version %@ available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有新版本 %@"
+          }
+        }
+      },
+      "comment": "0.23.0 §⑥：关于页新版本行（动作按钮同行走 URL 白名单校验后开放）"
+    },
+    "about.update.available.body": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New version %@ is available — open the download page from About"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有新版本 %@ 可用——可在 Cellar 关于页前往下载"
+          }
+        }
+      },
+      "comment": "0.23.0 §⑥：更新通知正文（identifier 版本限定）"
+    },
+    "about.update.check": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新"
+          }
+        }
+      },
+      "comment": "0.23.0 §⑥：关于页手动检查按钮（绕 24h 节流不绕同版本去重）"
+    },
+    "about.update.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check failed — please try again later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查失败，请稍后重试"
+          }
+        }
+      }
+    },
+    "about.update.latest": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You’re up to date"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是最新版本"
+          }
+        }
+      },
+      "comment": "0.23.0 §⑥：手动检查无更新反馈"
+    },
     "calibration.cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -4064,40 +4149,6 @@
         }
       }
     },
-    "panel.discharge.autoOn": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto discharge: on"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动放电：开启"
-          }
-        }
-      }
-    },
-    "panel.discharge.autoSuspended": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto discharge: on · paused by cycle protection"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动放电：开启 · 振荡保护已暂停"
-          }
-        }
-      }
-    },
     "panel.enableLimit": {
       "extractionState": "manual",
       "localizations": {
@@ -4451,125 +4502,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "应用版本"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto Discharge"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动放电"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.confirm": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm Auto Discharge"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "确认开启"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.desc": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "When the battery is above the limit, discharge it back to the limit automatically"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "电量高于上限时，自动放电回到上限"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.suspended": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto discharge paused: frequent discharge cycles detected"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动放电已暂停：检测到频繁放电循环"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.suspended.desc": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Two or more auto discharges completed within 2 hours; automatic triggering is paused (manual discharge is unaffected). Turn the switch off and back on, or restart the daemon, to resume"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2 小时内发生 ≥2 次自动放电完成——振荡熔断已介入，后续自动触发暂停（手动「放电到上限」不受影响）。关闭后重新开启「自动放电」或重启守护进程即可恢复"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.unsupported": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto discharge is not supported on this model or daemon version"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "当前机型或守护进程版本不支持自动放电"
-          }
-        }
-      }
-    },
-    "settings.autoDischarge.warning": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1. Discharging consumes battery cycle count\n2. External devices may lose power during discharge (the adapter is disabled)\n3. When the trigger condition is met, a full charge will also be discharged back to the limit\n4. Discharge can be stopped anytime by unplugging, sleep, or the thermal safeguard"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1. 放电会消耗电池循环计数\n2. 放电期间外接设备可能断电（适配器被禁用）\n3. 满足触发条件时，充满一次完成后的电量也会被自动放回上限\n4. 放电可随时被拔电、睡眠或温度安全机制中止"
           }
         }
       }
@@ -7804,23 +7736,6 @@
         }
       }
     },
-    "settings.orchestration.shortcutName": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Shortcut name"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "快捷指令名称"
-          }
-        }
-      }
-    },
     "settings.orchestration.statusReady": {
       "extractionState": "manual",
       "localizations": {
@@ -7868,23 +7783,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "编排执行失败：%@"
-          }
-        }
-      }
-    },
-    "settings.orchestration.setup": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Setup (once): in the Shortcuts app, create a new shortcut → add the action “Set Charge Limit” → for its parameter choose “Receive input from Shortcuts” → name it exactly as above."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设置（一次性）：在「快捷指令」App 新建快捷指令 → 添加动作「设定电池充电上限」→ 参数选「输入快捷指令的信息」→ 以上方名称命名。"
           }
         }
       }
@@ -8025,40 +7923,6 @@
         }
       }
     },
-    "panel.sub80.experimental": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Experimental"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "实验性"
-          }
-        }
-      }
-    },
-    "panel.sub80.experimental.desc": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enforced via a system private preferences domain; a macOS update may disable it. Falls back to an 80% limit automatically."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "经由系统私有偏好域执法，macOS 更新可能使其失效；失效时自动回退 80%。"
-          }
-        }
-      }
-    },
     "panel.sub80.falling": {
       "extractionState": "manual",
       "localizations": {
@@ -8077,38 +7941,38 @@
       }
     },
     "panel.sub80.degraded.title": {
-      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "<80% enforcement degraded"
+            "value": "Charge-limit enforcement degraded"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "<80 执法已降级"
+            "value": "限充执法已降级"
           }
         }
-      }
+      },
+      "comment": "0.23.0 §④ F7：去「<80」偏概全（degraded 非 <80 专属——编排关 ≥85 域承载态亦可达）"
     },
     "panel.sub80.degraded.banner": {
-      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "<80% enforcement is not in effect (a macOS update may have changed the channel); the limit has fallen back to 80%."
+            "value": "Charge-limit enforcement is not in effect (a macOS update may have changed the channel); the limit has fallen back to %lld%%."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "<80 执法未生效（可能系统更新改变了通道），已回退 80% 上限。"
+            "value": "限充执法未生效（可能系统更新改变了通道），已回退 %lld%% 上限。"
           }
         }
-      }
+      },
+      "comment": "0.23.0 §④ F7：回退值随实际域写值参数化（%lld）"
     },
     "settings.orchestration.readback.current": {
       "extractionState": "manual",
@@ -8315,38 +8179,38 @@
       }
     },
     "panel.sub80.hysteresis.banner": {
-      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Experimental backup channel enforcing (~1 cycle/day)"
+            "value": "Backup power-cut protection enforcing (~1 cycle/day)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "实验性备用通道执法中（约 1 循环/天）"
+            "value": "备用断电保护执法中（约 1 循环/天）"
           }
         }
-      }
+      },
+      "comment": "0.23.0 §③/⑤：去「实验性/CHIE」措辞"
     },
     "panel.sub80.hysteresis.toggle": {
-      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use CHIE backup channel when topoff fails (experimental, ~1 cycle/day)"
+            "value": "Switch to backup power-cut protection when the charge-limit channel degrades (~1 cycle/day)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "topoff 失效时使用 CHIE 备用通道（实验性，约 1 循环/天）"
+            "value": "限充通道降级时改用断电保护（备用，约 1 循环/天）"
           }
         }
-      }
+      },
+      "comment": "0.23.0 §⑤：措辞通俗化（原「topoff 失效时使用 CHIE 备用通道（实验性…）」）"
     },
     "panel.sub80.state.active": {
       "extractionState": "manual",
@@ -8490,13 +8354,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Channel that sets the system charging limit (macOS 27 native enforcement; the App's built-in channel is primary, the shortcut is a fallback; Cellar must stay running — quitting stops execution)"
+            "value": "Channel that sets the system charging limit (macOS 27 native enforcement; the App's built-in channel is the only executor; Cellar must stay running — quitting stops execution)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设置系统充电上限的执行通道（macOS 27 原生执法；App 内嵌直达，快捷指令保留为备用；需 Cellar 保持运行——退出即停止执行）"
+            "value": "设置系统充电上限的执行通道（macOS 27 原生执法；App 内嵌直达，唯一执行通道；需 Cellar 保持运行——退出即停止执行）"
           }
         }
       }
@@ -8653,6 +8517,23 @@
           }
         }
       }
+    },
+    "about.update.download": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前往下载"
+          }
+        }
+      },
+      "comment": "0.23.0 §⑥：新版本行动作按钮（NSWorkspace.open 前白名单 https ∧ github.com fail-closed）"
     }
   },
   "version": "1.0"

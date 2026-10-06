@@ -507,9 +507,13 @@ func runTopoffDomainScenarios() {
               "路由-6", "mode 非 active → 汇聚目标 nil（关断清理面——域随写 100 + off）")
     }
 
-    // ---- ⑥ 0.21.2 §3.2 strike 边沿信号（TopoffTickPlan.strikeFired + 锁存 TTL）----
+    // ---- ⑥ 0.21.2 §3.2 strike 边沿信号（TopoffTickPlan.strikeFired——0.23.0 退役版）----
     // R1-P0 接线层盲区根治：验证窗满拍 violationTicks 即归零（先于 topoff tick 的
     // 观测点可见最大 19，「≥20 判据」按字面接线永不触发）——显式边沿信号取代。
+    // **0.23.0 自动放电自动机退役**：strikeFired 产出语义保留（降级拍信号不变，
+    // 本节 边沿-1/2/3 照旧钉面）；原唯一下游消费者（StrikeEdgeLatch 边沿锁存 +
+    // strikeAccompaniment 伴随判定，原 边沿-4/5/6 场景）随批退役删除——边沿暂无人
+    // 消费（无害），头注措辞随批改写（「供自动放电消费」过时）。
 
     // 边沿-1：channelTick strike 拍置位 + 单拍有效——窗内 19 拍恒 false、第 20 拍
     // （strikes 递增拍）true；非违规拍/幂等写拍/采样缺席拍恒 false。
@@ -579,59 +583,5 @@ func runTopoffDomainScenarios() {
                                        percent: 75, externalConnected: true, isCharging: false)
         check(!waiting.strikeFired && !probe.strikeFired && !observing.strikeFired && !restored.strikeFired,
               "边沿-3", "healTick 全臂（等待/开窗/观察/恢复）恒无 strike 边沿")
-    }
-
-    // 边沿-4：锁存 TTL 钉死——N 拍置位、N+1 拍可读、N+2 拍失效且读即清；
-    // 置位拍不可读（同拍观测段先于 topoff tick——边沿对观测段不可见是设计意图）。
-    do {
-        let latched = StrikeEdgeLatch(setAtTick: 100)
-        check(!Topoff.strikeEdgeReadable(latch: latched, tick: 100),
-              "边沿-4", "置位拍 N 不可读（同拍置位在观测段之后——次序契约）")
-        check(Topoff.strikeEdgeReadable(latch: latched, tick: 101),
-              "边沿-4", "N+1 拍可读（TTL=1 tick）")
-        check(!Topoff.strikeEdgeReadable(latch: latched, tick: 102),
-              "边沿-4", "N+2 拍失效（陈旧边沿冷却后不再触发——R2-P3-2）")
-        let consumedAtRead = Topoff.strikeEdgeConsume(latch: latched, tick: 101)
-        check(consumedAtRead.readable && consumedAtRead.next.setAtTick == nil,
-              "边沿-4", "可读拍读即清（消费后无在档边沿）")
-        let consumedExpired = Topoff.strikeEdgeConsume(latch: latched, tick: 102)
-        check(!consumedExpired.readable && consumedExpired.next.setAtTick == nil,
-              "边沿-4", "失效拍读即清（过期残留不滞留）")
-        let untouched = Topoff.strikeEdgeConsume(latch: latched, tick: 100)
-        check(!untouched.readable && untouched.next.setAtTick == 100,
-              "边沿-4", "置位拍读不清（消费点在 topoff tick 之前——置位后残留，下拍可读）")
-    }
-
-    // 边沿-5：一拍陈旧边沿不复活——置位后隔多拍（冷却结束/重插门开）永不可读；
-    // 空锁存恒不可读（「边∧冷却丢失不补发」的结构性保证——登记面）。
-    do {
-        let stale = StrikeEdgeLatch(setAtTick: 100)
-        check([103, 150, 10_000].allSatisfy { !Topoff.strikeEdgeReadable(latch: stale, tick: $0) },
-              "边沿-5", "陈旧边沿永不可读（tick 序号单调——冷却结束后无补发）")
-        check(!Topoff.strikeEdgeReadable(latch: StrikeEdgeLatch(), tick: 101),
-              "边沿-5", "空锁存（无在档边沿）恒不可读")
-    }
-
-    // 边沿-6：伴随组合真值表（Topoff.strikeAccompaniment——观测段触发条件的边沿项）：
-    // 可读 ∧ !degraded ∧ !suspected ∧ **target<80（0.21.3 §1.1 门——owned 扩展后
-    // strike 新源覆盖 ≥80〔编排关域承载〕，自动放电不跟随扩展：≥80 的 strike 重写
-    // 域本身即是自愈主手段；物理打断对机制关闭态只会造循环。0.21.2「≥80% 目标
-    // 不再触发自动放电」公开语义保持）** → 成立；降级拍（第 3 边沿）→ 不成立；
-    // 校准抑制 → 不成立（抑制期冻结）；无边沿 → 不成立。
-    do {
-        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 75),
-              "边沿-6", "边沿可读 ∧ 承载态 ∧ 非抑制 ∧ target 75 → 伴随成立（触发 + 门 a 放行）")
-        check(Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 79),
-              "边沿-6", "target 79（<80 上沿）→ 伴随成立（门边界严格小于）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 80),
-              "边沿-6", "target 80 → 不放电（0.21.3 §1.1 门：≥80 strike 边〔编排关域承载新源〕不触发自动放电——0.21.2 公开语义保持）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: false, target: 85),
-              "边沿-6", "target 85 → 不放电（同上门拦截）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: true, calibrationSuspected: false, target: 75),
-              "边沿-6", "第 3 边沿（降级拍）→ degraded 拦截 → 不放电（R2-P3-3 单列）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: true, degraded: false, calibrationSuspected: true, target: 75),
-              "边沿-6", "校准抑制期 → 冻结（放电对抗充满防误触发）")
-        check(!Topoff.strikeAccompaniment(edgeReadable: false, degraded: false, calibrationSuspected: false, target: 75),
-              "边沿-6", "无边沿（含 healTick 无边）→ 不成立（非边沿拍静默）")
     }
 }

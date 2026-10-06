@@ -295,4 +295,23 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             }
         }
     }
+
+    // MARK: - 0.23.0 §⑥ GitHub 更新提示通知（直投形态，UD-7 同款）
+
+    /// 有新版本通知直投（**不走 CellarNotificationEvent 映射**——红队裁决：不扩
+    /// 枚举，防污染 notificationEvents 纯函数域；照 deliverSchedule 先例）。
+    /// identifier 内嵌版本号（**版本限定**——同版本只投一次的「只一次」由
+    /// UpdateChecker 的 lastNotifiedVersion 去重承担，通知中心侧同 id 后到覆盖
+    /// 未读旧条）。调用时机 = UpdateChecker 启动检查发现新版 ∧ 同版本未通知过；
+    /// 手动「检查更新」不打扰（仅页面呈现）。授权未请求 → post 统一入口即场请求。
+    func deliverUpdateAvailable(version: String) {
+        Task {
+            await post(identifier: "cellar.update-available.\(version)") {
+                let content = UNMutableNotificationContent()
+                content.title = "Cellar"
+                content.body = CellarL10n.s("about.update.available.body", version)
+                return content
+            }
+        }
+    }
 }

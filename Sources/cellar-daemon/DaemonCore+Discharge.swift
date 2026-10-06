@@ -11,7 +11,10 @@ import CellarCore
 /// 只做副作用（写 CHTE/CHIE、删文件、终态字面量落状态）与日志——判定链经
 /// CellarCoreCheck 矩阵穷举钉死，daemon 运行时与测试同源。
 extension DaemonCore {
-    /// 放电启动发起方（§2.2 拆分判别）：manual = XPC 用户动作；auto = tick 内自动触发。
+    /// 动作启动发起方（§2.2 拆分判别）：manual = XPC 用户动作；auto = 调度自动
+    /// 触发。**0.23.0 自动放电自动机退役**：放电路径恒 .manual（自动触发链已删，
+    /// `noteDischargeTerminatedLocked` 簿记臂随批收缩）；`.auto` 臂仅校准调度
+    /// 自动启动（startCalibrationLocked）继续消费，保留。
     enum Initiator {
         case manual, auto
     }
@@ -23,8 +26,8 @@ extension DaemonCore {
     }
 
     /// dischargeToLimit XPC（方案 §2.3 启动序列，§2.2 拆分定稿）：
-    /// 取锁 → locked(.manual) → **仅 .started 才 performTickLocked**（即时 tick，
-    /// M2 语义）→ buildStatusLocked。
+    /// 取锁 → locked（**恒手动发起**——0.23.0 起自动触发链退役）→ **仅 .started
+    /// 才 performTickLocked**（即时 tick，M2 语义）→ buildStatusLocked。
     ///
     /// catch（R1 P1-1 + R2 P3 注记）：手动路径在 catch 中先补一次常规 tick 再上抛
     /// ——覆盖面大于原两臂（前置/能力拒绝、CHTE 写失败原先不 tick，现也补一次
@@ -40,7 +43,7 @@ extension DaemonCore {
 
         let outcome: DischargeStartOutcome
         do {
-            outcome = try dischargeToLimitLocked(now: Date(), initiator: .manual, events: &events)
+            outcome = try dischargeToLimitLocked(now: Date(), events: &events)
         } catch {
             performTickLocked(events: &events)
             throw error
@@ -66,13 +69,14 @@ extension DaemonCore {
     /// - CHIE 回读校验失败臂：仅事件记录 + 上抛，**不做 CHIE 恢复**（写入态未知，
     ///   恢复交 §2.4 CHIE 残留不变量巡检——与现实现一致），无 tick；
     /// - actionStore.save 失败臂：restoreEnabled（CHIE 恢复重试阶梯）+ cancel 回滚
-    ///   + 事件记录，无 tick（R2 P2-B：此回滚**不记**冷却——启动失败非「已建立
+    ///   + 事件记录，无 tick（R2 P2-B：此回滚**不记**终止簿记——启动失败非「已建立
     ///   动作的终止」，动作从未持久化/可见；失败重试节奏 = 每 tick 判定重判）。
     ///
-    /// initiator == .auto 且 .started → latchAutoStart（锁存在 save 成功之后——与
-    /// startIfIdle 清锁存时序自洽）；manual 不锁存（用户刚点过按钮，XPC 回包即知）。
+    /// **0.23.0 自动放电自动机退役**：initiator 参数删除（恒手动发起——XPC 用户
+    /// 动作），persistLog `started` 事件 initiator 恒 "manual"；autostart 锁存
+    ///（latchAutoStart）与在轨发起方标记（activeDischargeWasAutoStart）随批退役。
     func dischargeToLimitLocked(
-        now: Date, initiator: Initiator, events: inout [LogEvent]
+        now: Date, events: inout [LogEvent]
     ) throws -> DischargeStartOutcome {
         // 幂等：动作已在轨（任意类型）→ .alreadyActive（非错误——App 按钮随状态消失）。
         guard !actionTrack.isActive else {
@@ -227,20 +231,14 @@ extension DaemonCore {
             category: .control, level: .info,
             message: "dischargeToLimit 已启动：目标 \(target)%（2 小时超时）"
         ))
-        // 0.20.1 §2.1 事件落盘（挂钩表第一行·启动）：成功臂——manual/autostart
-        // 发起方 + 目标 + 启动时电量（快照失败回落上次已知值，均未知 = 未知）。
+        // 0.20.1 §2.1 事件落盘（挂钩表第一行·启动）：成功臂——发起方恒手动
+        //（0.23.0 自动触发链退役）+ 目标 + 启动时电量（快照失败回落上次已知值，
+        // 均未知 = 未知）。
         Self.persistLog(DischargePersistEvent.started(
-            initiator: initiator == .manual ? "manual" : "auto",
+            initiator: "manual",
             target: target,
             percent: percent
         ).message)
-        if initiator == .auto {
-            // 自动启动必须锁存（App 轮询必见 autostart → 通知必发；M3 判例同取消）。
-            actionTrack.latchAutoStart(OneShotLiteral.autoStart(kind: Discharge.dischargeToLimitKind))
-        }
-        // 0.21.1 §1.1 门 c：在轨动作发起方标记（完成计数仅 autostart——振荡循环
-        // 形态 = 自动触发放电完成；manual 起源显式落 false，单一写点防陈旧标记）。
-        activeDischargeWasAutoStart = initiator == .auto
         return .started
     }
 
@@ -264,7 +262,7 @@ extension DaemonCore {
         // 中止还原 + 通知（daemon 发起取消 → cancelLatched 锁存——App 轮询必见
         // 终态，审查 M3 同构）。closed == nil 不中止（息屏 ≠ 合盖，局限登记）。
         if ClamshellGate.shouldAbort(gateActive: clamshellGateActiveLocked, closed: lastClamshellClosed) {
-            noteDischargeTerminatedLocked(now: now)
+            noteDischargeTerminatedLocked()
             let literal = actionTrack.cancelLatched()
                 ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
             restoreDischargeAdapterLocked(client: client, terminal: "合盖中止", events: &events)
@@ -316,28 +314,9 @@ extension DaemonCore {
 
         switch outcome {
         case .completed, .timedOut, .safetyTerminated:
-            // 0.21.1 §1.1 门 c：autostart 完成计数（滑窗熔断）——发起方标记须先于
-            // noteDischargeTerminatedLocked 读取（其清标记）；仅 .completed 计入
-            // （振荡循环形态 = 放电到目标完成；timeout/safety 非循环形态，不计）。
-            let wasAutoStart = activeDischargeWasAutoStart
-            // 统一完成记录（五落点之一）：终态即记冷却 + 关翻转门（R1 P1-2——
-            // 完成/超时/安全终止后不再被下一 tick 立即重触发）。
-            noteDischargeTerminatedLocked(now: now)
-            if wasAutoStart, case .completed = outcome {
-                let oscillation = Discharge.noteOscillationCompletion(
-                    state: oscillationState, at: now
-                )
-                oscillationState = oscillation.state
-                if oscillation.triggered {
-                    // 显性告警（边沿一次）：横幅 wire（autoDischargeSuspended，
-                    // buildStatusLocked 透出）+ LogEvent 环 + persistLog 持久轨迹。
-                    Self.persistLog("自动放电已暂停：检测到频繁放电循环（2 小时内 ≥\(Discharge.oscillationCompletionLimit) 次自动放电完成——振荡熔断，后续自动放电静默；关闭后重新开启「自动放电」或重启守护进程解除）")
-                    events.append(LogEvent(
-                        category: .control, level: .warn,
-                        message: "自动放电已暂停：检测到频繁放电循环（振荡熔断触发——自动触发静默，手动「放电到上限」不受影响；重新 opt-in 或重启解除）"
-                    ))
-                }
-            }
+            // 统一终止簿记（五落点之一）：终态即走 CHIE 迟滞失效钩（0.23.0 收缩后
+            // 唯一职责——冷却/振荡/重插簿记随自动机退役删除）。
+            noteDischargeTerminatedLocked()
             let terminal: String
             switch outcome {
             case .completed: terminal = "完成"
@@ -362,9 +341,9 @@ extension DaemonCore {
             deleteActionFileLocked(events: &events)
             return actionTrack.latchedLiteral ?? fallbackLiteral(for: outcome)
         case .cancelled(let reason, let literal):
-            // 统一完成记录（五落点之一）：取消即记——修复「用户取消后被立即重触发」
-            // 漏洞（R1 P1-2；过度抑制无害：完成后 percent ≤ 目标本就不满足触发门）。
-            noteDischargeTerminatedLocked(now: now)
+            // 统一终止簿记（五落点之一）：取消即走 CHIE 迟滞失效钩（同上——收缩后
+            // 唯一职责）。
+            noteDischargeTerminatedLocked()
             // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：轨道异常取消
             //（keepAliveFailure/extRestored）。
             Self.persistLog(DischargePersistEvent.cancelled(reason: reason).message)
@@ -393,12 +372,14 @@ extension DaemonCore {
         }
     }
 
-    /// 统一完成记录（方案 §2.2，R1 P1-2 定稿）：凡 dischargeToLimit 动作终止/取消
-    /// 一律调用——置冷却时刻 + 关适配器翻转门。不区分 manual/auto 起源（过度抑制
-    /// 无害：完成后 percent ≤ 目标本就不满足触发门）。落点全集 = maintain 四终态/
-    /// 取消、睡眠取消、cancelAction 放电分支、监护缺失终止、启动崩溃恢复。
+    /// 统一终止簿记（方案 §2.2，**0.23.0 收缩为 CHHysteresis 外部写者失效钩①**）：
+    /// 凡 dischargeToLimit 动作终止/取消一律调用。**0.23.0 自动放电自动机退役**：
+    /// 冷却时刻（lastAutoDischargeCompletedAt）/适配器翻转门（adapterCycle 两态）/
+    /// 在轨发起方标记（activeDischargeWasAutoStart）簿记臂全部删除——本函数唯一
+    /// 剩余职责 = 迟滞簿记失效（外部写者纪律）。落点全集 = maintain 四终态/取消、
+    /// 睡眠取消、cancelAction 放电分支、监护缺失终止、启动崩溃恢复。
     /// ⚠️ locked 自身 save 失败回滚**不**调用（R2 P2-B：启动失败非「已建立动作的
-    /// 终止」——动作从未持久化/可见；误记会退化为每 30min 才重试）。
+    /// 终止」——动作从未持久化/可见）。
     /// 0.21.0 §2 code-review P1-1：本函数是动作轨终态**集中点**（落点全集见上）——
     /// 终态恢复 CHIE=0x00 的写不经迟滞通道 → 迟滞簿记在此失效
     ///（CHHysteresis.noteExternalAdapterWrite：lastWritten=nil ≠ 任何带宽意图 → 下拍
@@ -406,15 +387,7 @@ extension DaemonCore {
     /// 静默卡死（mounted 假活）」失败链。失效在恢复写**之前**——恢复写失败（残留
     /// 0x8）同样自愈（nil → 下拍恢复臂按带重写）。外部写者挂点全集清单见
     /// CHHysteresis.noteExternalAdapterWrite 头注释（本点 = ①）。
-    func noteDischargeTerminatedLocked(now: Date) {
-        lastAutoDischargeCompletedAt = now
-        adapterCycleSinceAutoCompletion = false
-        // 0.21.1 §1.1 门 c：在轨发起方标记随动作清空归零（完成计数消费点在
-        // maintainDischargeLocked——先读后清；新启动臂单一写点重置）。
-        activeDischargeWasAutoStart = false
-        // code-review P1：终止同时 disarm——放电后的 ext false→true 回跳是恢复痕迹
-        // 而非物理重插，仅重新武装后（disarm 态回跳触发）的后续转移才开门。
-        adapterCycleArmed = false
+    func noteDischargeTerminatedLocked() {
         // 0.21.0 §2 P1-1：迟滞簿记失效（外部写者——终态恢复 CHIE=0x00）。
         if hysteresisState.lastWrittenAdapterEnabled != nil {
             hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
@@ -598,7 +571,7 @@ extension DaemonCore {
         }
         guard let literal = actionTrack.terminateMonitoringLoss() else { return }
         // 统一完成记录（五落点之四）：监护缺失终止即记冷却（R1 P1-2 全集成员）。
-        noteDischargeTerminatedLocked(now: Date())
+        noteDischargeTerminatedLocked()
         // 0.20.1 §2.1 事件落盘（挂钩表第四行）：监护缺失终止——置于恢复尝试之前，
         // 恢复写失败也不丢终止事件。
         Self.persistLog(DischargePersistEvent.monitoringLoss(reason: reason).message)
@@ -636,9 +609,8 @@ extension DaemonCore {
     /// 通知必发（不锁存会被下一常规 tick 的 enforce:xxx 覆盖，60s 轮询档漏发）。
     func cancelDischargeForSleepLocked(events: inout [LogEvent]) {
         guard actionTrack.action?.kind == Discharge.dischargeToLimitKind else { return }
-        // 统一完成记录（五落点之二）：睡眠取消即记冷却——唤醒后再触发需冷却
-        // 30min ∧ 适配器翻转，两门皆过才可（R1 P1-2 修订）。
-        noteDischargeTerminatedLocked(now: Date())
+        // 统一终止簿记（五落点之二）：睡眠取消即走 CHIE 迟滞失效钩（收缩后唯一职责）。
+        noteDischargeTerminatedLocked()
         let literal = actionTrack.cancelLatched() ?? OneShotLiteral.cancel(kind: Discharge.dischargeToLimitKind)
         // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：睡眠取消。
         Self.persistLog(DischargePersistEvent.cancelled(reason: "系统睡眠").message)
@@ -667,85 +639,5 @@ extension DaemonCore {
         }
         lastStatus?.lastAction = literal
         deleteActionFileLocked(events: &events)
-    }
-
-    /// 27 观测段自动放电插桩（0.20 M1a——autoDischarge 能力诚实化）：autoTriggerReady
-    /// 判定与启动序列在执法段（DaemonCore.swift 自动触发臂）于 27 不可达，观测段
-    /// 承接同款判定（判定链输入/优先序照执法段钉死：巡检命中 > 自动触发 > 编排链
-    /// ——编排链对在轨动作本就静默，assertionRequest 规则 2 actionActive → none）。
-    /// 判定链全过 → 锁内启动（locked 内部不 tick）；catch 记 warn 后返回（编排链
-    /// 照常评估——失败臂无半启动态，残留无约束窗口 ≤1 tick，下 tick 全量收敛）。
-    /// ⚠️ internal：performTickLocked（DaemonCore.swift）观测段跨文件调用——
-    /// executable internal 模块外不可达，单一属主不变量不破。
-    func autoDischargeObservationLocked(
-        now: Date, snapshot: BatterySnapshot, client: SMCClient, events: inout [LogEvent]
-    ) {
-        // 0.21.2 §3.2 strike 边沿锁存消费（读即清——TTL 钉死：N 置位、N+1 可读、
-        // N+2 失效且读即清；陈旧边沿冷却后不再触发，Topoff 纯函数钉面）。伴随
-        // 成立 = 边沿可读 ∧ !degraded（第 3 边沿 = 降级拍拦截）∧ 非校准抑制
-        //（抑制期冻结）；次序契约照「巡检命中 > 自动触发 > 编排链」先例——本方法
-        // 挂点先于 topoff 状态机推进，锁存一拍消费即不动求值序（方案 §3.2 R1-P0）。
-        let (edgeReadable, latchConsumed) = Topoff.strikeEdgeConsume(
-            latch: strikeEdgeLatch, tick: tickSequence
-        )
-        strikeEdgeLatch = latchConsumed
-        // 0.21.3 §1.1 target<80 门输入：该边沿对应的汇聚目标（与 topoff tick 同
-        // tick 序同源派生——窗在位时 100、否则 policy.upperLimit；mode 关则无
-        // 执法语境，discharge 门自有拦截，此处传 upperLimit 原值即可）。
-        let accompanimentTarget = orchestrationState.fullOnceWindowActive
-            || chargingDisabledWindowActiveLocked
-            ? Topoff.shutdownLimit : policy.upperLimit
-        let strikeAccompanied = Topoff.strikeAccompaniment(
-            edgeReadable: edgeReadable,
-            degraded: topoffState.degraded,
-            calibrationSuspected: calibrationCoexistenceState.suspected,
-            target: accompanimentTarget
-        )
-        guard Discharge.autoTriggerReady(
-            enabled: policy.autoDischargeEnabled,
-            mode: policy.mode,
-            externalConnected: snapshot.externalConnected,
-            // 门 a（0.21.1 §1.1）：同执法段（观测段承接同款判定链）。0.21.2 §3.2
-            // strike 边沿伴随拍放行 charging=true（失效证据本身 = 打断手段）——
-            // 非边沿拍门 a 原样；strikeEdgeLatched 非 nil 即收紧模式（无边沿直接
-            // 静默）。
-            isCharging: snapshot.isCharging,
-            percent: snapshot.percent,
-            // 门 b（0.21.1 §1.1）：窗覆盖静默——fullOnce 临时放开窗 ∨ chargingDisabled
-            // 日程窗 → nil（显式放开期放电对抗窗意图）；否则 = policy.upperLimit
-            //（= 无窗 convergenceTarget，经纯函数 Discharge.autoDischargeEffectiveTarget
-            // 派生——CellarCoreCheck 场景域钉死）。登记局限：观测段先于
-            // orchestrationTickLocked 的日程转移——进窗边沿一拍陈旧（30s；进窗期
-            // agent 充电中 → 门 a 同拍兜底）。
-            effectiveTarget: Discharge.autoDischargeEffectiveTarget(
-                modeActive: policy.mode == "active",
-                fullOnceWindow: orchestrationState.fullOnceWindowActive,
-                chargingDisabledWindow: chargingDisabledWindowActiveLocked,
-                upperLimit: policy.upperLimit
-            ),
-            actionActive: false,          // 本分支进入条件即 !actionTrack.isActive
-            dischargeCapable: capabilities?.contains(DaemonXPC.capabilityDischarge) == true,
-            // 门 c（0.21.1 §1.1）：振荡熔断抑制态。
-            oscillationSuspended: oscillationState.suspended,
-            now: now,
-            lastAutoCompletion: lastAutoDischargeCompletedAt,
-            adapterCycleSinceCompletion: adapterCycleSinceAutoCompletion,
-            // 0.21.2 §3.2：strike 边沿伴随收紧（27 观测段专用——非 nil = 收紧模式，
-            // 边沿锁存为触发必要条件；26 执法段缺省 nil 零 diff，红线）。
-            strikeEdgeLatched: strikeAccompanied
-        ) else { return }
-        do {
-            if try dischargeToLimitLocked(now: now, initiator: .auto, events: &events) == .started {
-                let actionName = maintainDischargeLocked(
-                    now: now, snapshot: snapshot, client: client, events: &events
-                )
-                lastStatus?.lastAction = actionTrack.effectiveLastAction(actionName)
-            }
-        } catch {
-            events.append(LogEvent(
-                category: .control, level: .warn,
-                message: "自动放电触发失败：\(error)"
-            ))
-        }
     }
 }

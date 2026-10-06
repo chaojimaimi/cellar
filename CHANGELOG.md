@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.0-alpha]
+
+> 背景：四层根因链已闭环（模型 v2 定谳：域写值直接流入 MCL 执法），0.21.2 收紧模式实证自动放电在健康态永不触发（目标 70、电量 95+、零触发），Shortcuts 备用通道自 0.21.0 embedded set 主通道化后边际价值归零。本批为年度最大简化批：**退役不再产生价值的自动机与备用通道**，把交互矩阵写者面收敛到最小稳定集——简化不许删出新洞（交互矩阵随审，双轨评审 + 红队 F1-F11 全吸收）。wire 零变化（`autoDischargeEnabled` policy 镜像照填、`autoDischargeSuspended` 恒 false、能力上报不变）。
+
+### Removed
+
+- **自动放电自动机退役（保留手动按钮 + CHIE 迟滞）**：删除 tick 内自动触发链（三门判定/振荡熔断/冷却与重插门/意图降限观察器/strike 边沿锁存簿记）与通用页「自动放电」开关、振荡暂停横幅、面板自动挡状态行、CLI status「自动放电」行。**保留**：手动「放电到上限」全链（deadline 2h / 取消条件 / 合盖安全闸 / 热守卫）、CHIE 迟滞备用通道（opt-in，降级稳态第二生命线）、旧 daemon 混装窗兼容面（`dischargeToLimit:autostart` 字面量解析、`.autoDischargeStarted` 通知事件与 l10n 键——新 daemon 恒不产，随批注记）。**升级后必须重跑管理员安装命令**（`sudo cellar install` / 面板重装）——旧 daemon 的自动放电开关在 0.23.0 App 中已无 UI 关闭入口（混装窗走查纪律同 doctor 三方一致）。
+- **Shortcuts 备用通道退役（全链）**：`ShortcutRunner`（ShortcutsRunning/ShortcutProcessRunner/ShortcutLimitExecutor/OrchestrationSettings）与 App 六点接线全删——App 内嵌 set 为唯一执行通道；编排节快捷指令名输入框与三步创建指引删除（不再指引创建无消费者的快捷指令——红队 F2 语义真空修复；MCL 通道缺席机器节级空态，失败细节仍由 lastError 行的 MCLSetFailure 结构化文案承载）；doctor 检查 17 判定收敛（`shortcuts list` 探测退役，文案「App 内嵌 set 通道（唯一）」）；`embeddedExecutorAvailable` 语义收敛 = `readbackAvailable`（26 红线语义核对：orchestrationTerminal 门先行恒 false）。
+- **测试/死键清账**：振荡/熔断/触发判定/伴随判定/边沿锁存/意图降限观察场景族删除（振荡-1..9、乒乓-2/3、自动-1..6/12/13/20..34、边沿-4..6、校准-32、set-3..5；921 → 892 场景，删 41 增 12——留自动-7..11/14..19 兼容锚与振荡域乒乓-1/矩阵/wire 面）；l10n 死键 13 个（settings.autoDischarge.* 七键、panel.discharge.autoOn/autoSuspended、panel.sub80.experimental/.desc、settings.orchestration.shortcutName/setup——排除 `notification.autoDischargeStarted` 兼容保留）；Sub80Status_experimental golden 6 张随用例退役（462 → 456 权威待 CI regen 核对）。
+
+### Changed
+
+- **degraded 稳态写值统一**：新增 `Topoff.degradedWriteValue(for:) = max(target, 80)`（与 `SuppressionRecovery.openValue` 公式互钉注释）；四写点联动——convergenceRoute degraded 断言钳、strike 降级拍、healTick 自愈失败回稳态、healTick 无差别超时臂全部改走 helper；W4 期望表行 6/7 同步翻新（编排关 ∧ target 85 ∧ degraded 期望 85 不再钳 80——防 D2×W4 新互搏，场景域四写点同值钉面）。降级横幅参数化（回退值随实际域写值 %lld，数据源 sub80WrittenLimit）+ 标题去「<80」偏概全（「限充执法已降级」——degraded 非 <80 专属，编排关 ≥85 域承载态亦可达）。登记已知项：degraded 稳态写 target 后，target ≥85 的降级执法回带判定随 target 抬升——CHIE 迟滞（target<80 门）不覆盖，自愈探针 ≤1h 为唯一回稳态路径。
+- **sub80 <80% 执法摘「实验性」帽**：`Sub80StatusView` experimentalTarget 徽章参数族删除；全库「实验性」措辞清扫（MCLSetFailure.nativeFloorMinimum 文案改「更低目标由 Cellar 限充通道直接执法」；<80 执法自 0.20.0 起生产连日实证，不再以实验性示人）。
+- **CHIE 开关措辞通俗化**：「topoff 失效时使用 CHIE 备用通道（实验性，约 1 循环/天）」→「限充通道降级时改用断电保护（备用，约 1 循环/天）」；迟滞执法横幅同步去「实验性/CHIE」措辞（zh/en 双语）。
+- **doctor 检查 17 收敛**：快捷指令三分支判定退役（探测子进程 `shortcuts list` 不再执行），MCL 读回单源判定——27 可读 → PASS「App 内嵌 set 通道（唯一）」；不可读 → INFO（域通道承接 + 系统设置退路，无快捷指令指引）；26 → INFO 不适用。
+
+### Added
+
+- **GitHub 更新提示（第一档）**：`AppVersion.isNewer` 纯函数（CellarCore；`vX.Y.Z[-suffix]` 解析、alpha→final 同号提醒、畸形容错恒 false）；`UpdateChecker`（App 层）——启动检查（成功才写 24h 节流戳，失败静默下次重试）+ 关于页手动「检查更新」（绕 24h 不绕同版本去重）+ 关于页新版本行 + 同版本只通知一次的系统通知（不走事件枚举，identifier 版本限定）；**唯一出站网络 = `api.github.com` 只读 GET（10s 超时、无遥测）**，「前往下载」经 URL 白名单（https ∧ github.com，fail-closed）；不自动下载/安装。SECURITY.md/README 网络声明随批改写（原「无网络访问」与本特性冲突——红队 F8）。
+- **文档叙事**：FAQ 四问（自动放电退役回落语义 / 系统设置干扰下为何能自愈 / 更新检查网络行为 / 快捷指令退役残留说明）+ 混装窗「升级 App 后必须重跑管理员安装命令」；README zh/en 功能表、验证数字（892 场景 / 456 golden / 502 l10n key）与网络声明；SMC-NOTES §11.15（简化批 rationale + 退役清单 + 矩阵增量）。
+
+### 固定不变（本批红线核对）
+
+- **wire 零变化**：`autoDischargeEnabled` 照填（policy 镜像——旧 App 兼容）、`autoDischargeSuspended` 恒 false（振荡熔断退役）、能力上报不变、XPC auto 键校验保留。
+- **手动放电全链不动**：启动前置（mode/外接/电量/合盖闸）、2h deadline、取消条件（extRestored/隐式取消/睡眠/合盖中止）、CHIE 写路径、终态恢复与巡检兜底；`noteDischargeTerminatedLocked` 收缩为 CHIE 迟滞失效钩（五挂点纪律不变）。
+- daemon / CLI / App / 发布脚本四方版本 0.23.0-alpha（CFBundleVersion 2300）。
+
 ## [0.22.4-alpha]
 
 > 背景：2026-10-04 13:32 真机事件——App 恢复写 80 成功 2 秒后被自家「关断残留补偿臂」打回 100。根因 = 期望表旧模型「域执法需 MCL=100」被证伪：新经验模型（v2）为**域写值直接流入 MCL 执法（含 <80）**，MCL=100 = 无限制且诱发系统 agent 自主再关。本批根治写入者自我打架：补偿臂在域承载态/自愈探针期静默 + setTarget <80→100 映射退役 + 恢复重试解锁（单一冷却口径）+ 对账每跳新鲜 status。交互矩阵全格收敛（双轨评审 + 红队矩阵终签「完备」），daemon 零逻辑改动、wire 零变化、零 UI 改动。

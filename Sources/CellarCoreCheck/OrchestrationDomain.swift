@@ -316,10 +316,10 @@ private func runOrchestrationWireScenarios() throws {
         var failure = DaemonStatus(version: "t", mode: "active", upperLimit: 85, hysteresis: 2)
         failure.orchestration = OrchestrationStatus(
             enabled: true, pendingToken: nil, pendingTarget: nil,
-            lastApplied: 85, lastError: "快捷指令执行失败（exit 1）"
+            lastApplied: 85, lastError: "原生限充 set 通道不可用（PowerUISmartChargeClient 类缺席）"
         )
         let failureRound = DaemonXPC.encodeStatus(failure).flatMap { try? DaemonXPC.decodeStatus($0) }
-        check(failureRound?.orchestration?.lastError == "快捷指令执行失败（exit 1）",
+        check(failureRound?.orchestration?.lastError == "原生限充 set 通道不可用（PowerUISmartChargeClient 类缺席）",
               "编排-14", "lastError 形态 round-trip（失败回报详情）")
     }
     // 编排-15：旧 daemon 回包无 orchestration 键 → 解码 nil（升级窗口双向兼容）。
@@ -426,8 +426,8 @@ private func runOrchestrationDoctorScenarios() throws {
     func doctorInputs(
         nativeLimit: NativeLimitStatus? = nil,
         nativeAttempted: Bool = false,
-        orchestrationProbe: OrchestrationDoctorProbe? = nil,
-        orchestrationAttempted: Bool = false,
+        mclProbe: MCLDoctorProbe? = nil,
+        mclAttempted: Bool = false,
         osMajorVersion: Int = 26,
         daemonCapabilities: [String]? = nil,
         daemonSub80State: Sub80State? = nil,
@@ -444,8 +444,8 @@ private func runOrchestrationDoctorScenarios() throws {
             daemonProbeAttempted: true,
             nativeLimit: nativeLimit,
             nativeLimitProbeAttempted: nativeAttempted,
-            orchestrationProbe: orchestrationProbe,
-            orchestrationProbeAttempted: orchestrationAttempted,
+            mclProbe: mclProbe,
+            mclProbeAttempted: mclAttempted,
             osMajorVersion: osMajorVersion
         )
     }
@@ -456,43 +456,53 @@ private func runOrchestrationDoctorScenarios() throws {
         DoctorReportGenerator.generate(inputs).checks.first { $0.name == "原生限充共存" }
     }
 
-    // 医生-13（检查 17）：attempted 缺省 → 零渲染（检查 15/16 惯例；既有 count
-    // 断言零回归）；已探测 + 默认动作在列 → PASS。
+    // 医生-13（检查 17 收敛版——0.23.0 §② Shortcuts 备用退役）：mclProbeAttempted
+    // 缺省 → 零渲染（检查 15/16 惯例；既有 count 断言零回归）；检查 17 末尾顺序钉死。
     do {
-        let report = DoctorReportGenerator.generate(doctorInputs(orchestrationProbe: nil))
+        let report = DoctorReportGenerator.generate(doctorInputs())
         check(report.checks.first { $0.name == "编排通道" } == nil,
-              "医生-13", "orchestrationProbeAttempted 缺省 → 检查 17 不渲染（条件渲染兼容约束）")
-        let pass = check17(doctorInputs(orchestrationProbe: OrchestrationDoctorProbe(
-            listSucceeded: true, shortcutCount: 3, defaultShortcutPresent: true, failureDetail: nil
-        ), orchestrationAttempted: true))
-        check(pass?.status == .pass && pass?.detail.contains("已找到") == true
-                  && pass?.detail.contains(NativeOrchestration.defaultShortcutName) == true,
-              "医生-13", "通道可用 + 默认动作在列 → PASS（detail 含动作名）")
-        let full = DoctorReportGenerator.generate(doctorInputs(
-            orchestrationProbe: OrchestrationDoctorProbe(
-                listSucceeded: true, shortcutCount: 1, defaultShortcutPresent: true, failureDetail: nil
-            ), orchestrationAttempted: true
+              "医生-13", "mclProbeAttempted 缺省 → 检查 17 不渲染（条件渲染兼容约束——原 shortcuts 探测门退役）")
+        let pass = check17(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 80, failureDetail: nil),
+            mclAttempted: true, osMajorVersion: 27
         ))
-        check(full.checks.last?.name == "编排通道",
-              "医生-13", "检查 17 追加在末尾（顺序钉死——检查 16 之后）")
+        check(pass?.status == .pass && pass?.detail.contains("App 内嵌 set 通道（唯一）") == true,
+              "医生-13", "27 ∧ MCL 可读 → PASS「App 内嵌 set 通道（唯一）」（收敛版单源判定）")
+        let full = DoctorReportGenerator.generate(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 80, failureDetail: nil),
+            mclAttempted: true, osMajorVersion: 27
+        ))
+        let names = full.checks.map(\.name)
+        if let orchIdx = names.firstIndex(of: "编排通道"),
+           let residualIdx = names.firstIndex(of: "关断残留") {
+            check(orchIdx < residualIdx,
+                  "医生-13", "检查 17 先于检查 20 渲染（生成器追加点序保留——编排通道在残留检测之前）")
+        } else {
+            check(false, "医生-13", "检查 17/关断残留未按预期渲染（编排通道必须在场）")
+        }
     }
-    // 医生-14（检查 17）：列表可用但缺动作 → INFO 指引；执行失败 → INFO 不抬退出码。
+    // 医生-14（检查 17 收敛版）：set 通道不可用 → INFO（域承接 + 系统设置退路，
+    // 无快捷指令指引——红队 F2）；26 → INFO 不适用；均不抬退出码。
     do {
-        let missing = check17(doctorInputs(orchestrationProbe: OrchestrationDoctorProbe(
-            listSucceeded: true, shortcutCount: 2, defaultShortcutPresent: false, failureDetail: nil
-        ), orchestrationAttempted: true))
-        check(missing?.status == .info && missing?.detail.contains("未找到") == true,
-              "医生-14", "缺默认动作 → INFO 指引（不抬退出码——setup 未完成属常态）")
-        let failed = check17(doctorInputs(orchestrationProbe: OrchestrationDoctorProbe(
-            listSucceeded: false, shortcutCount: nil, defaultShortcutPresent: nil,
-            failureDetail: "shortcuts: command error"
-        ), orchestrationAttempted: true))
-        check(failed?.status == .info && failed?.detail.contains("执行失败") == true
-                  && failed?.detail.contains("shortcuts: command error") == true,
-              "医生-14", "shortcuts list 失败 → INFO 带详情（不抬退出码）")
-        let inputs = doctorInputs(orchestrationProbe: OrchestrationDoctorProbe(
-            listSucceeded: true, shortcutCount: 1, defaultShortcutPresent: true, failureDetail: nil
-        ), orchestrationAttempted: true)
+        let unavailable = check17(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: false, limit: nil,
+                                     failureDetail: "PowerUISmartChargeClient 类缺席"),
+            mclAttempted: true, osMajorVersion: 27
+        ))
+        check(unavailable?.status == .info
+                  && unavailable?.detail.contains("App 内嵌 set 通道不可用") == true
+                  && unavailable?.detail.contains("系统设置") == true,
+              "医生-14", "27 ∧ set 不可用 → INFO（域通道承接 + 退路——不再指引创建快捷指令）")
+        let legacy = check17(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil),
+            mclAttempted: true, osMajorVersion: 26
+        ))
+        check(legacy?.status == .info && legacy?.detail.contains("仅 macOS 27+") == true,
+              "医生-14", "26 → INFO 不适用（daemon CHTE 直控——原 shortcuts 三分支退役）")
+        let inputs = doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 80, failureDetail: nil),
+            mclAttempted: true, osMajorVersion: 27
+        )
         check(DoctorReportGenerator.generate(inputs).exitCode == 0,
               "医生-14", "全绿样本退出码 0（PASS/INFO 均不参与 worstStatus 抬升之外的面）")
     }

@@ -118,12 +118,8 @@ final class StatusController: ObservableObject {
 
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
-    // MARK: v0.19.20 编排执行通道（WP-2）
-    /// Shortcuts 执行器（Process 实现；协议缝为注入预留）。
-    /// ⚠️ internal（偏离 private 纪律）——WHY：0.21.0 §1.1 执行器抽象与 §1.5 态驱动
-    /// 对账在外迁 extension 文件 StatusController+LimitExecution.swift，跨文件需读
-    /// （LED extension 同款放宽先例）。
-    let shortcutRunner: ShortcutsRunning = ShortcutProcessRunner()
+    // MARK: v0.19.20 编排执行通道（WP-2；0.23.0 §② Shortcuts 备用退役——执行体
+    // 收敛 MCLSetLimitExecutor 单实现，原 shortcutRunner/驻留簿记随批删除）
     /// 已处理的 pending token 集（幂等——daemon 单 pending 槽 → 容量 8 绰绰有余，
     /// FIFO 驱逐防无界增长）。
     private var processedOrchestrationTokens: [String] = []
@@ -135,21 +131,15 @@ final class StatusController: ObservableObject {
     /// 原生限充 GET/SET 客户端（0.21.0 §1.1 set 面内嵌；类缺席 sticky + 实例自愈
     /// ——类型头注记）。⚠️ 仅后台线程调用（Task.detached 包裹——dlopen/ObjC 消息
     /// 派发同步调用，主线程永不阻塞；CpuFanMonitor 先例）。⚠️ internal——WHY：
-    /// StatusController+LimitExecution.swift 执行器抽象跨文件读取（同上先例）。
+    /// StatusController+LimitExecution.swift 执行器/对账臂跨文件读取（同上先例）。
     let mclClient = MCLClient()
     /// MCL 读回采样值（0.21.0 §1.3 面板恢复臂按钮/横幅判定源——R2-P2-4 读回驱动；
     /// nil = 不可用/未采样）。⚠️ 非 private(set)（LED 先例）——WHY：写入面在
     /// StatusController+LimitExecution.swift 关断补偿臂（对账一致后顺带刷新）。
     @Published var mclReadbackValue: Int?
 
-    // MARK: 0.21.0 §1.1 执行器抽象（set 优先 / 快捷指令 fallback）
-    /// 会话驻留快捷指令 fallback（R1-P2-3：set 连续 2 次实例级失败 → 驻留本会话
-    /// 不回切；下次启动重试 set——会话 sticky 语义）。@Published：通用页编排节
-    /// embeddedExecutorAvailable 参数消费（驻留 → 节回退快捷指令指引，需驱动重绘）。
-    @Published private(set) var executorDwellsShortcut = false
-    /// 实例级失败连击（会话内存态——Code=4 结构化拒绝为中性不推进，见
-    /// NativeLimitSet.advancedFailureBookkeeping）。
-    private var embeddedSetFailureStreak = 0
+    // MARK: 0.21.0 §1.1 执行器（0.23.0 §② 收敛 embedded 单实现——原会话驻留
+    // fallback 簿记 executorDwellsShortcut/embeddedSetFailureStreak 随批删除）
     /// 0.21.1 §3.2 关断残留补偿重试退避（M1a P3-2——存储属性在主类声明，消费在
     /// StatusController+LimitExecution.swift 对账臂；会话内存态，App 重启即清）。
     /// 连续补偿失败 ≥3 → 停试（补偿成功/对账一致复位）；期望值变化 = 新关断态
@@ -538,19 +528,16 @@ final class StatusController: ObservableObject {
 
     // MARK: - 控制操作（规格 §2.3；全部 XPC 后台）
 
-    /// 应用上限/滞回（WP2'：autoDischarge 可选键——nil = 不发键，daemon 缺席保持）。
-    /// 唯一显式传 true/false 的调用点是设置窗自动放电开关（其余三调用点走默认 nil，
-    /// 防 60s 轮询窗口内用旧值覆写 CLI 刚改的限值，R1 P3）。
+    /// 应用上限/滞回（**0.23.0 §① 自动放电退役**：原 autoDischarge 可选键参数
+    /// 删除——App 侧再无显式传值调用点；XPC wire auto 键兼容保留，调用恒缺席）。
     /// Phase 5 v1.2 §4.1（R1 P1-2）：成功回包经 runControl → ingest 统一更新
     /// daemonStatus——ControlSectionView 自同步单通路（onChange）即回写源，
     /// 不再需要 onLimitsApplied 单值回调（双宿主下后开覆盖先开的缺陷根除）。
-    func applyLimits(upperLimit: Int, hysteresis: Int, autoDischarge: Bool? = nil) {
+    func applyLimits(upperLimit: Int, hysteresis: Int) {
         runControl(
             attempt: .setLimits(upperLimit: upperLimit, hysteresis: hysteresis),
             operation: {
-                try DaemonXPCClient().setLimits(
-                    upperLimit: upperLimit, hysteresis: hysteresis, autoDischarge: autoDischarge
-                )
+                try DaemonXPCClient().setLimits(upperLimit: upperLimit, hysteresis: hysteresis)
             },
             successFeedback: CellarL10n.s("status.applied", upperLimit, hysteresis)
         )
@@ -897,11 +884,13 @@ final class StatusController: ObservableObject {
         )
     }
 
-    /// 0.21.0 §1.2 set 通道可用（通用页编排节参数——内嵌执行通道接管态）：
-    /// 27 终态 ∧ MCL 通道在位（类在位——实例级失败可重建自愈不降格）∧ 未驻留
-    /// 快捷指令 fallback（驻留 = 本会话 set 事实上不可用，回退快捷指令指引）。
+    /// 0.21.0 §1.2 set 通道可用（通用页编排节参数）：27 终态 ∧ MCL 通道在位
+    ///（类在位——实例级失败可重建自愈不降格）。**0.23.0 §② 语义收敛**：
+    /// `= readbackAvailable` 语义项（原 `!executorDwellsShortcut` 驻留项随快捷
+    /// 指令 fallback 退役删除）——set 是唯一执行通道（26 红线：orchestration-
+    /// Terminal 门先行，26 平台恒 false 零触及）。
     var embeddedExecutorAvailable: Bool {
-        orchestrationTerminal && mclClient.readbackAvailable && !executorDwellsShortcut
+        orchestrationTerminal && mclClient.readbackAvailable
     }
 
     // MARK: - 0.21.0 §2.4 CHIE 迟滞备用通道（开关 + 执法横幅消费）
@@ -980,11 +969,9 @@ final class StatusController: ObservableObject {
         // 且 daemon 同拍 discardStale 撤销）。token 已入处理集（幂等——重复拍不
         // 重评）+ 执行体路由（set 优先 / 驻留 fallback）。
         guard let setValue = NativeLimitSet.setTarget(for: percent) else { return }
-        let flavor = NativeLimitSet.executorFlavor(dwellingShortcut: executorDwellsShortcut)
-        // 名字执行时读 UserDefaults（static 读取——规避 @StateObject 临时实例接线
-        // 陷阱；OrchestrationSettings 输入框与执行侧同键）。
-        let name = OrchestrationSettings.currentShortcutName()
-        let executor = makeLimitExecutor(flavor: flavor, name: name)
+        // **0.23.0 §②**：执行体收敛 embedded 单实现（原味道路由 + 快捷指令名
+        // 簿记随 fallback 通道退役删除）。
+        let executor = MCLSetLimitExecutor(client: mclClient)
         // WP3 读回校验输入（MainActor 门态捕获——detached 闭包不得触碰主 actor 态）。
         let client = mclClient
         let rerunAllowed = !readbackRerunDisabled
@@ -1038,8 +1025,9 @@ final class StatusController: ObservableObject {
                         CellarL10n.s("settings.orchestration.failed", detail)
                     )
                 }
-                // 0.21.0 §1.1 fallback 簿记（仅 set 味道参与——实例级失败连击/驻留）。
-                self.noteEmbeddedSetOutcome(flavor: flavor, failure: setFailure)
+                // 0.23.0 §②：原 fallback 簿记（noteEmbeddedSetOutcome——实例级
+                // 失败连击/会话驻留）随快捷指令通道退役删除；setFailure 仅经 detail
+                // 上屏（MCLSetFailure 结构化文案，含 channelUnavailable 诚实呈现）。
                 // 读回校验态落地（App 本地 UI 态；失配退避计数在此推进）。
                 self.applyReadbackOutcome(readback, target: percent)
                 // 回报确认链（XPC 后台；鉴权拒/超时不重试——daemon TTL 过期重发收敛，
@@ -1053,22 +1041,6 @@ final class StatusController: ObservableObject {
                     )
                 }
             }
-        }
-    }
-
-    /// 0.21.0 §1.1 fallback 簿记（主 actor；纯决策在 NativeLimitSet.
-    /// advancedFailureBookkeeping——CellarCoreCheck 场景域钉死）：仅 set 味道参与；
-    /// 实例级失败连击达 2 → 驻留快捷指令（本会话不回切，下次启动重试 set）；
-    /// 成功清零连击；Code=4 结构化拒绝为中性（值级拒绝与通道健康无关）。
-    private func noteEmbeddedSetOutcome(flavor: NativeLimitSet.ExecutorFlavor, failure: MCLSetFailure?) {
-        guard flavor == .embeddedSet else { return }
-        let advanced = NativeLimitSet.advancedFailureBookkeeping(
-            streak: embeddedSetFailureStreak, outcome: failure
-        )
-        embeddedSetFailureStreak = advanced.streak
-        if advanced.dwell != executorDwellsShortcut {
-            executorDwellsShortcut = advanced.dwell
-            Self.log.info("set 路径实例级失败连击 \(advanced.streak)——会话驻留快捷指令 fallback（下次启动重试 set）")
         }
     }
 

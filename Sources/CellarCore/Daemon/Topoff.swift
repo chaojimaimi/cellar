@@ -33,7 +33,10 @@ public enum Topoff {
     /// 0.20.2 §3：超带轻量重申冷却（5 min——通知风暴封顶；与 strike 重申冷却
     /// reassertionCooldown（10 min、lastWriteAt 域写路径）相互独立，簿记分离）。
     public static let notifyReassertCooldown: TimeInterval = 300
-    /// 降级稳态域随写值（= 编排钳制值，§3.2 诚实降级）。
+    /// 降级稳态域写值（0.23.0 §④ 统一：`max(target, degradedLimit)`——经
+    /// `degradedWriteValue(for:)` 计算，本常量退居**边界角色**：<80 判据
+    ///（sub80Carried）、domainBackstop 承载门、CHHysteresis target<80 门等
+    /// 全库比较面不改（红队全库 17 处分类账：写值恰 4 处/边界 5 处/测试 4 处）。
     public static let degradedLimit = 80
     /// 0.21.3 §1.3 suppressed 锁存阈值：连续覆写签名命中 ≥2 次 → 域机制被外部
     /// 压制（UI-100 三键覆写形态）——wire sub80MechanismSuppressed 数据源（App
@@ -61,6 +64,19 @@ public enum Topoff {
     /// 0.20.1 热修：topoff 子进程看门狗超时（秒）——真机 wedge 事件（走查②：strike
     /// 路径子进程挂起持全局锁→daemon 整体楔死）的修复常量。
     public static let subprocessTimeoutSeconds = 10
+
+    /// **0.23.0 §④ degraded 稳态写值统一**：`max(target, degradedLimit)`。
+    /// - target < 80 → 80（既有语义不变——degraded 恒回退 80）；
+    /// - target ≥ 80 → target（**语义收益**：degraded 非 <80 专属——编排关 ≥85
+    ///   域承载态 degraded 后停 target 而非被拉到 80，与「域值随汇聚目标」不变量
+    ///   一致）。
+    /// **与 `SuppressionRecovery.openValue` 公式互钉**（红队 F7 附注）：两者同为
+    /// `max(target, 80)` 形态——openValue 是 App 恢复写（开启垫脚石），本函数是
+    /// daemon degraded 稳态域写；公式任一侧改动必须同步审视另一侧（防 D2×W4
+    /// 互搏——W4 行 6/7 期望表同源消费本公式）。
+    public static func degradedWriteValue(for target: Int) -> Int {
+        max(target, degradedLimit)
+    }
 
     /// 域路径 / 通知名 / 键名（SMC-NOTES §11.5/§11.5.1 实测；0.19.20 实验期同域）。
     public static let domainPath = "/var/root/Library/Preferences/com.apple.smartcharging.topoffprotection"
@@ -278,8 +294,10 @@ public struct TopoffTickPlan: Equatable, Sendable {
     /// WHY（R1-P0 接线层盲区根治）：验证窗满拍 violationTicks 即归零——先于
     /// topoff tick 运行的观测点可见最大 19，「≥20 判据」按字面接线**永不触发**
     /// 且纯函数测试全绿；显式边沿信号让 daemon 无需比对 strikes 前后值（决策层
-    /// 显式优于 daemon 侧比对）。daemon 消费 = 边沿锁存一拍（TTL 钉死见
-    /// `StrikeEdgeLatch`）供观测段自动放电收紧消费。
+    /// 显式优于 daemon 侧比对）。
+    /// **0.23.0 自动放电自动机退役**：strikeFired 机制本身保留（降级拍语义不变
+    /// ——产出零成本），唯一下游消费者（strike 陪跑链 / StrikeEdgeLatch 边沿锁存）
+    /// 已随批退役——边沿暂无人消费，无害（daemon 侧仅不再置位锁存簿记）。
     public var strikeFired: Bool = false
 
     public init(writeLimit: Int?, state: TopoffChannelState, notifyOnly: Bool = false, strikeFired: Bool = false) {
@@ -287,59 +305,6 @@ public struct TopoffTickPlan: Equatable, Sendable {
         self.state = state
         self.notifyOnly = notifyOnly
         self.strikeFired = strikeFired
-    }
-}
-
-// MARK: - 0.21.2 §3.2 strike 边沿锁存（观测段自动放电收紧的边沿信号管线）
-
-/// strike 边沿锁存态（daemon 锁内内存态，**不持久化**——重启即清零，下一 strike
-/// 边沿最迟 10 min 后随验证窗满再来——方案 §6「边沿丢失」登记面的兜底节奏）。
-public struct StrikeEdgeLatch: Equatable, Sendable {
-    /// 置位拍的 tick 序号（nil = 无在档边沿）。
-    public var setAtTick: Int?
-
-    public init(setAtTick: Int? = nil) {
-        self.setAtTick = setAtTick
-    }
-}
-
-extension Topoff {
-    /// 锁存可读判定（**TTL 钉死——N 拍置位、N+1 拍可读、N+2 拍失效**，R2-P3-2）：
-    /// 严格相等 `tick == setAtTick + 1`——陈旧边沿在冷却结束/重插门开后的旧拍序号
-    /// 永不重新满足（tick 序号单调递增），「边∧冷却丢失不补发」由本判定结构性保证。
-    public static func strikeEdgeReadable(latch: StrikeEdgeLatch, tick: Int) -> Bool {
-        latch.setAtTick.map { tick == $0 + 1 } ?? false
-    }
-
-    /// 读即清消费（纯函数）：返回 `(本拍可读, 消费后锁存)`。可读拍与失效拍
-    ///（tick ≥ setAtTick + 2）均清空——「读即清」钉面；置位拍（tick == setAtTick）
-    /// 不清（同拍观测段先于 topoff tick 运行，置位对观测段不可见是设计意图——
-    /// 次序契约照「巡检命中 > 自动触发 > 编排链」先例，0.21.2 方案 §3.2）。
-    public static func strikeEdgeConsume(
-        latch: StrikeEdgeLatch, tick: Int
-    ) -> (readable: Bool, next: StrikeEdgeLatch) {
-        let readable = strikeEdgeReadable(latch: latch, tick: tick)
-        var next = latch
-        if let setAt = latch.setAtTick, tick > setAt {
-            next.setAtTick = nil
-        }
-        return (readable, next)
-    }
-
-    /// strike 伴随成立判定（0.21.2 §3.2 触发条件的边沿项组合，纯函数——daemon
-    /// 只消费）：边沿锁存可读 ∧ `!degraded`（**第 3 边沿 = 降级拍**——degraded
-    /// 与 strikeFired 同拍置位，消费拍拦截）∧ 非校准抑制（校准抑制期 strike 链
-    /// 本就冻结——channelTick 不调用无边沿产生；本门为防御纵深（现接线下
-    /// 消费先于校准检测=结构性永真；残余 1 tick 窗已登记，防未来接线变更下抑制期消费）。
-    /// **0.21.3 §1.1 `target < 80` 门（钉死）**：owned 扩展后 strike 新源覆盖
-    /// ≥80 目标（编排关域承载）——自动放电不跟随扩展，保持 0.21.2 CHANGELOG
-    /// 「≥80% 目标不再触发自动放电」公开语义（≥80 的 strike 重写域本身即是自愈
-    /// 主手段；物理打断对机制关闭态只会造循环，熔断兜底不经济）。target = 该边沿
-    /// 对应的汇聚目标（消费拍与 topoff tick 同 tick 序，值同源）。
-    public static func strikeAccompaniment(
-        edgeReadable: Bool, degraded: Bool, calibrationSuspected: Bool, target: Int
-    ) -> Bool {
-        edgeReadable && !degraded && !calibrationSuspected && target < degradedLimit
     }
 }
 
@@ -442,7 +407,9 @@ extension Topoff {
         } else if topoffOwned && degraded && hysteresisEnabled && hysteresisActive {
             desired = nil                                    // 迟滞执法 → 编排静默（§2.1 R1-P1-4——消 80 钳与迟滞互搏）
         } else if topoffOwned && degraded && !healProbeActive {
-            desired = degradedLimit                          // 降级稳态 → 编排钳 80
+            // 降级稳态 → 编排钳 degradedWriteValue（0.23.0 §④：max(target,80)——
+            // ≥80 目标 degraded 停 target 不再被钳 80；W4 行 6 同源消费）。
+            desired = degradedWriteValue(for: upperLimit)
         } else if topoffOwned && degraded && healProbeActive {
             desired = nil                                    // 自愈观察窗 → topoff 独占
         } else if chargingDisabledWindow {
@@ -460,8 +427,9 @@ extension Topoff {
     /// 释放持续性**——首次一致 streak=1 保持锁存，连续第二次一致 ∧ 过 120s 瞬态
     /// 守卫才解除；读失败 → fail-open 既有计数）→ 行为验证窗（连续 20 违规 tick
     /// → strike）→
-    /// strike <3 重申（冷却门内重写域+通知）/ ≥3 诚实降级（域随写 80，编排钳由
-    /// 路由层承接）。采样缺席拍不推进窗（证据不足防误降级）。
+    /// strike <3 重申（冷却门内重写域+通知）/ ≥3 诚实降级（0.23.0 §④ 域随写
+    /// `degradedWriteValue(for:)`=max(target,80)，编排钳由路由层承接）。采样缺席
+    /// 拍不推进窗（证据不足防误降级）。
     /// `domainReadback`：daemon 预判命中才读并注入读回结果——预判 = 违规拍
     /// （`isViolationTick`）∨ **suppressed 锁存期补采样**（review P1：锁存态下
     /// 非违规 owned 拍也采样——覆写源停止后锁存仍可在下一拍经一致读回解除，
@@ -569,7 +537,10 @@ extension Topoff {
                 // P2 评审修法：播种 lastHealProbeAt——降级稳态整 1h 后才首探（不被
                 // 下一拍探针打破；与 re-degradation 路径 <1h 等剩余窗的行为对齐）。
                 s.lastHealProbeAt = now
-                return TopoffTickPlan(writeLimit: degradedLimit, state: s, strikeFired: true)
+                // 0.23.0 §④ 写值统一：degraded 稳态写 max(target,80)（降级写即
+                // 第三次重写——≥80 目标停 target，W4 行 6/7 同源）。
+                return TopoffTickPlan(
+                    writeLimit: degradedWriteValue(for: target), state: s, strikeFired: true)
             }
             // 重申（冷却门内）：重写域 + 通知；冷却未到 → 不写（窗已重置继续观察）。
             let cooldownElapsed = s.lastWriteAt.map {
@@ -582,15 +553,17 @@ extension Topoff {
     }
 
     /// 降级自愈每拍推进（§3.2；**P1 评审三件套修定**）：
-    /// - 稳态：域值维持降级稳态 80（与编排钳同值——单通道互斥），每小时重探
-    ///   （域写 target + 20 tick 行为观察，编排静默）；
+    /// - 稳态：域值维持降级稳态 `degradedWriteValue(for:)`=max(target,80)（与编排
+    ///   钳同值——单通道互斥），每小时重探（域写 target + 20 tick 行为观察，编排
+    ///   静默）；
     /// - 观察窗（P1-③）：target 变更幂等重写照 channelTick 形态（探针中域值不停留
-    ///   旧目标；稳态下不重写——域值 80 须与编排钳 80 保持互斥一致）；
+    ///   旧目标；稳态下不重写——域值与编排钳保持互斥一致）；
     /// - 判定（P1-①「钉在 target」指纹）：强证据拍 → 恢复（degraded/strikes 清零）；
-    ///   20 连续违规 → 自愈失败回稳态（域随写 80，下小时再探——无封顶持续重试）；
+    ///   20 连续违规 → 自愈失败回稳态（0.23.0 §④ 域随写 max(target,80)，下小时
+    ///   再探——无封顶持续重试）；
     ///   **P1-② 无差别超时臂**：窗满 20 tick 无违反无证据（活 agent 钉 target 正点
     ///   充电微顶/死通道 + native 钳 80 等弱信号形态）→ 探针结束回降级稳态（补写
-    ///   degradedLimit 维持稳态不变量）+ 下小时再探——不再永久滞留。
+    ///   degradedWriteValue 维持稳态不变量）+ 下小时再探——不再永久滞留。
     /// - parameter domainReadback: **0.22.3 §2 degraded 态签名簿记**（可选注入——
     ///   channelTick 0.21.3 同款注入形态，纯函数保持；daemon 周期臂 3 含 degraded）。
     ///   签名命中 → suppressionConsecutive++（≥2 锁存照旧——wire 恢复可见 → App
@@ -650,12 +623,12 @@ extension Topoff {
                            externalConnected: externalConnected, isCharging: isCharging) {
             s.violationTicks += 1
             if s.violationTicks >= verificationTicks {
-                // 自愈失败：回降级稳态（域随写 80），下小时再探。
+                // 自愈失败：回降级稳态（0.23.0 §④ 写 max(target,80)），下小时再探。
                 s.healProbeActive = false
                 s.healProbeTicks = 0
                 s.violationTicks = 0
                 s.lastViolationAt = now
-                return TopoffTickPlan(writeLimit: degradedLimit, state: s)
+                return TopoffTickPlan(writeLimit: degradedWriteValue(for: target), state: s)
             }
         } else if isEnforcementEvidence(percent: percent, target: target,
                                         externalConnected: externalConnected, isCharging: isCharging) {
@@ -671,13 +644,13 @@ extension Topoff {
             // 弱信号拍：违规连计中断（窗继续——P1-② 超时臂兜底收口）。
             s.violationTicks = 0
         }
-        // P1-② 无差别超时臂：窗满 20 tick 未判定 → 探针结束回降级稳态（补写
-        // degradedLimit）+ 下小时再探。
+        // P1-② 无差别超时臂：窗满 20 tick 未判定 → 探针结束回降级稳态（0.23.0 §④
+        // 补写 max(target,80) 维持稳态不变量）+ 下小时再探。
         if s.healProbeTicks >= verificationTicks {
             s.healProbeActive = false
             s.healProbeTicks = 0
             s.violationTicks = 0
-            return TopoffTickPlan(writeLimit: degradedLimit, state: s)
+            return TopoffTickPlan(writeLimit: degradedWriteValue(for: target), state: s)
         }
         return TopoffTickPlan(writeLimit: nil, state: s)
     }

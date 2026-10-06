@@ -458,6 +458,9 @@ struct Main {
         // 失速锚点推进与 stallDue/healTick degraded 簿记/未锁存全清/nil readback/
         // WARN 计数/doctor 行为启发——纯函数面，TopoffLatchDomain）。
         runTopoffLatchDomainScenarios()
+        // 0.23.0 §⑥：GitHub 更新提示版本比较纯函数域（AppVersion.isNewer——
+        // 数值比较/alpha→final 提醒/畸形容错恒 false，AppVersionDomain）。
+        runAppVersionDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

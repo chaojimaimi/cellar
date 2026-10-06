@@ -2,23 +2,21 @@ import Foundation
 
 // MARK: - 0.21.0 §1 set 路径决策核心（方案 §1.1/§1.3/§1.5；CellarCoreCheck 场景域钉死）
 //
-// 架构总纲（方案 §0）：27 上限充执行转向 App 侧免 root set 路径（80-100 区间）——
-// daemon 保留 <80 topoff、放电等 root 职责；快捷指令从「必需前置」降为 fallback。
-// 决策纯函数进 CellarCore（照 NativeOrchestration/Topoff 先例），App 侧执行体
-// （MCLClient set 面 + LimitExecutor 抽象）与 daemon 分支（fullOnce 27 复活）只消费。
+// 架构总纲（方案 §0）：27 上限充执行走 App 侧免 root set 路径（80-100 区间）——
+// daemon 保留 <80 topoff、放电等 root 职责。**0.23.0 §② Shortcuts 备用通道退役**
+// ——set 是唯一执行通道（旧快捷指令 fallback 链随批删除）。决策纯函数进 CellarCore
+// （照 NativeOrchestration/Topoff 先例），App 侧执行体（MCLClient set 面）与 daemon
+// 分支（fullOnce 27 复活）只消费。
 
 /// set 路径常量与决策纯函数（无状态无 IO——MCL I/O 在 App 侧 MCLClient）。
 public enum NativeLimitSet {
     /// MCL set 原生下限（S3 定谳：setMCLLimit <80 被 PowerUISmartChargingErrorDomain
-    /// Code=4 拒绝——更低走实验性通道，不在本路线）。
+    /// Code=4 拒绝——更低由 Cellar 限充域直接执法，不经本通道）。
     public static let minimumSetLimit = 80
     /// set 上限（充满语义）。
     public static let maximumSetLimit = 100
     /// §1.3 fullOnce 27 临时放开目标（pendingTarget=100 可 set——policy <80 分支同样合法）。
     public static let fullOnceTarget = 100
-    /// §1.1 fallback 触发阈值（R1-P2-3 钉死：set 连续 **2 次**实例级失败 → 会话驻留
-    /// 快捷指令 fallback；下次启动重试 set——会话 sticky 语义，S3 实证类缺席为平台终态）。
-    public static let fallbackFailureThreshold = 2
 
     /// 恢复臂 XPC 命令字面量（§1.3 恢复：daemon 置 pending(policy.upperLimit)）。
     /// 与既有命令命名同域（fullOnce / cancelAction / setOrchestration）。
@@ -81,41 +79,6 @@ public enum NativeLimitSet {
         return upperLimit < minimumSetLimit || !orchestrationEnabled
     }
 
-    /// §1.1 fallback 触发判定（R1-P2-3）：实例级失败连击达阈值 → 会话驻留快捷指令。
-    public static func shouldDwellShortcutFallback(failureStreak: Int) -> Bool {
-        failureStreak >= fallbackFailureThreshold
-    }
-
-    /// 执行体路由（§1.1：set 优先——会话初值 embeddedSet；驻留后 shortcut，
-    /// 本会话不回切，下次启动重试 set）。
-    public enum ExecutorFlavor: Equatable, Sendable {
-        case embeddedSet
-        case shortcut
-    }
-
-    public static func executorFlavor(dwellingShortcut: Bool) -> ExecutorFlavor {
-        dwellingShortcut ? .shortcut : .embeddedSet
-    }
-
-    /// §1.1 失败簿记推进（纯函数——App 消费面按此更新连击/驻留态）：
-    /// - `nil`（成功）→ 连击清零（consecutive 语义）、不驻留；
-    /// - `.nativeFloorMinimum`（Code=4 结构化拒绝）→ **中性**：值级拒绝与通道健康
-    ///   无关——不计连击、不清连击（重试同值仍拒绝，UI 如实提示，§1.1 失败链）；
-    /// - `.channelUnavailable` / `.callFailed`（实例级）→ 连击 +1，达阈值 → 驻留。
-    public static func advancedFailureBookkeeping(
-        streak: Int, outcome: MCLSetFailure?
-    ) -> (streak: Int, dwell: Bool) {
-        switch outcome {
-        case .none:
-            return (0, false)
-        case .nativeFloorMinimum:
-            return (streak, shouldDwellShortcutFallback(failureStreak: streak))
-        case .channelUnavailable, .callFailed:
-            let next = streak + 1
-            return (next, shouldDwellShortcutFallback(failureStreak: next))
-        }
-    }
-
     /// §1.3 恢复臂按钮判定源（R2-P2-4 钉死，**读回驱动非本地态**——重启与滑杆
     /// 变更自然收敛）：`MCL 读回 100 ∧ policy < 100`。调用方（App 面板）另叠加
     /// 27 终态 ∧ mode active ∧ 编排开关开（开关关 = 恢复臂拒收，R3-P3-1——按钮
@@ -124,7 +87,7 @@ public enum NativeLimitSet {
         mclReadback == fullOnceTarget && policyUpperLimit < fullOnceTarget
     }
 
-    /// MCL 对账期望值（0.21.3 §2.1 **八行表统一重定版**——三分支模型对齐，G1
+    /// MCL 对账期望值（0.21.3 §2.1 八行表统一重定版——三分支模型对齐，G1
     /// 根治；App 态驱动对账与 doctor 检查 20 同源消费；优先级自上而下）：
     ///
     /// 1. fullOnce 窗            → 100（窗覆盖——优先级最高）
@@ -133,12 +96,14 @@ public enum NativeLimitSet {
     /// 4. 编排开 ∧ target ≥80    → target（MCL 主导，App set 执法——周期对账防线）
     /// 5. 编排开 ∧ target <80 ∧ 非 degraded → 100（sub80 topoff 承载，MCL 必须
     ///   100 让域管）
-    /// 6. 编排开 ∧ target <80 ∧ degraded → 80（对齐编排钳 desired=80——
-    ///   Topoff.swift 降级稳态分支；漏行后果 = 对账写 100 与编排钳互搏 30s 乒乓）
-    /// 7. 编排关 ∧ degraded      → 80（域通道死亡时的最后防线——MCL 80 总比无
-    ///   执法好；三分支分支 1 主导此时是期望行为）
+    /// 6. 编排开 ∧ target <80 ∧ degraded → 80（对齐降级稳态钳 `Topoff.
+    ///   degradedWriteValue(for:)`——<80 目标即 80；漏行后果 = 对账写 100 与编排钳
+    ///   互搏 30s 乒乓）
+    /// 7. 编排关 ∧ degraded      → degradedWriteValue（0.23.0 §④ 翻新：
+    ///   max(target,80)——<80 目标 80 不变〔域通道死亡最后防线〕；≥80 目标域随写
+    ///   target，对账期望随行——**W4 行 6/7 与四写点同源**，防 D2×W4 新互搏）
     /// 8. 编排关 ∧ 非 degraded（含 ≥80）→ 100（**0.21.3 §1.1 域承载全区间**——
-    ///   MCL 必须 100 让域管；旧「<80→80 兜底」行为 G1 实证有害〔MCL 80 主导
+    ///   MCL 必须 100 让域管；旧「<80→80 兜底」为 G1 实证有害形态〔MCL 80 主导
     ///   顶掉域 75〕，废除）
     ///
     /// App 对账补偿执行统一走 API set（保机制使能——三分支分支 2 路径）。
@@ -158,9 +123,15 @@ public enum NativeLimitSet {
         if !modeActive { return maximumSetLimit }                     // 行 3
         if orchestrationEnabled {
             if upperLimit >= minimumSetLimit { return upperLimit }    // 行 4
-            return degraded ? minimumSetLimit : maximumSetLimit       // 行 6 / 行 5
+            // 行 6：0.23.0 §④ degraded 钳随写值统一（<80 目标 = 80，与旧值恒等）。
+            return degraded
+                ? Topoff.degradedWriteValue(for: upperLimit)
+                : maximumSetLimit                                     // 行 6 / 行 5
         }
-        return degraded ? minimumSetLimit : maximumSetLimit           // 行 7 / 行 8
+        // 行 7 / 行 8：行 7 随 §④ 翻新（degraded → max(target,80)；<80 恒 80）。
+        return degraded
+            ? Topoff.degradedWriteValue(for: upperLimit)
+            : maximumSetLimit
     }
 }
 
@@ -191,7 +162,9 @@ public enum MCLSetFailure: Error, Equatable, Sendable, CustomStringConvertible {
     public var description: String {
         switch self {
         case .nativeFloorMinimum:
-            return "系统原生限充最低 80——更低走实验性通道"
+            // 0.23.0 §③ 实验性摘帽：措辞去「实验性通道」（<80 目标由 Cellar 限充
+            // 域直接执法——模型 v2，无需系统设置退路）。
+            return "系统原生限充最低 80——更低目标由 Cellar 限充通道直接执法"
         case .channelUnavailable:
             return "原生限充 set 通道不可用（PowerUISmartChargeClient 类缺席）"
         case .callFailed(let domain, let code, let message):

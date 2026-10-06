@@ -1,73 +1,46 @@
 import Foundation
 
-// MARK: - v0.19.20 检查 17：编排通道（doctor 第 17 项；照 DoctorExtended.swift 的
+// MARK: - 检查 17：编排通道（doctor 第 17 项；照 DoctorExtended.swift 的
 // extension DoctorReportGenerator 先例拆分——DoctorReport.swift 行数纪律）
-
-/// 检查 17 输入：编排通道探测（CLI DoctorCommand 在**用户会话**组装；S2：root 恒
-/// 失败——本探测永不下放 daemon）。
-public struct OrchestrationDoctorProbe: Equatable, Sendable {
-    /// `shortcuts list` 是否执行成功（exit 0 = 通道可用）。
-    public let listSucceeded: Bool
-    /// 列表中的快捷指令总数（执行成功时；失败 nil）。
-    public let shortcutCount: Int?
-    /// 默认动作（NativeOrchestration.defaultShortcutName）是否在列表中
-    /// （执行成功时；失败 nil）。
-    public let defaultShortcutPresent: Bool?
-    /// 执行失败详情（stderr 摘要；成功 nil）。
-    public let failureDetail: String?
-
-    public init(
-        listSucceeded: Bool, shortcutCount: Int?,
-        defaultShortcutPresent: Bool?, failureDetail: String?
-    ) {
-        self.listSucceeded = listSucceeded
-        self.shortcutCount = shortcutCount
-        self.defaultShortcutPresent = defaultShortcutPresent
-        self.failureDetail = failureDetail
-    }
-}
+//
+// **0.23.0 §② Shortcuts 备用通道退役（红队 F2 语义真空修复）**：执行通道收敛为
+// 「App 内嵌 set 通道（唯一）」——原 shortcuts 探测三分支（OrchestrationDoctorProbe
+// `shortcuts list`）随批退役（快捷指令无消费者，不再指引创建）；判定门 = MCL 读回
+// 探测（检查 19/20 同源输入，CLI 用户会话组装）。
 
 extension DoctorReportGenerator {
-    /// `shortcuts list` 用户上下文探测（探测组装必须在 CLI 用户会话完成——S2：
-    /// root 恒失败，禁止移入 daemon）。判定：**0.21.0 §1.2 set 可用分支**（27 ∧
-    /// MCL 读回探测可读）→ PASS「执行通道：App 内嵌（免快捷指令）」——快捷指令
-    /// 降为备用，不再要求创建；否则照 0.19.20 既有三分支：默认动作在列 → PASS
-    /// （通道可用）；列表可用但缺动作 → INFO（指引创建）；执行失败 → INFO 不抬
-    /// 退出码（26 及以下机型 / 快捷指令 App 缺席属预期形态，非健康失败）。
+    /// 检查 17（判定收敛版）。门 = `mclProbeAttempted`（MCL 读回探测与检查 19/20
+    /// 同源——CLI 用户会话组装，非 root 读级可用）。判定：
+    /// - 27 ∧ MCL 可读 → PASS「执行通道：App 内嵌 set 通道（唯一）」；
+    /// - 27 ∧ MCL 探测在位但不可读 → INFO（set 通道不可用——限充执法由域通道承接
+    ///   〔<80 / 编排关域承载〕，退路 = 系统设置手动设具体上限；不抬退出码）；
+    /// - 27 ∧ MCL 探测缺席（输入形态缺省）→ INFO 未探测；
+    /// - 26（<27）→ INFO（26 无 App 内嵌 set 面——daemon CHTE 直控执法，本检查
+    ///   不适用；诚实呈现，不抬退出码）。
     static func orchestrationChannel(_ inputs: DoctorInputs) -> DoctorCheck? {
-        guard inputs.orchestrationProbeAttempted else { return nil }
-        // 0.21.0 §1.2：set 可用分支（先行于 shortcuts 探测三分支——内嵌通道
-        // 接管后快捷指令指引降级为说明性）。26（<27）不进本分支（零回归）。
-        if inputs.osMajorVersion >= 27, let mcl = inputs.mclProbe, mcl.readable {
-            let limitText = mcl.limit.map { "（读回 \($0)%）" } ?? ""
-            return DoctorCheck(
-                name: "编排通道", status: .pass,
-                detail: "执行通道：App 内嵌（免快捷指令）——原生限充 set 路径可用\(limitText)；快捷指令保留为备用"
-            )
-        }
-        guard let probe = inputs.orchestrationProbe else {
-            return DoctorCheck(
-                name: "编排通道", status: .info,
-                detail: "编排通道未探测（输入形态缺省）"
-            )
-        }
-        guard probe.listSucceeded else {
+        guard inputs.mclProbeAttempted else { return nil }
+        if inputs.osMajorVersion >= 27 {
+            guard let mcl = inputs.mclProbe else {
+                return DoctorCheck(
+                    name: "编排通道", status: .info,
+                    detail: "App 内嵌 set 通道未探测（输入形态缺省）"
+                )
+            }
+            if mcl.readable {
+                let limitText = mcl.limit.map { "（读回 \($0)%）" } ?? ""
+                return DoctorCheck(
+                    name: "编排通道", status: .pass,
+                    detail: "执行通道：App 内嵌 set 通道（唯一）——原生限充 set 路径可用\(limitText)"
+                )
+            }
             return DoctorCheck(
                 name: "编排通道", status: .info,
-                detail: "shortcuts list 执行失败（\(probe.failureDetail ?? "未知原因")）——编排不可用"
-            )
-        }
-        let countText = probe.shortcutCount.map(String.init) ?? "未知"
-        if probe.defaultShortcutPresent == true {
-            return DoctorCheck(
-                name: "编排通道", status: .pass,
-                detail: "编排通道可用（已找到「\(NativeOrchestration.defaultShortcutName)」，共 \(countText) 个快捷指令）"
+                detail: "App 内嵌 set 通道不可用（\(mcl.failureDetail ?? "未知原因")）——限充执法由域通道承接；如需即时调整可在系统设置手动设置上限"
             )
         }
         return DoctorCheck(
             name: "编排通道", status: .info,
-            detail: "shortcuts list 可用，但未找到「\(NativeOrchestration.defaultShortcutName)」"
-                + "——请按 Cellar 通用页「充电编排」节的指引创建（共 \(countText) 个快捷指令）"
+            detail: "App 内嵌 set 通道仅 macOS 27+ 可用——本机由 daemon 直控执法，本检查不适用"
         )
     }
 }

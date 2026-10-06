@@ -82,15 +82,18 @@ struct ControlSectionView: View {
             )
             .disabled(isModeDisabled || isActionActive)
             // 0.20 WP2 §3.4：<80 标注按 sub80 能力分流——
-            // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 通道）→ 实验性
-            //   徽章 + 说明 / 回落进度（active ∧ percent > 目标）/ 降级横幅
-            //  （degraded）——Sub80StatusView 参数驱动组件（CellarUICheck 可快照）；
+            // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 通道）→ 回落进度
+            //  （active ∧ percent > 目标）/ 降级横幅（degraded，随写值参数化）——
+            //   Sub80StatusView 参数驱动组件（CellarUICheck 可快照）。**0.23.0 §③
+            //   实验性摘帽**：原 experimentalTarget 徽章参数删除（sub80 已非实验特性）；
             // - 无能力（26 / 27 无 CHIE）：0.19.20 钳 80 原样——编排生效中 <80 行内
             //   标注（S6 原生范围硬限 80-100，daemon nativeTarget 钳 80 应用）。
             if sub80Capable {
                 Sub80StatusView(
                     degraded: statusController.daemonStatus?.sub80State == .degraded,
-                    experimentalTarget: Int(upperLimit) < 80 ? Int(upperLimit) : nil,
+                    // 0.23.0 §④：降级横幅写值参数化（随实际域写值——sub80WrittenLimit
+                    // 缺席〔fresh 首拍〕按 max(target,80) 同源兜底）。
+                    degradedWriteValue: degradedWriteDisplayValue,
                     fallingFrom: fallingFrom,
                     fallingTarget: fallingTarget,
                     // 0.21.0 §2.2：迟滞执法横幅（daemon 回读 sub80Hysteresis）。
@@ -301,5 +304,16 @@ struct ControlSectionView: View {
     /// 回落目标（与 fallingFrom 成对——单值门）。
     private var fallingTarget: Int? {
         fallingFrom != nil ? statusController.daemonStatus?.upperLimit : nil
+    }
+
+    /// 降级横幅写值（0.23.0 §④ F7 参数化数据源）：daemon 回读 sub80WrittenLimit
+    ///（域生效值 = 最近成功写入的 mclLimitValue——agent 实际跟随值）优先；fresh
+    /// 首拍缺席按 max(target, 80) 同源兜底（Topoff.degradedWriteValue——与四写点
+    /// 同一公式，勿再引第二真相）。
+    private var degradedWriteDisplayValue: Int {
+        if let written = statusController.daemonStatus?.sub80WrittenLimit {
+            return written
+        }
+        return Topoff.degradedWriteValue(for: statusController.daemonStatus?.upperLimit ?? 80)
     }
 }

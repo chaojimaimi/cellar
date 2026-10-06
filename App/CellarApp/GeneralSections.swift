@@ -4,8 +4,10 @@ import SwiftUI
 import UserNotifications
 
 /// 通用分节内容（M3.5 工单 4 自 SettingsView 内 private GeneralTab 提取——设置
-/// 窗退役后并入主窗口通用页；登录项开关 + 注册态 + 通知授权 + 自动放电组 +
-/// 风扇组全部随迁，行为零变化）。
+/// 窗退役后并入主窗口通用页；登录项开关 + 注册态 + 通知授权 + 风扇组随迁）。
+/// **0.23.0 §① 自动放电退役**：原「自动放电」开关节 + 振荡暂停横幅整节删除
+///（手动「放电到上限」按钮 + CHIE 迟滞兜底承接）；§② 编排节快捷指令名输入框
+/// 随 Shortcuts 备用通道退役删除。
 ///
 /// v1.8 走查批 F4 布局重构（行为零变化，只动布局容器）：macOS Form 各 Section
 /// 的 label 列独立自适应——Toggle 全宽行与 LabeledContent 双列行混用导致行起始
@@ -22,23 +24,19 @@ struct GeneralSections: View {
     @EnvironmentObject private var loginItems: LoginItemController
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var displaySettings: DisplaySettingsController
-    @EnvironmentObject private var orchestrationSettings: OrchestrationSettings
     /// 0.22.0 §4.3：Tp00 CPU 参考温度消费源（CellarApp 两 scene 链均注入——
     /// 缺注入运行时 crash，照五对象既有纪律）。
     @EnvironmentObject private var cpuFanMonitor: CpuFanMonitor
     @Environment(\.cellarTheme) private var theme
     /// 通知授权态（nil = 查询中；getNotificationSettings 异步回主线程刷新）。
     @State private var notificationAuthorized: Bool?
-    /// 自动放电开启两步内嵌确认块（nil = 未展开；确认/取消后关闭）。
-    @State private var autoDischargeConfirming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             generalSection
-            autoDischargeSection
             // v0.19.20 编排节（WP-3）：capabilities 含 orchestration（27 终态）才
             // 显示——26 及以下 UI 隐藏（§1；nil = 旧 daemon 同样隐藏，不渲染升级
-            // 提示）。置于自动放电节后（方案 §4）。
+            // 提示）。0.23.0 §①：原自动放电节随批删除（本位置上移）。
             if orchestrationCapabilityAvailable {
                 orchestrationSection
             }
@@ -179,65 +177,6 @@ struct GeneralSections: View {
         }
     }
 
-    /// 自动放电节（无头节，R1 P1-1 定案——开关标签「自动放电」自任标题）：
-    /// 开关全宽行 + 说明行 + 能力门控提示 + 开启两步确认块，逻辑原样随迁。
-    private var autoDischargeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // WP2' 自动放电组：开关绑定 daemonStatus 单一真相（daemon 确认后状态
-            // 回传翻转）；开启两步内嵌确认块，关闭直通（关是安全方向）。
-            Toggle(CellarL10n.s("settings.autoDischarge"), isOn: Binding(
-                get: { statusController.daemonStatus?.autoDischargeEnabled == true },
-                set: { toggleAutoDischarge($0) }
-            ))
-            .disabled(autoDischargeCapabilityAvailable == false)
-
-            // 开关旁一句话说明（code-review P2-3：消费 desc key，防空目录死项）。
-            Text(CellarL10n.s("settings.autoDischarge.desc"))
-                .font(.caption)
-                .foregroundStyle(theme.secondaryText)
-
-            // 0.21.1 §1.1 门 c：振荡熔断抑制横幅（daemon wire autoDischargeSuspended
-            // ——2h 滑窗内 ≥2 次自动放电完成后锁存；开关保持开但后续自动触发静默，
-            // 手动放电不受影响）。解除 = 关-开重新 opt-in 或重启守护进程——重置后
-            // wire 回 false，横幅随轮询自然消失。
-            if statusController.daemonStatus?.autoDischargeSuspended == true {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(CellarL10n.s("settings.autoDischarge.suspended"))
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(theme.warning)
-                    Text(CellarL10n.s("settings.autoDischarge.suspended.desc"))
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            // 能力门控提示（三态惯例：capabilities nil = 旧 daemon 需升级；已上报
-            // 但缺 autoDischarge = 当前机型或版本不支持；含 = 可用且无提示）。
-            if let hint = autoDischargeGateHint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-            }
-
-            // 开启两步内嵌确认块（同 ActionSectionView 确认形态）：弹出前已刷新一次
-            // status——upper/hys 取 daemonStatus 现值，缩 60s 陈旧窗（R2 P3）。
-            if autoDischargeConfirming {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(CellarL10n.s("settings.autoDischarge.warning"))
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                    HStack {
-                        Button(CellarL10n.s("settings.autoDischarge.confirm")) { confirmAutoDischarge() }
-                            .disabled(statusController.busy)
-                        Button(CellarL10n.s("common.cancel")) { autoDischargeConfirming = false }
-                    }
-                }
-            }
-        }
-    }
-
     /// 风扇节：FanSectionView 原样嵌入（showsTitle false 保持——标题由节头
     /// 「智能风扇降温」承担，组件自身标题关掉防同文重复；v1.2 先例）。
     private var fanSection: some View {
@@ -333,19 +272,18 @@ struct GeneralSections: View {
         statusController.capabilities?.contains(DaemonXPC.capabilityOrchestration) == true
     }
 
-    /// 编排节（照自动放电节形态：开关 + 说明 + 状态行 + setup 指引；组件参数驱动
-    /// ——CellarUICheck 可独立渲染）。开关绑定 daemonStatus 单一真相（daemon 确认
-    /// 后回传翻转，照自动放电开关同构）；输入框走 OrchestrationSettings
-    /// （UserDefaults——daemon 只发 target 数字，名字仅 App 消费，R1 P0-2）。
-    /// 0.21.0 §1.2：节头文案诚实化（「编排」→「系统限充执行」，新旧键兼容）；
-    /// embeddedExecutorAvailable 传递（set 可用态输入框隐藏 + 指引降级）。
+    /// 编排节（开关 + 说明 + 状态行 + 读回行；组件参数驱动——CellarUICheck 可
+    /// 独立渲染）。开关绑定 daemonStatus 单一真相（daemon 确认后回传翻转）。
+    /// 0.21.0 §1.2：节头文案诚实化（「编排」→「系统限充执行」，新旧键兼容）。
+    /// **0.23.0 §② Shortcuts 备用退役**：原 shortcutName 输入框参数与
+    /// onShortcutNameChange 回调删除——执行体收敛 App 内嵌 set 单实现（组件侧
+    /// 输入框/创建指引一并退役；失败细节仍走 lastError 行）。
     private var orchestrationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeaderText(CellarL10n.sRenamed(
                 "settings.section.execution", fallback: "settings.section.orchestration"))
             OrchestrationSectionView(
                 enabled: statusController.orchestrationEnabled,
-                shortcutName: orchestrationSettings.shortcutName,
                 lastError: statusController.orchestrationStatus?.lastError,
                 busy: statusController.busy,
                 showsTitle: false,
@@ -353,64 +291,11 @@ struct GeneralSections: View {
                 // 不渲染——sticky 停用前未采样的首帧自然缺席，不渲染占位）。
                 readbackLine: statusController.orchestrationReadbackLine,
                 readbackIsWarning: statusController.orchestrationReadbackWarning,
-                // 0.21.0 §1.2：set 可用态（27 终态 ∧ MCL 通道在位 ∧ 未驻留 fallback）
-                // ——内嵌执行通道接管，输入框隐藏 + setup 指引降级。
+                // 0.23.0 §②：set 可用态 = 27 终态 ∧ MCL 通道在位（语义收敛）。
                 embeddedExecutorAvailable: statusController.embeddedExecutorAvailable,
-                onToggleEnabled: { statusController.setOrchestration($0) },
-                onShortcutNameChange: { orchestrationSettings.updateShortcutName($0) }
+                onToggleEnabled: { statusController.setOrchestration($0) }
             )
         }
-    }
-
-    // MARK: - WP2' 自动放电
-
-    /// 能力门控：capabilities 含 autoDischarge 才可用（nil = 旧 daemon 未上报，
-    /// [] = 已上报但不含能力）。
-    private var autoDischargeCapabilityAvailable: Bool {
-        statusController.capabilities?.contains(DaemonXPC.capabilityAutoDischarge) == true
-    }
-
-    /// 禁用态提示（nil = 可用，无提示）。capabilities == nil → 需升级守护进程
-    /// （复用面板既有 needUpgrade 文案 key——同三态惯例）；缺能力 → 不支持。
-    private var autoDischargeGateHint: String? {
-        guard !autoDischargeCapabilityAvailable else { return nil }
-        if statusController.capabilities == nil {
-            return CellarL10n.s("panel.action.needUpgrade")
-        }
-        return CellarL10n.s("settings.autoDischarge.unsupported")
-    }
-
-    /// 开关动作：开启 → 先刷新一次 status（缩窗）再展开确认块；关闭直通。
-    private func toggleAutoDischarge(_ enabled: Bool) {
-        guard autoDischargeCapabilityAvailable else { return }
-        if enabled {
-            statusController.refreshNow()
-            autoDischargeConfirming = true
-        } else {
-            autoDischargeConfirming = false
-            applyAutoDischarge(false)
-        }
-    }
-
-    /// 确认开启：upper/hys 取 daemonStatus 现值（单一真相），auto 显式 true。
-    private func confirmAutoDischarge() {
-        guard let status = statusController.daemonStatus else {
-            autoDischargeConfirming = false
-            return
-        }
-        autoDischargeConfirming = false
-        statusController.applyLimits(
-            upperLimit: status.upperLimit, hysteresis: status.hysteresis, autoDischarge: true
-        )
-    }
-
-    /// 关闭直通（经 setLimits auto=0 持久化；daemon 缺席保持语义下显式传 false
-    /// 即关——在轨自动放电不被打断，属设计）。
-    private func applyAutoDischarge(_ enabled: Bool) {
-        guard let status = statusController.daemonStatus else { return }
-        statusController.applyLimits(
-            upperLimit: status.upperLimit, hysteresis: status.hysteresis, autoDischarge: enabled
-        )
     }
 
     private var registrationText: String {

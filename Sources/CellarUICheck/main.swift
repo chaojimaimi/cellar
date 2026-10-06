@@ -922,21 +922,21 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
-            // v0.19.20 充电编排节 2 态（ready/failed）×6（342 → 354，新增 12 张，
-            // 全部全新文件——新增非扰动）：参数驱动组件直接构造（onToggleEnabled/
-            // onShortcutNameChange 空闭包——渲染无副作用）。ready 态钉死「开关开 +
-            // 就绪 + 输入框缺省动作名」；failed 态钉死「上次失败：详情」行（失败
-            // 详情 = daemon 回报 lastError 样例串——ShortcutProcessRunner.RunError
-            // description 同形文案）。--regen --only=Orchestration 只跑本组。
+            // v0.19.20 充电编排节 2 态（ready/failed）×6。**0.23.0 §② Shortcuts
+            // 备用退役**：shortcutName/onShortcutNameChange 参数删除（输入框/三步
+            // 指引随批退役——Orchestration_* 全系列预期漂移，CI regen 入账）。
+            // ready 态钉死「开关开 + 就绪」；failed 态钉死「上次失败：详情」行
+            // （失败详情 = daemon 回报 lastError 样例串——MCLSetFailure.
+            // nativeFloorMinimum 0.23.0 摘帽版文案同形）。--regen --only=Orchestration。
             let orchestrationSections: [(String, OrchestrationSectionView)] = [
                 ("ready", OrchestrationSectionView(
-                    enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                    enabled: true,
                     lastError: nil, busy: false,
-                    onToggleEnabled: { _ in }, onShortcutNameChange: { _ in })),
+                    onToggleEnabled: { _ in })),
                 ("failed", OrchestrationSectionView(
-                    enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
-                    lastError: "快捷指令执行失败（exit 1）：域内未找到「设定电池充电上限」", busy: false,
-                    onToggleEnabled: { _ in }, onShortcutNameChange: { _ in })),
+                    enabled: true,
+                    lastError: "系统原生限充最低 80——更低目标由 Cellar 限充通道直接执法", busy: false,
+                    onToggleEnabled: { _ in })),
             ]
             for (stateName, section) in orchestrationSections {
                 cases.append(SnapshotCase(
@@ -984,11 +984,13 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
+            // **0.23.0 §③/§④**：experimental 用例随 experimentalTarget 参数删除
+            //（Sub80Status_experimental goldens 随用例退役）；falling 用例去参改写、
+            // degraded 用例写值参数化——Sub80Status_* 全系列预期漂移，CI regen 入账。
             let sub80Sections: [(String, Sub80StatusView)] = [
-                ("experimental", Sub80StatusView(experimentalTarget: 75)),
-                ("falling", Sub80StatusView(experimentalTarget: 75, fallingFrom: 82, fallingTarget: 75)),
-                ("degraded", Sub80StatusView(degraded: true)),
-                // 0.21.0 §2.2：迟滞执法横幅（「实验性备用通道执法中（约 1 循环/天）」
+                ("falling", Sub80StatusView(fallingFrom: 82, fallingTarget: 75)),
+                ("degraded", Sub80StatusView(degraded: true, degradedWriteValue: 80)),
+                // 0.21.0 §2.2：迟滞执法横幅（0.23.0 §⑤ 措辞翻新后：「备用断电保护执法中（约 1 循环/天）」
                 // ——消费 sub80Hysteresis；新组 6 张全新文件，golden regen 随批次 CI
                 // macos-26 权威对账——M1a Orchestration_embedded 同款流程）。
                 ("hysteresis", Sub80StatusView(hysteresisEnforcing: true)),
@@ -1048,11 +1050,12 @@ private func buildCases() -> [SnapshotCase] {
                 width: 304, height: nil, style: style, scheme: scheme
             ) {
                 AnyView(wrap(style, scheme) {
+                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
                     OrchestrationSectionView(
-                        enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                        enabled: true,
                         lastError: nil, busy: false,
                         readbackLine: "当前生效上限（读回）：75%", readbackIsWarning: false,
-                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                        onToggleEnabled: { _ in }
                     ).frame(width: 304, alignment: .leading)
                 })
             })
@@ -1069,12 +1072,13 @@ private func buildCases() -> [SnapshotCase] {
                 width: 304, height: nil, style: style, scheme: scheme
             ) {
                 AnyView(wrap(style, scheme) {
+                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
                     OrchestrationSectionView(
-                        enabled: true, shortcutName: NativeOrchestration.defaultShortcutName,
+                        enabled: true,
                         lastError: nil, busy: false,
                         readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
                         embeddedExecutorAvailable: true,
-                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                        onToggleEnabled: { _ in }
                     ).frame(width: 304, alignment: .leading)
                 })
             })
@@ -1091,12 +1095,13 @@ private func buildCases() -> [SnapshotCase] {
                 width: 304, height: nil, style: style, scheme: scheme
             ) {
                 AnyView(wrap(style, scheme) {
+                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
                     OrchestrationSectionView(
-                        enabled: false, shortcutName: NativeOrchestration.defaultShortcutName,
+                        enabled: false,
                         lastError: nil, busy: false,
                         readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
                         embeddedExecutorAvailable: true,
-                        onToggleEnabled: { _ in }, onShortcutNameChange: { _ in }
+                        onToggleEnabled: { _ in }
                     ).frame(width: 304, alignment: .leading)
                 })
             })

@@ -175,7 +175,7 @@ extension DaemonCore {
             // 统一完成记录（五落点之三）：XPC cancelAction / setLimits·disable·SIGHUP·
             // SIGTERM 隐式取消一律记冷却 + 关翻转门（R1 P1-2——取消后被下一 tick
             // 立即重触发的漏洞修复）。
-            noteDischargeTerminatedLocked(now: Date())
+            noteDischargeTerminatedLocked()
             // 0.20.1 §2.1 事件落盘（挂钩表第五行·取消臂）：用户/隐式取消。
             Self.persistLog(DischargePersistEvent.cancelled(reason: reason).message)
             // 放电统一取消：恢复 CHIE（重试阶梯）+ enforce CHTE（恢复限充语义）。

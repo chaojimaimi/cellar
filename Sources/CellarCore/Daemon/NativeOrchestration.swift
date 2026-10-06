@@ -91,8 +91,7 @@ public struct OrchestrationStatus: Codable, Equatable, Sendable {
 
 /// daemon 编排运行时状态（DaemonCore.orchestrationState 存储组；**锁内内存态
 /// 不持久化**——R1 P2 取舍登记：重启后 lastApplied 丢失 → 首 tick valueChange
-/// 幂等误发一次 + 冷却窗重置，换零新增落盘面，照 lastAutoDischargeCompletedAt
-/// 内存态先例）。
+/// 幂等误发一次 + 冷却窗重置，换零新增落盘面）。
 public struct OrchestrationState: Equatable, Sendable {
     /// 已签发未消费的断言 token（单槽——同一时刻至多一个 pending）。
     public var pendingToken: String?
@@ -155,9 +154,9 @@ public enum NativeOrchestration {
     /// 可重发，churn 上界从每 tick 收敛为每窗一次；确认链降级可用、编排不停摆）。
     public static let defaultCooldown: TimeInterval = 600
 
-    /// 快捷指令默认动作名（App 侧 UserDefaults 缺省值 + doctor 检查 17 探测比对
-    /// 同源——单一真相，勿双处字面量）。
-    public static let defaultShortcutName = "设定电池充电上限"
+    /// **0.23.0 §② Shortcuts 备用通道退役**：原「快捷指令默认动作名」常量
+    ///（defaultShortcutName——App 侧 UserDefaults 缺省值 + doctor 检查 17 探测比对
+    /// 同源）随快捷指令链退役删除；编排执行通道收敛 App 内嵌 set 单实现。
 
     /// 目标映射：effectiveLimit → 原生编排目标（S6：27 原生范围硬限 80-100）。
     /// - `>= 80` → `(min(effectiveLimit, 100), false)`；

@@ -134,12 +134,9 @@ public struct DoctorInputs: Sendable {
     public let magSafeLed: MagSafeLEDStatus?
     /// 检查 16 是否已探测（DoctorCommand 恒 true——未探测缺省形态零渲染）。
     public let magSafeLedProbeAttempted: Bool
-    /// 检查 17（v0.19.20 WP-3）：编排通道探测（用户上下文 `shortcuts list`——S2
-    /// 实证 root 恒失败，**禁止移入 daemon（root）侧组装**；doctor CLI 由用户运行
-    /// 即用户会话）。nil = 未探测不渲染（检查 15/16 同款条件渲染兼容约束）。
-    public let orchestrationProbe: OrchestrationDoctorProbe?
-    /// 检查 17 是否已探测（attempted 缺省零渲染——既有 count 断言零回归）。
-    public let orchestrationProbeAttempted: Bool
+    /// **0.23.0 §② Shortcuts 备用通道退役**：原检查 17 编排探测字段
+    ///（orchestrationProbe/orchestrationProbeAttempted——`shortcuts list` 用户会话
+    /// 探测）随批删除；检查 17 判定门收敛为 mclProbeAttempted（DoctorOrchestration）。
     /// 检查 18（0.20 M1a）：topoffprotection 域状态（root 只读展示；nil = 未探测
     /// 不渲染——检查 9-17 同款条件渲染兼容约束）。
     public let topoffDomain: TopoffDomainDoctorProbe?
@@ -184,8 +181,6 @@ public struct DoctorInputs: Sendable {
         nativeLimitProbeAttempted: Bool = false,
         magSafeLed: MagSafeLEDStatus? = nil,
         magSafeLedProbeAttempted: Bool = false,
-        orchestrationProbe: OrchestrationDoctorProbe? = nil,
-        orchestrationProbeAttempted: Bool = false,
         topoffDomain: TopoffDomainDoctorProbe? = nil,
         topoffDomainProbeAttempted: Bool = false,
         mclProbe: MCLDoctorProbe? = nil,
@@ -218,8 +213,6 @@ public struct DoctorInputs: Sendable {
         self.nativeLimitProbeAttempted = nativeLimitProbeAttempted
         self.magSafeLed = magSafeLed
         self.magSafeLedProbeAttempted = magSafeLedProbeAttempted
-        self.orchestrationProbe = orchestrationProbe
-        self.orchestrationProbeAttempted = orchestrationProbeAttempted
         self.topoffDomain = topoffDomain
         self.topoffDomainProbeAttempted = topoffDomainProbeAttempted
         self.mclProbe = mclProbe

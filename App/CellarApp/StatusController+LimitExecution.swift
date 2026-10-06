@@ -3,36 +3,38 @@ import CellarUI
 import Foundation
 import os
 
-// MARK: - 0.21.0 §1.1/§1.5 限充执行器抽象 + 关断残留态驱动对账（外迁 extension——
+// MARK: - 0.21.0 §1.1/§1.5 限充执行器 + 关断残留态驱动对账（外迁 extension——
 // StatusController.swift 行数纪律，LED extension 同款拆分惯例；跨文件读取的成员
-// 在主类已放宽 internal——shortcutRunner/mclClient/mclReadbackValue）
+// 在主类已放宽 internal——mclClient/mclReadbackValue）
+//
+// **0.23.0 §② Shortcuts 备用通道退役**：原双实现执行器抽象（set 优先 / 快捷指令
+// fallback——ShortcutLimitExecutor/ShortcutsRunning/OrchestrationSettings）随批
+// 退役，执行体收敛 MCLSetLimitExecutor 单实现（LimitExecuting 协议保留为读回重跑
+// 臂的注入缝——单一 conformer）。
 
-/// 限充执行器抽象（§1.1 R1-P2-3）：编排消费的执行体双实现——**set 路径**
-/// （MCLClient 免 root 直写，0.21.0 主通道）/ **shortcut 路径**（既有快捷指令，
-/// 0.20 通道降为 fallback）。读回校验失配重跑臂同步走本抽象（R1-P2-3）。
-/// Sendable：实现为无状态结构体（detached 闭包捕获存在类型需此约束——
-/// ShortcutsRunning 先例）。
+/// 限充执行器抽象（§1.1 R1-P2-3；0.23.0 收敛单实现）：编排消费与读回校验失配
+/// 重跑臂共用的执行体缝。返回**读回校验目标**（= NativeLimitSet.setTarget 映射后
+/// 的实际写入值），**0.22.4 模型 v2 起为 Optional**——setTarget <80 → nil（映射
+/// 退役：任何 100/80 补写都只造 M2 环境拖慢域接管，见 NativeLimitSet.setTarget
+/// 头注）；nil = 未执行写（调用方按各自链语义处理——生产链 expected ∈ {80,100,≥80}
+/// 恒非 nil，nil 分支防御性）。抛错 = 执行失败（detail 进回报链；MCLSetFailure 为
+/// 结构化失败分类）。
 protocol LimitExecuting: Sendable {
-    /// 执行目标设置。返回**读回校验目标**（set 路径 = NativeLimitSet.setTarget
-    /// 映射后的实际写入值；快捷指令路径 = 同值），**0.22.4 模型 v2 起为 Optional**
-    /// ——setTarget <80 → nil（映射退役：任何 100/80 补写都只造 M2 环境拖慢域
-    /// 接管，见 NativeLimitSet.setTarget 头注）；nil = 未执行写（调用方按各自
-    /// 链语义处理——生产链 expected ∈ {80,100,≥80} 恒非 nil，nil 分支防御性）。
-    /// 抛错 = 执行失败（detail 进回报链；MCLSetFailure 为 set 路径结构化失败）。
     func execute(target: Int) async throws -> Int?
 }
 
-/// set 路径执行体（§1.1）：MCLClient.setLimit 免 root 直写。阻塞 ObjC 调用经
-/// Task.detached 承载（主 actor 永不等待——MCLClient 线程纪律）。
+/// set 路径执行体（**唯一执行通道**——0.23.0 §② 快捷指令 fallback 退役）：MCLClient
+/// setLimit 免 root 直写。阻塞 ObjC 调用经 Task.detached 承载（主 actor 永不等待
+/// ——MCLClient 线程纪律）。
 struct MCLSetLimitExecutor: LimitExecuting {
     let client: MCLClient
 
     func execute(target: Int) async throws -> Int? {
         // 0.22.4：<80 → nil（映射退役）。防御分支（生产链 expected 恒 ≥80 不可达）
-        // 走抛错而非静默返回——抛错进既有失败链如实计数/上屏，返回 nil 会被对账臂
+        // 走抛错而非静默返回——抛错进既有失败链如实上屏/计数，返回 nil 会被对账臂
         // 当成功复位退避、被回报链报 ok（虚报成功，违反不静默纪律）。用独立错误
-        // 类型而非 MCLSetFailure：分类学语义是 NSError 分类（fallback 簿记消费面），
-        // 值级防御拒绝不应推进连击/驻留。
+        // 类型而非 MCLSetFailure：分类学语义是 NSError 分类（失败可见面），
+        // 值级防御拒绝不应污染通道健康分类。
         guard let value = NativeLimitSet.setTarget(for: target) else {
             throw LimitSetDomainFloor(target: target)
         }
@@ -51,30 +53,9 @@ struct LimitSetDomainFloor: Error, CustomStringConvertible {
     }
 }
 
-/// 快捷指令路径执行体（0.20 WP-2 既有通道；fallback 驻留期承载）。
-struct ShortcutLimitExecutor: LimitExecuting {
-    let runner: ShortcutsRunning
-    let name: String
-
-    func execute(target: Int) async throws -> Int? {
-        try await runner.run(name: name, percent: target)
-        return target
-    }
-}
-
 extension StatusController {
-    /// 执行体构造（§1.1 路由：set 优先；驻留后快捷指令——若用户未建，执行失败
-    /// 如实回报，不静默）。
-    func makeLimitExecutor(flavor: NativeLimitSet.ExecutorFlavor, name: String) -> LimitExecuting {
-        switch flavor {
-        case .embeddedSet:
-            return MCLSetLimitExecutor(client: mclClient)
-        case .shortcut:
-            return ShortcutLimitExecutor(runner: shortcutRunner, name: name)
-        }
-    }
-
-    // MARK: - 0.21.0 §1.5 关断残留闭环（App 侧补偿臂）
+    // MARK: - 0.21.0 §1.5 关断残留闭环（App 侧补偿臂；0.23.0 §② 原执行体路由
+    // makeLimitExecutor 随快捷指令 fallback 退役——消费点直接构造 MCLSetLimitExecutor）
 
     /// App 自发关断（面板 disable / 编排开关关 XPC 成功回包）→ 按表即时对账
     /// （主 actor 调度，阻塞 I/O 全 detached——runControl onSuccess 回调语境）。
@@ -196,10 +177,8 @@ extension StatusController {
             Self.log.info("关断残留对账跳过：读回 \(readback)% > 期望 \(expected)% ∧ 校准可疑近似命中（percent ≥95 充电 ∧ target ≤90）——MCL 保持，引导 daemon 指纹接管（下轮 30s 重评；近似豁免可能漏抑制对账一轮）")
             return
         }
-        // 补偿 set（当前执行体味道；Name 仅快捷指令 fallback 味道消费）。
-        let flavor = NativeLimitSet.executorFlavor(dwellingShortcut: executorDwellsShortcut)
-        let executor = makeLimitExecutor(
-            flavor: flavor, name: OrchestrationSettings.currentShortcutName())
+        // 补偿 set（唯一执行通道——0.23.0 §② 快捷指令 fallback 退役）。
+        let executor = MCLSetLimitExecutor(client: mclClient)
         do {
             let setValue = try await executor.execute(target: expected)
             let verified = await Task.detached { client.readLimit() }.value

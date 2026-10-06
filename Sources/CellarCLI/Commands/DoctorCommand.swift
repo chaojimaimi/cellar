@@ -210,12 +210,9 @@ struct DoctorCommand: ParsableCommand {
             appVersion: Self.readAppVersion()
         )
 
-        // 检查 17：编排通道（v0.19.20 WP-3）。**必须在用户上下文执行**——doctor
-        // CLI 由用户运行即用户会话 ✓（S2 实证：sudo shortcuts run 恒失败，本探测
-        // 禁止移入 daemon 侧组装）；`shortcuts list` 只读列举，零写入面。
-        let orchestrationProbe = probeOrchestration()
-
-        // 检查 17 set 分支 + 检查 19/20（0.21.0 §1.2/§1.3/§1.5）：MCL 读回只读
+        // 检查 17（0.23.0 §② Shortcuts 备用退役）：原 `shortcuts list` 用户会话
+        // 探测随批删除——判定收敛为 MCL 读回探测单源（见 DoctorOrchestration）。
+        // 检查 17 + 检查 19/20（0.21.0 §1.2/§1.3/§1.5）：MCL 读回只读
         // 探测（用户会话 GET——非 root 读级可用，S3 实证；doctor 只读契约，set 面
         // 不入 doctor；失败结构化落入 probe，不静默）。
         let mclProbe = MCLReadbackProbe.probe()
@@ -264,9 +261,6 @@ struct DoctorCommand: ParsableCommand {
             // daemon 探测侧权威；daemon 未运行 → nil 走「未上报」INFO 行）。
             magSafeLed: daemonStatus?.magSafeLed,
             magSafeLedProbeAttempted: true,
-            // v0.19.20 检查 17：编排通道探测（用户会话组装，见上方注记）。
-            orchestrationProbe: orchestrationProbe,
-            orchestrationProbeAttempted: true,
             // 0.20 M1a 检查 18：topoffprotection 域状态（root 只读展示）。
             topoffDomain: topoffDomain,
             topoffDomainProbeAttempted: true,
@@ -277,31 +271,6 @@ struct DoctorCommand: ParsableCommand {
             // CLI 进程收集注入——B4：doctor 报告在 CLI 进程生成，无进程视角分叉）。
             // v0.19.20 WP-6：检查 15 的 27「注册残留」语义同走本开关。
             osMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        )
-    }
-
-    /// 检查 17 探测（用户会话 `shortcuts list`；只读）。列表按行切分去空白行；
-    /// 失败详情取合并输出前 120 字符（诊断可见性，不吐全量）。
-    private func probeOrchestration() -> OrchestrationDoctorProbe {
-        let (output, exitCode) = runProcessCapture("/usr/bin/shortcuts", ["list"])
-        guard exitCode == 0 else {
-            let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            let truncated = detail.count > 120 ? String(detail.prefix(120)) + "…" : detail
-            return OrchestrationDoctorProbe(
-                listSucceeded: false, shortcutCount: nil,
-                defaultShortcutPresent: nil,
-                failureDetail: truncated.isEmpty ? "exit \(exitCode)" : truncated
-            )
-        }
-        let names = output
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        return OrchestrationDoctorProbe(
-            listSucceeded: true,
-            shortcutCount: names.count,
-            defaultShortcutPresent: names.contains(NativeOrchestration.defaultShortcutName),
-            failureDetail: nil
         )
     }
 

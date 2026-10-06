@@ -455,13 +455,10 @@ func runCalibrationDomainScenarios() throws {
 
     // ---- ⑩ 交互与拒绝（方案 §4.1.10）----
 
-    // 校准-32：自动放电触发判定在校准动作活跃下恒 false（actionActive 输入）。
-    check(!Discharge.autoTriggerReady(
-        enabled: true, mode: "active", externalConnected: true, isCharging: false,
-        percent: 82, effectiveTarget: 80,
-        actionActive: true, dischargeCapable: true, oscillationSuspended: false,
-        now: t0, lastAutoCompletion: nil, adapterCycleSinceCompletion: true
-    ), "校准-32", "校准动作在轨（actionActive=true）→ 自动放电不触发（互斥，方案 §3.1）")
+    // 校准-32：**0.23.0 自动放电自动机退役**——原「自动放电触发判定在校准动作
+    // 活跃下恒 false」场景随 autoTriggerReady 判定链删除而退役（自动放电臂整体
+    // 不存在，校准×放电互斥由 actionTrack 单轨 + topoff actionActive 静默门承接，
+    // TopoffDomain 路由-钉面）。
 
     // 校准-33：Discharge/Calibration 常量独立演化断言（temperatureLimitC 同值不同义；
     // 其余常量按各自语义独立演化）。

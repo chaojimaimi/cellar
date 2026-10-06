@@ -14,9 +14,14 @@ struct AboutSections: View {
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var loginItems: LoginItemController
     @EnvironmentObject private var styleController: StyleController
+    @EnvironmentObject private var updateChecker: UpdateChecker
     @Environment(\.cellarTheme) private var theme
     /// 摘要已复制的轻反馈（2s 后自动清除）。
     @State private var copied = false
+    /// 手动「检查更新」无更新反馈（0.23.0 §⑥；3s 自动清除——有新版行常驻）。
+    @State private var upToDateNotice = false
+    /// 手动检查失败反馈（code-review P3：失败 ≠ 已是最新——诚实呈现分流；3s 清）。
+    @State private var checkFailedNotice = false
 
     var body: some View {
         Form {
@@ -38,6 +43,39 @@ struct AboutSections: View {
                 // 用户可见行用本地化展示名；原始存储值只进诊断摘要（排障需要）。
                 // 全风格映射（UD-7：二元 ternary 在第三风格下会误显「原生」）。
                 LabeledContent(CellarL10n.s("settings.panelStyle"), value: styleDisplayName)
+                // 0.23.0 §⑥：新版本行 + 手动「检查更新」（唯一出站 = api.github.com
+                // 只读 GET——SECURITY.md 声明同步；不自动下载/安装，前往下载经 URL
+                // 白名单校验 https ∧ github.com fail-closed）。
+                if let version = updateChecker.latestVersion {
+                    HStack {
+                        Text(CellarL10n.s("about.update.available", version))
+                            .font(.caption)
+                            .foregroundStyle(theme.warning)
+                        Spacer()
+                        Button(CellarL10n.s("about.update.download")) {
+                            updateChecker.openDownloadPage()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                HStack {
+                    Button(updateChecker.checking
+                           ? CellarL10n.s("common.checking")
+                           : CellarL10n.s("about.update.check")) {
+                        checkForUpdates()
+                    }
+                    .disabled(updateChecker.checking)
+                    if upToDateNotice {
+                        Text(CellarL10n.s("about.update.latest"))
+                            .font(.caption)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    if checkFailedNotice {
+                        Text(CellarL10n.s("about.update.failed"))
+                            .font(.caption)
+                            .foregroundStyle(theme.warning)
+                    }
+                }
             } header: {
                 Text(CellarL10n.s("settings.section.version"))
             }
@@ -54,6 +92,24 @@ struct AboutSections: View {
                 Text(CellarL10n.s("about.datasource"))
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
+            }
+        }
+    }
+
+    /// 手动检查更新（0.23.0 §⑥：绕 24h 节流不绕同版本通知去重——红 F9 口径恒定；
+    /// 三态分流〔code-review P3〕：无更新 → 「已是最新」；失败 → 「检查失败」；
+    /// 有新版 → 行内「前往下载」按钮即现——失败不得伪装成已最新）。
+    private func checkForUpdates() {
+        Task {
+            switch await updateChecker.checkNow() {
+            case .upToDate:
+                upToDateNotice = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { upToDateNotice = false }
+            case .failed:
+                checkFailedNotice = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { checkFailedNotice = false }
+            case .found:
+                break
             }
         }
     }

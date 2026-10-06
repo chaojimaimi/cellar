@@ -24,17 +24,16 @@ struct CellarApp: App {
     // StyleController 同款）；MenuBarExtra label 闭包 + 面板页脚 Toggle + 主窗口
     // 通用页 Toggle 多消费源。
     @StateObject private var displaySettings = DisplaySettingsController(store: CellarApp.sharedConfigStore)
-    // v0.19.20：编排偏好控制器（WP-2/WP-3——快捷指令名输入框宿主；值存
-    // UserDefaults 而非共享 app-config（R1 P0-2：daemon 只发 target 数字，名字仅
-    // App 执行时消费；执行侧经 OrchestrationSettings.currentShortcutName() static
-    // 直读同键，不经实例——App.init 早期访问 @StateObject 临时实例陷阱规避）。
-    @StateObject private var orchestrationSettings = OrchestrationSettings()
     /// 0.18 T5 D-5a：CPU 表面温度/双风扇采样器（panelVisible 门控经
     /// StatusController.setPanelVisible 转发——弱引用回填点在 PanelView.panelAppeared；
     /// @Published 直注 PanelView，不经 statusController 传播的 MenuBarIconLabel 教训）。
     @StateObject private var cpuFanMonitor = CpuFanMonitor()
     /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
     private let notifications = NotificationService()
+    // 0.23.0 §⑥ 更新检查器：启动检查不在 init 自启——挂 MenuBarExtra label
+    // .task（幸存实例语境，防 @StateObject 临时实例预写节流戳——CellarApp.init
+    // 不触碰）。
+    @StateObject private var updateChecker = UpdateChecker()
     /// Phase 5 v1.3 统计采样器：非可观察（视图不直接读），60s 常驻采样循环——
     /// 自标定在自身 init（@StateObject 早期访问陷阱：App.init 不触碰）。
     private let statsSampler = StatsSampler()
@@ -64,6 +63,15 @@ struct CellarApp: App {
             } else {
                 notifications.deliverSuppressionNotice()
             }
+        }
+        // 0.23.0 §⑥：更新检查发现新版直投（不走事件枚举——红队裁决，防污染
+        // notificationEvents 纯函数域；同版本只通知一次的去重在 UpdateChecker 侧
+        // lastNotifiedVersion 承担）。⚠️ 与下方 onInstallSucceeded 同款临时实例
+        // 残留（登记不扩 scope）：UpdateChecker 启动检查不在 init 自启（临时实例
+        // 会预写节流戳挤掉幸存实例通知面）——挂在 MenuBarExtra scene 的 .task
+        //（幸存实例语境，菜单栏 scene 启动即执行）。
+        updateChecker.onUpdateAvailable = { [notifications] version in
+            notifications.deliverUpdateAvailable(version: version)
         }
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in
@@ -103,7 +111,10 @@ struct CellarApp: App {
         } label: {
             // v1.10 M2：双观察源直注（StatusController 图标态 + DisplaySettingsController
             // 百分比显隐——更新传播见 MenuBarIconLabel 注记）。
+            // 0.23.0 §⑥：启动更新检查挂 label 视图 .task（菜单栏图标启动即渲染——
+            // 唯一常驻求值面；幸存 UpdateChecker 实例语境，24h 节流门在检查器内）。
             MenuBarIconLabel(controller: statusController, settings: displaySettings)
+                .task { updateChecker.checkIfDue() }
         }
         .menuBarExtraStyle(.window)
         // Phase 5 v1.2 §2.1 主窗口（macOS 13+ Window scene）：ThemeProvider 全树
@@ -130,9 +141,9 @@ struct CellarApp: App {
                     // v1.11 T2：显示设置控制器注入主窗口链（通用页电池图标 Toggle
                     // 的唯一数据源——缺注入运行时 crash，照五对象既有纪律）。
                     .environmentObject(displaySettings)
-                    // v0.19.20：编排偏好注入主窗口链（通用页编排节快捷指令名输入框
+                    // 0.23.0 §⑥：更新检查器注入主窗口链（关于页新版本行/检查按钮
                     // 的唯一数据源——同上纪律；面板不消费，MenuBarExtra 链不注入）。
-                    .environmentObject(orchestrationSettings)
+                    .environmentObject(updateChecker)
                     // 0.22.0 §4.3：CPU/风扇采样器注入主窗口链（通用页风扇节 Tp00
                     // 参考温度行消费源——@EnvironmentObject 缺注入运行时 crash，
                     // 照 displaySettings 既有纪律；幸存实例 = 组合根同一 @StateObject）。
