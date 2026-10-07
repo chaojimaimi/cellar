@@ -34,17 +34,15 @@ struct GeneralSections: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             generalSection
-            // v0.19.20 编排节（WP-3）：capabilities 含 orchestration（27 终态）才
-            // 显示——26 及以下 UI 隐藏（§1；nil = 旧 daemon 同样隐藏，不渲染升级
-            // 提示）。0.23.0 §①：原自动放电节随批删除（本位置上移）。
-            if orchestrationCapabilityAvailable {
-                orchestrationSection
-            }
+            // **0.23.1 编排退役**：原 v0.19.20 编排节（WP-3——capabilities 含
+            // orchestration 才显示）随批删除（§1.0——wire enabled=false 照填下编排节
+            // 将常驻渲染冻结关态；「通用页无编排节」为本批走查执行项）。R10：域生效
+            // 值失配提示迁守护进程节尾行（见 generalSection）。
             // 0.21.3 §1.3 UI-100 机制关闭警示行（G3）：daemon wire
             // sub80MechanismSuppressed——系统设置把充电上限设为 100% 关闭了原生
             // 限充机制（topoff 域连续 ≥2 拍覆写签名命中锁存）。Cellar 正在自动
             // 恢复（重写限频 10 min）；解除 = 域读回一致（随轮询自然消失）。
-            // 独立条件块（域执法不受编排开关门——不并入编排节防开关关态漏显）。
+            // 独立条件块。
             if statusController.daemonStatus?.sub80MechanismSuppressed == true {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(CellarL10n.s("settings.sub80.suppressed"))
@@ -174,6 +172,17 @@ struct GeneralSections: View {
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
             }
+
+            // **R10（0.23.1）迁移新家**：域生效值失配提示（0.21.1 §2.2 诚实性特性，
+            // 原展示在编排节 readbackLine——编排节随批删除）→ 守护进程节尾行。
+            // 数据源 = sampleMCLOnce 30s 采样（MCL 读回 ≠ daemon sub80WrittenLimit
+            // → 「系统设置 X% 已被 Cellar 目标 Y% 覆盖」警示行；nil = 不渲染）。
+            if let notice = statusController.domainOverrideNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -264,39 +273,12 @@ struct GeneralSections: View {
         }
     }
 
-    // MARK: - v0.19.20 充电编排
+    // MARK: - v0.19.20 充电编排（0.23.1 退役）
 
-    /// 能力门控：capabilities 含 orchestration（27 终态标记——RuntimeProbe
-    /// noBackendTerminalDisposition 上报；nil/缺能力 → 节整体隐藏）。
-    private var orchestrationCapabilityAvailable: Bool {
-        statusController.capabilities?.contains(DaemonXPC.capabilityOrchestration) == true
-    }
-
-    /// 编排节（开关 + 说明 + 状态行 + 读回行；组件参数驱动——CellarUICheck 可
-    /// 独立渲染）。开关绑定 daemonStatus 单一真相（daemon 确认后回传翻转）。
-    /// 0.21.0 §1.2：节头文案诚实化（「编排」→「系统限充执行」，新旧键兼容）。
-    /// **0.23.0 §② Shortcuts 备用退役**：原 shortcutName 输入框参数与
-    /// onShortcutNameChange 回调删除——执行体收敛 App 内嵌 set 单实现（组件侧
-    /// 输入框/创建指引一并退役；失败细节仍走 lastError 行）。
-    private var orchestrationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeaderText(CellarL10n.sRenamed(
-                "settings.section.execution", fallback: "settings.section.orchestration"))
-            OrchestrationSectionView(
-                enabled: statusController.orchestrationEnabled,
-                lastError: statusController.orchestrationStatus?.lastError,
-                busy: statusController.busy,
-                showsTitle: false,
-                // 0.20 M2 WP3 读回展示行（MCLClient 采样 + 执行后即时校验；nil =
-                // 不渲染——sticky 停用前未采样的首帧自然缺席，不渲染占位）。
-                readbackLine: statusController.orchestrationReadbackLine,
-                readbackIsWarning: statusController.orchestrationReadbackWarning,
-                // 0.23.0 §②：set 可用态 = 27 终态 ∧ MCL 通道在位（语义收敛）。
-                embeddedExecutorAvailable: statusController.embeddedExecutorAvailable,
-                onToggleEnabled: { statusController.setOrchestration($0) }
-            )
-        }
-    }
+    // **0.23.1 编排退役**：原编排节（orchestrationCapabilityAvailable 门 +
+    // orchestrationSection + OrchestrationSectionView 接线）整块删除——编排链
+    // 随批退役（daemon 域承载单通道），wire enabled=false 照填下编排节将常驻
+    // 渲染冻结关态；域生效值失配提示（R10）迁守护进程节尾行。
 
     private var registrationText: String {
         switch loginItems.registration {

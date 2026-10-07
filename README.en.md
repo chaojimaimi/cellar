@@ -21,7 +21,7 @@
 - **Charge to Full once**: temporarily charges to 100% (e.g., for a full battery before a trip); automatically restores the charge limit on completion; for full battery calibration use one-click calibration (below)
 - **Discharge to Limit**: temporarily disconnects the adapter and runs on battery until the charge drops to the limit target, then automatically restores (real-time supply power visualization; support conditions below)
 - **Root-free read-only monitoring**: charge level, charging/discharging state, voltage, current, temperature, cycle count, battery health, design/full charge capacity, cell voltages, adapter details
-- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command twenty-point diagnostics (device compatibility, native-limit coexistence, MagSafe LED, orchestration/execution and MCL reconciliation)
+- **CLI + root daemon**: one install, automatic management at boot; `doctor` one-command nineteen-point diagnostics (device compatibility, native-limit coexistence, MagSafe LED, charge-limit execution channel (restore/reconciliation) and MCL reconciliation)
 
 ## GUI (App)
 
@@ -122,7 +122,7 @@ GUI route: open `App/CellarApp.xcodeproj` in Xcode and build; place the resultin
 ```bash
 cellar status          # status overview (backend, level, charging state, control key, daemon state)
 cellar status --json   # same, machine-readable JSON (daemon/route/local sections, for scripting)
-cellar doctor          # twenty-point diagnostic report (exit codes 0/1/2 usable in scripts)
+cellar doctor          # nineteen-point diagnostic report (exit codes 0/1/2 usable in scripts)
 cellar doctor --devices  # single-line device compatibility output (welcome in issue reports)
 sudo cellar set 80     # set limit 80% (range 60–100; --hysteresis n available)
 sudo cellar disable    # stop limit management, restore default system charging
@@ -147,18 +147,17 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 892 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 875 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (800+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 92.06%)
-swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 462
-                            # authoritative [0.22.0 check-in; 0.23.0 retires the 6
-                            # Sub80Status_experimental cases and drifts Orchestration_* /
-                            # Sub80Status_* copy — verify 456 after CI snapshot-regen])
-                            # + localization gate (502 keys × en/zh-Hans)
+                            # pure logic, ≥80% · currently 91.97%)
+swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 456
+                            # authoritative [0.23.0 check-in; 0.23.1 retires the 30
+                            # Orchestration_* cases — verify 426 after CI snapshot-regen])
+                            # + localization gate (477 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

@@ -12,7 +12,7 @@ import CellarCore
 ///   **euid==0 或 admin 组（gid 80）** 成员（Phase 2 P0 决策：面板是用户态进程，
 ///   UI 控制需要 admin 组放宽；放宽的攻击面上限为充电/风扇策略操纵，无提权/
 ///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流；v0.19.20 编排回报
-///   同门（R1 P1-4）——非管理员回报被拒 → pending 未清 → TTL 过期重发降级链），
+///   同门（R1 P1-4）——非管理员回报被拒 → 0.23.1 幂等日志 no-op（pending/TTL 链已退役——旧 App 兼容保活）降级链），
 ///   否则错误回包（ok=false + 原文）。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
@@ -139,10 +139,11 @@ final class XPCServer: @unchecked Sendable {
             respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
 
         case NativeLimitSet.restoreCommand:
-            // 0.21.0 §1.3：恢复限充（27 fullOnce 复活配套；鉴权门同变更命令；无
-            // 参数——恢复目标 = daemon 当前策略上限。R3-P3-1 前置拒收（编排开关
-            // 关）在 core.restoreChargeLimit 内上抛原文）。
-            respondChange(peer: peer, operation: NativeLimitSet.restoreCommand, body: { try core.restoreChargeLimit() })
+            // 0.21.0 §1.3 → **0.23.1 R5 重写形态**：恢复限充（27 fullOnce 配套；
+            // 鉴权门同变更命令；无参数——恢复目标 = daemon 当前策略上限。原前置
+            // 拒收（编排开关关）随断言链退役删除——handler 清窗 + 清锁存 + 即时
+            // tick 域写 target，不再 throw）。
+            respondChange(peer: peer, operation: NativeLimitSet.restoreCommand, body: { core.restoreChargeLimit() })
 
         case "startCalibration":
             // WP3 校准（鉴权门同变更命令；无参数——相位序列由 daemon 执行）。
@@ -343,7 +344,7 @@ final class XPCServer: @unchecked Sendable {
 
         case OrchestrationWireKeys.reportCommand:
             // v0.19.20：reportOrchestration（鉴权门同变更命令——R1 P1-4；非管理员
-            // 回报被拒 = 降级链起点：pending 未清 → TTL 过期重发。token/detail 长度
+            // 回报被拒 = 降级链起点：0.23.1 幂等日志 no-op（pending/TTL 链已退役——旧 App 兼容保活）。token/detail 长度
             // 白名单已在 validateRequest，此处复核 + 缺键拒绝；token 幂等消费在
             // core.reportOrchestration——不匹配静默丢弃）。
             guard authorize(peer, operation: "reportOrchestration") else { return }

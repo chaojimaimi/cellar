@@ -51,12 +51,13 @@ struct ActionSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 「充满一次」按钮（二态之一；0.21.0 §1.3 门控重定版）：
-    /// - 26（非编排终态）：busy ∨ nativeLimitActive 禁用——守卫口径与 daemon
+    /// 「充满一次」按钮（二态之一；**0.23.1 R4 门重定版**）：
+    /// - 26（非现代后端）：busy ∨ nativeLimitActive 禁用——守卫口径与 daemon
     ///   fullOnceStartPrecondition 拒绝行为一致（unknown 态放行 = fail-open），
     ///   26 行为零变化；
-    /// - 27（编排终态）：busy ∨ 编排开关关禁用（R2-P1 首门不可绕过——daemon 前置
-    ///   拒收同语义；nativeLimit 残留不再禁用——App set 覆写 MCL，plist 残留非阻断）。
+    /// - 27+（现代后端）：仅 busy 禁用——原「编排开关关禁用」项随编排开关退役
+    ///   删除（R4：按钮 disabled 删编排项；daemon 前置 27 臂 = 平台判别原生守卫
+    ///   绕过，nativeLimit 残留非阻断）。
     private var fullOnceButton: some View {
         Button {
             statusController.fullOnce()
@@ -65,9 +66,7 @@ struct ActionSectionView: View {
         }
         .controlSize(.small)
         .disabled(statusController.busy
-            || (statusController.orchestrationTerminal
-                ? !statusController.orchestrationEnabled
-                : statusController.nativeLimitActive))
+            || (!statusController.platformModern && statusController.nativeLimitActive))
     }
 
     /// 0.21.0 §1.3 恢复臂（二态之二）：横幅「已临时放开限充（充满后请点击恢复）」

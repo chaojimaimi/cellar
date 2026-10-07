@@ -15,11 +15,14 @@ public enum NativeLimitSet {
     public static let minimumSetLimit = 80
     /// set 上限（充满语义）。
     public static let maximumSetLimit = 100
-    /// §1.3 fullOnce 27 临时放开目标（pendingTarget=100 可 set——policy <80 分支同样合法）。
+    /// §1.3 fullOnce 27 临时放开目标（**0.23.1 编排退役注记**：原 pending(100)
+    /// 产出链随批删除——本常量降级为语义钉面〔= maximumSetLimit〕，域随写 100
+    /// 由 Topoff.shutdownLimit 承担；保留供场景域断言引用）。
     public static let fullOnceTarget = 100
 
-    /// 恢复臂 XPC 命令字面量（§1.3 恢复：daemon 置 pending(policy.upperLimit)）。
-    /// 与既有命令命名同域（fullOnce / cancelAction / setOrchestration）。
+    /// 恢复臂 XPC 命令字面量（§1.3 恢复：**0.23.1 R5 重写形态**——daemon 清窗 +
+    /// 清锁存 + 即时 tick 域写 target，不再置 pending）。与既有命令命名同域
+    ///（fullOnce / cancelAction / setOrchestration）。
     public static let restoreCommand = "restoreChargeLimit"
 
     /// set 执行目标映射（**0.22.4 模型 v2 退役版**——<80 → nil 不写）：
@@ -30,30 +33,35 @@ public enum NativeLimitSet {
     /// 补偿臂打回 100）：新模型 **域写值直接流入 MCL 执法（含 <80）**，MCL=100
     /// = 无限制且诱发 agent 再关（M2/M4）。v2 口径：<80 时 MCL 无需任何 set——
     /// 恢复臂 max(target,80) 开启垫脚石后域即时接管（M1），任何 100 写入都只会
-    /// 造 M2 环境拖慢收敛。生产调用点仅两处同链（全库 grep 定谳）：W4/W1 共用
-    /// 执行体 MCLSetLimitExecutor（expected ∈ {80,100,≥80} 恒非 nil——nil 分支
-    /// 防御性处理）与 W1 consumeOrchestrationPending（nil → skip 且不回报）。
+    /// 造 M2 环境拖慢收敛。**0.23.1 编排退役**：原 W1 consumeOrchestrationPending
+    /// 消费点随 App 执行链删除——生产调用点仅剩 W4/W1 共用执行体
+    /// MCLSetLimitExecutor（expected ∈ {80,100,≥80} 恒非 nil——nil 分支防御性
+    /// 处理）。
     public static func setTarget(for pendingTarget: Int) -> Int? {
         pendingTarget >= minimumSetLimit ? pendingTarget : nil
     }
 
     /// 0.22.4 补偿臂静默门（W4 关断残留对账 30s 循环 + reconcileShutdownResidualNow
-    /// 即时变体共用；方案 §3.1 v2 终版门式，CellarCoreCheck 场景域钉死——App 只消费）。
+    /// 即时变体共用；CellarCoreCheck 场景域钉死——App 只消费）。
     ///
     /// 根因模型 v2（13:32 事故定谳）：域写值直接流入 MCL 执法（agent 跟随域值，
     /// 含 <80 区间），MCL=100 = 无限制且诱发 agent 自主再关（M2/M4）——补偿臂在
     /// 域承载态写 100 与域 75 互搏（期望表旧模型「域执法需 MCL=100」证伪）。
     ///
     /// 静默判据：mode active ∧ 两窗不在位 ∧（自愈探针观察窗让位（F2——探针只在
-    /// degraded 态跑，本项先于 degraded 保留判定；不静默则 MCL 80 压制 75 观察
-    /// 窗 → 证据窗结构性不可达 → degraded 永不自愈）∨ 域承载（sub80State ==
-    /// .active ∧（upperLimit < 80 ∨ 编排关）——域自足区间，写手让位））。
+    /// degraded 态跑，本项先于域承载判定）∨ **宽读钉死：sub80State == .active 即
+    /// 静默（全目标区间含 <80 与 ≥80——0.23.1 编排退役定版）**）。
     ///
-    /// **显式排除（红队 F1/常规 P0 裁决记录，随代码落注）**：
-    /// - 编排开 ∧ ≥80：sub80State 虽 .active 但 NOT owned——W4 是本区间周期对账
-    ///   防线唯一执行者，静默即失防（门第一支 <80 命中不外溢）；
-    /// - degraded 稳态（无探针）：W4 写 80 =「域通道死亡最后防线」，与 D2 域镜像
-    ///   80 同值零对抗——保留写；
+    /// **0.23.1 宽读语义（红队 §0.9 钉面）**：域承载（.active）覆盖全区间——
+    /// 域写值直接流入 MCL 执法（模型 v2 M1），任何区间补偿写都对域写值对抗；
+    /// 窄读（仅 <80 或编排关区间）会在「新 App + 旧 daemon 混装窗」复活 G1
+    /// （旧 daemon 编排开 ∧ ≥80 域不承载但 wire sub80State 仍 .active——新 App
+    /// 补偿写 100 与旧 daemon MCL 主导执法互搏）。编排开关入参随编排退役删除
+    ///（冻结偏好零消费断言面）。
+    ///
+    /// **显式排除（裁决记录，随代码落注）**：
+    /// - degraded 稳态（无探针）：W4 写 max(target,80) =「域通道死亡最后防线」，
+    ///   与域镜像同值零对抗——保留写；
     /// - sub80State == .off / nil：26/通道关——既有行为不变（26 红线：nil 恒不
     ///   静默，恒走原对账）。
     /// - mode 关 / 两窗在位：期望恒 100（放开语义），无互搏面——不静默（W4-now
@@ -63,56 +71,39 @@ public enum NativeLimitSet {
         fullOnceWindow: Bool,
         chargingDisabledWindow: Bool,
         healProbeActive: Bool,
-        sub80State: Sub80State?,
-        upperLimit: Int,
-        orchestrationEnabled: Bool
+        sub80State: Sub80State?
     ) -> Bool {
         guard modeActive else { return false }
         // 两窗在位 = 显式放开意图（期望恒 100 与域随写 100 同值——无互搏面）。
         guard !fullOnceWindow, !chargingDisabledWindow else { return false }
-        // F2 override：探针观察窗让位（先于 degraded 保留判定——探针只在 degraded
-        // 态，恒真时静默让 75 观察窗可达）。
+        // F2 override：探针观察窗让位（先于域承载判定——探针只在 degraded 态，
+        // 静默让观察窗可达）。
         if healProbeActive { return true }
-        // 域承载支：仅 .active 态参与（degraded 稳态防线保留 / off / nil 排除——
-        // 裁决记录见头注）。
-        guard sub80State == .active else { return false }
-        return upperLimit < minimumSetLimit || !orchestrationEnabled
+        // 宽读钉死：域承载态（.active）即静默——全目标区间（含 ≥80），防混装
+        // G1 复活（见头注）。degraded/off/nil → 不静默（显式排除面）。
+        return sub80State == .active
     }
 
-    /// §1.3 恢复臂按钮判定源（R2-P2-4 钉死，**读回驱动非本地态**——重启与滑杆
-    /// 变更自然收敛）：`MCL 读回 100 ∧ policy < 100`。调用方（App 面板）另叠加
-    /// 27 终态 ∧ mode active ∧ 编排开关开（开关关 = 恢复臂拒收，R3-P3-1——按钮
-    /// 隐藏 + 引导重开）。
-    public static func fullOnceRestoreAvailable(mclReadback: Int?, policyUpperLimit: Int) -> Bool {
-        mclReadback == fullOnceTarget && policyUpperLimit < fullOnceTarget
-    }
-
-    /// MCL 对账期望值（0.21.3 §2.1 八行表统一重定版——三分支模型对齐，G1
-    /// 根治；App 态驱动对账与 doctor 检查 20 同源消费；优先级自上而下）：
+    /// MCL 对账期望值（**0.23.1 编排退役定版四行表**——原 0.21.3 §2.1 八行表随
+    /// 编排开关决策面退役收敛；App 态驱动对账与 doctor 检查 20 同源消费；
+    /// 优先级自上而下）：
     ///
     /// 1. fullOnce 窗            → 100（窗覆盖——优先级最高）
-    /// 2. chargingDisabled 日程窗 → 100（完全放开——与断言链 desired=100 同源）
+    /// 2. chargingDisabled 日程窗 → 100（完全放开——两窗同权）
     /// 3. mode 关（disable）     → 100（API 写全开语义；分支 2 路径保机制使能）
-    /// 4. 编排开 ∧ target ≥80    → target（MCL 主导，App set 执法——周期对账防线）
-    /// 5. 编排开 ∧ target <80 ∧ 非 degraded → 100（sub80 topoff 承载，MCL 必须
-    ///   100 让域管）
-    /// 6. 编排开 ∧ target <80 ∧ degraded → 80（对齐降级稳态钳 `Topoff.
-    ///   degradedWriteValue(for:)`——<80 目标即 80；漏行后果 = 对账写 100 与编排钳
-    ///   互搏 30s 乒乓）
-    /// 7. 编排关 ∧ degraded      → degradedWriteValue（0.23.0 §④ 翻新：
-    ///   max(target,80)——<80 目标 80 不变〔域通道死亡最后防线〕；≥80 目标域随写
-    ///   target，对账期望随行——**W4 行 6/7 与四写点同源**，防 D2×W4 新互搏）
-    /// 8. 编排关 ∧ 非 degraded（含 ≥80）→ 100（**0.21.3 §1.1 域承载全区间**——
-    ///   MCL 必须 100 让域管；旧「<80→80 兜底」为 G1 实证有害形态〔MCL 80 主导
-    ///   顶掉域 75〕，废除）
+    /// 4. degraded → `Topoff.degradedWriteValue(for:)` = max(target,80)（降级稳态
+    ///    钳同源——<80 目标 80〔域通道死亡最后防线〕、≥80 目标随 target；
+    ///    W4 写值与四写点同源，防 D2×W4 互搏）；非 degraded → 100（**域承载
+    ///    全区间新常态**——daemon 域值随汇聚目标，MCL 让域管；原「编排开 ∧ ≥80
+    ///    → target」行随编排退役删除——域承载即 MCL 主导替代，App 侧该区间由
+    ///    宽读静默门兜住不再补偿）。
     ///
-    /// App 对账补偿执行统一走 API set（保机制使能——三分支分支 2 路径）。
-    /// nil 不再出现于 27 正常态（八行恒有期望值）；两窗输入由 wire
+    /// App 对账补偿执行统一走 API set（保机制使能——分支 2 路径）。
+    /// nil 不再出现于 27 正常态（四行恒有期望值）；两窗输入由 wire
     /// `fullOnceWindowActive`/`chargingDisabledWindowActive` 供给（27 恒填；
     /// 26 缺省 false = 既有语义）。缺省参数保源兼容（既有构造点零 diff）。
     public static func shutdownExpectation(
         modeActive: Bool,
-        orchestrationEnabled: Bool,
         upperLimit: Int,
         degraded: Bool = false,
         fullOnceWindowActive: Bool = false,
@@ -121,14 +112,8 @@ public enum NativeLimitSet {
         if fullOnceWindowActive { return maximumSetLimit }            // 行 1
         if chargingDisabledWindowActive { return maximumSetLimit }    // 行 2
         if !modeActive { return maximumSetLimit }                     // 行 3
-        if orchestrationEnabled {
-            if upperLimit >= minimumSetLimit { return upperLimit }    // 行 4
-            // 行 6：0.23.0 §④ degraded 钳随写值统一（<80 目标 = 80，与旧值恒等）。
-            return degraded
-                ? Topoff.degradedWriteValue(for: upperLimit)
-                : maximumSetLimit                                     // 行 6 / 行 5
-        }
-        // 行 7 / 行 8：行 7 随 §④ 翻新（degraded → max(target,80)；<80 恒 80）。
+        // 行 4：degraded 钳 max(target,80)（0.23.0 §④ 公式；<80 恒 80）/ 非
+        // degraded 域承载全区间 → 100。
         return degraded
             ? Topoff.degradedWriteValue(for: upperLimit)
             : maximumSetLimit

@@ -118,7 +118,7 @@ public enum Discharge {
     /// 与采样失败两种成因，27 豁免**仅针对 backend 缺席成因**——放电活跃 ∧ 27 终态
     /// ∧ 控制面可写 ∧ **本拍快照在位** → 豁免并路由维护子分支；快照缺席（采样失败）
     /// 或控制面缺席 → 照常计数（90s 盲态止损保留）。26 瞬态窗口（非终态）恒计数
-    /// ——26 行为零变化（编排门 orchestrationTerminal 不含 26 瞬态）。
+    /// ——26 行为零变化（平台门 modernBackendTerminal 不含 26 瞬态）。
     public enum ObservationRoute: Equatable, Sendable {
         /// 经 DischargeAdapterControl 执行维护子分支（CHIE 保活/完成判定/合盖检查
         /// ——豁免本拍监控缺失计数；维护链自身账本照常推进 keepAliveFailures）。
@@ -137,13 +137,13 @@ public enum Discharge {
     /// 3. 其他动作活跃（27 上校准/fullOnce 均不可达——防御计数）→ `.noteMonitoringLoss`；
     /// 4. 空轨 → `.patrolResidual`（巡检兜底 + 自动触发）。
     public static func observationRoute(
-        orchestrationTerminal: Bool,
+        modernBackendTerminal: Bool,
         isDischargeAction: Bool,
         actionActive: Bool,
         controlWritable: Bool,
         snapshotAvailable: Bool
     ) -> ObservationRoute {
-        guard orchestrationTerminal else { return .noteMonitoringLoss }
+        guard modernBackendTerminal else { return .noteMonitoringLoss }
         if isDischargeAction {
             return controlWritable && snapshotAvailable ? .maintainDischarge : .noteMonitoringLoss
         }

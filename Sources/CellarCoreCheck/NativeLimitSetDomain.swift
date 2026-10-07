@@ -1,20 +1,24 @@
-// CellarCoreCheck —— 0.21.0 §1 set 路径场景域（方案 §1.1/§1.2/§1.3/§1.5）
+// CellarCoreCheck —— 0.21.0 §1 set 路径场景域（方案 §1.1/§1.2/§1.3/§1.5；**0.23.1
+// 编排退役翻新**）
 //
 // 覆盖清单（工单门禁钉死项）：
-// ① set 分流与拒绝链（≥80 set / <80 钳 80 / Code=4 结构化拒绝 + 文案钉死 / 失败
-//    分类三态 / UInt8 越界防御面）
-// ② fullOnce 27（编排开关关拒收 / 开关开放行 / <80 policy 分支 pending(100) 可 set
-//    / 26 回归由 OrchestrationDomain 编排-8..10 背书）
-// ③ 执行器抽象（set 优先 / fallback 触发阈值 2 / 会话驻留 / 成功清零 / Code=4 中性
-//    / 味道路由）
-// ④ 恢复臂判定源（R2-P2-4 读回驱动：读回 100 ∧ policy < 100 矩阵）
-// ⑤ 关断残留检测（0.21.1 §2.2 重定版期望派生：disable 恒 100 / 编排关 ≥80→nil
-//    <80→80 / 正常执行态 nil——态驱动读回驱动分支全矩阵）
-// ⑥ convergenceRoute fullOnce 窗（窗内 target/desired 强制 100、topoffOwned 失效、
-//    窗清恢复既有链、缺省参数零 diff——26 回归锚）
-// ⑦ 恢复臂 XPC 命令字面量 + makeMessage/validateRequest 通道
-// ⑧ doctor 检查 17 set 可用分支 + 检查 19 临时放开残留 + 检查 20 关断残留
-//    （分支矩阵 + 缺省零渲染 + 26 门控）
+// ① set 分流与拒绝链（≥80 set / <80 → nil 不写 / Code=4 结构化拒绝 + 文案钉死 /
+//    失败分类三态）
+// ② fullOnce 27 前置（平台判别原生守卫绕过——0.23.1 全Once 纯 daemon 化钉面；
+//    编排开关拒收面随编排退役删除）
+// ③ 关断残留检测（**0.23.1 四行表**：两窗/mode 关恒 100 / degraded → max(target,80)
+//    / 非 degraded → 100——域承载全区间新常态）
+// ④ convergenceRoute fullOnce 窗（窗内 target 强制 100、topoffOwned 失效——0.23.1
+//    两输出签名）
+// ⑤ 恢复臂 XPC 命令字面量 + makeMessage/validateRequest 通道
+// ⑥ doctor 检查 17 执行通道（恢复/对账用）+ 检查 20 关断残留（检查 19 随编排退役
+//    删除——位号留空）
+// ⑦ 补偿臂静默门（**0.23.1 宽读钉死**：sub80State == .active 即静默全区间——
+//    混装 G1 防）
+// ⑧ degradedWriteValue 统一钉面（channelTick/healTick 写点同值）
+// 原 set-6 恢复臂判定源（fullOnceRestoreAvailable）/ set-16 拒收文案 /
+// set-14 OrchestrationState 窗位面随编排退役删除（App 侧判定源改挂 wire
+// fullOnceWindowActive——R4）。
 //
 // 全部纯函数面（Data 注入 / 临时目录），不触碰真实 plist、不起 daemon、不做真实
 // ObjC set 调用（set 面 I/O 在 App 侧 MCLClient——CellarCoreCheck 只钉决策）。
@@ -27,13 +31,52 @@ import XPC
 func runNativeLimitSetDomainScenarios() throws {
     try runSetRouteScenarios()
     try runSetFailureClassificationScenarios()
-    try runFullOnceRestoreJudgmentScenarios()
+    try runFullOncePreconditionScenarios()
     try runShutdownExpectationScenarios()
     try runConvergenceRouteFullOnceWindowScenarios()
     try runRestoreWireScenarios()
     try runDoctorNativeLimitScenarios()
     try runCompensationSilencedScenarios()
     try runDegradedWriteValueScenarios()
+}
+
+// MARK: - ②' fullOnce 27 前置（0.23.1 纯 daemon 化钉面——平台判别 + 原生守卫绕过）
+
+private func runFullOncePreconditionScenarios() throws {
+    // set-5（≥4）：27 臂放行（原生守卫绕过）+ 26 守卫逐值 + 次序钉。
+    do {
+        // 27 平台判别 → 放行（无编排开关拒收面——置窗交 daemon）。
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: true, capabilities: ["orchestration"]) == nil,
+              "set-5", "27 平台判别 → 放行（原生守卫绕过——App/域写覆写 MCL，残留非阻断）")
+        // 27 ∧ 原生残留 85 在场 → 仍放行（27 臂先于 native——守卫绕过职责钉面）。
+        let residual = NativeChargeLimitReading(policies: [
+            NativeChargePolicy(socLimit: 85, reason: "manualChargeLimit", terminated: false),
+        ], detectorError: false)
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: true, nativeLimit: residual,
+            capabilities: ["orchestration"]) == nil,
+              "set-5", "27 ∧ 残留 85 在场 → 放行（27 臂先于 native——残留非阻断）")
+        // 26 legacy（[]）/ 26 瞬态（nil）→ 走原生守卫（26 行为零变化）。
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: true, capabilities: []) == nil,
+              "set-5", "26 legacy：capabilities=[]（CH0B 后端在场）→ 放行（勿用 [] 误判 27）")
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: true, capabilities: nil) == nil,
+              "set-5", "26 瞬态：capabilities=nil（后端缺席窗口）→ 放行（勿用 backend nil 误判 27——平台判别钉面）")
+        // mode/外接门仍最优先。
+        check(fullOnceStartPrecondition(
+            mode: "disabled", externalConnected: true, capabilities: ["orchestration"]) == .modeNotActive,
+              "set-5", "mode 门先于 27 臂判定（既有前置次序不被扰动）")
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: false, capabilities: ["orchestration"]) == .noExternalPower,
+              "set-5", "外接门先于 27 臂判定")
+        // 26 原生守卫逐值（残留阻断）。
+        check(fullOnceStartPrecondition(
+            mode: "active", externalConnected: true, nativeLimit: residual,
+            capabilities: ["discharge"]) == .nativeChargeLimit(socLimit: 85),
+              "set-5", "26 ∧ 残留 85 → nativeChargeLimit 拒绝（26 原生守卫逐值不变——26 红线）")
+    }
 }
 
 // MARK: - ① set 分流（0.22.4 模型 v2：≥80 set / <80 → nil 不写）
@@ -51,7 +94,7 @@ private func runSetRouteScenarios() throws {
     // 常量钉死。
     check(NativeLimitSet.minimumSetLimit == 80 && NativeLimitSet.maximumSetLimit == 100,
           "set-1", "set 域 80-100（S3 定谳——<80 被 Code=4 拒绝）")
-    check(NativeLimitSet.fullOnceTarget == 100, "set-1", "fullOnce 临时放开目标 = 100（§1.3；0.23.0 §② fallback 阈值随快捷指令通道退役删除）")
+    check(NativeLimitSet.fullOnceTarget == 100, "set-1", "fullOnce 临时放开目标 = 100（0.23.1 语义钉面——pending 产出链随编排退役删除，域随写 100 由 Topoff.shutdownLimit 承担）")
 }
 
 // MARK: - ①' set 失败链分类（Code=4 结构化拒绝）
@@ -80,110 +123,69 @@ private func runSetFailureClassificationScenarios() throws {
           "set-2", "实例级失败文案含域/码/详情（原文通道上屏）")
 }
 
-// MARK: - ③ 恢复臂判定源（R2-P2-4 读回驱动；原执行器抽象 fallback 族随 0.23.0
-// §② 快捷指令通道退役删除——set 为唯一执行通道）
-
-private func runFullOnceRestoreJudgmentScenarios() throws {
-    // set-6：按钮二态判定源 = MCL 读回 100 ∧ policy < 100（读回驱动非本地态）。
-    check(NativeLimitSet.fullOnceRestoreAvailable(mclReadback: 100, policyUpperLimit: 85),
-          "set-6", "读回 100 ∧ policy 85 → 恢复臂可见（临时放开在轨）")
-    check(NativeLimitSet.fullOnceRestoreAvailable(mclReadback: 100, policyUpperLimit: 75),
-          "set-6", "读回 100 ∧ policy 75（<80 分支）→ 恢复臂可见（0.22.4 起 pending(75) 消费面 setTarget → nil 不写 MCL——恢复臂 max(75,80) 开启垫脚石后域直接执法）")
-    check(!NativeLimitSet.fullOnceRestoreAvailable(mclReadback: 100, policyUpperLimit: 100),
-          "set-6", "policy 100 → 不可见（无限充语义——无恢复可言）")
-    check(!NativeLimitSet.fullOnceRestoreAvailable(mclReadback: 85, policyUpperLimit: 85),
-          "set-6", "读回 85 == policy 85 → 不可见（正常执行态）")
-    check(!NativeLimitSet.fullOnceRestoreAvailable(mclReadback: 85, policyUpperLimit: 75),
-          "set-6", "读回 85 ≠ 100 → 不可见（读回驱动——值不符）")
-    check(!NativeLimitSet.fullOnceRestoreAvailable(mclReadback: nil, policyUpperLimit: 85),
-          "set-6", "读回不可用 → 不可见（nil 不猜测语义）")
-}
-
-// MARK: - ⑤ MCL 对账期望值八行表（0.21.3 §2.1 统一重定版）
+// MARK: - ③ MCL 对账期望值四行表（**0.23.1 编排退役定版**——原八行表随编排开关
+// 决策面退役收敛）
 
 private func runShutdownExpectationScenarios() throws {
-    // set-7（八行表行 1-3）：两窗与 mode 关恒 100（优先级自上而下；行 1/2 由
-    // 新 wire 两窗字段供给——窗覆盖优先于一切）。
+    // set-7（四行表行 1-3）：两窗与 mode 关恒 100（优先级自上而下；行 1/2 由
+    // wire 两窗字段供给——窗覆盖优先于一切）。
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 85,
+            modeActive: true, upperLimit: 85,
             fullOnceWindowActive: true) == 100,
-          "set-7", "fullOnce 窗 ∧ 编排开 ∧ 85 → 100（行 1 窗覆盖——优先级最高）")
+          "set-7", "fullOnce 窗 ∧ 85 → 100（行 1 窗覆盖——优先级最高）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 75,
+            modeActive: true, upperLimit: 75,
             chargingDisabledWindowActive: true) == 100,
-          "set-7", "chargingDisabled 日程窗 ∧ 编排关 ∧ 75 → 100（行 2 完全放开——与断言链 desired=100 同源）")
+          "set-7", "chargingDisabled 日程窗 ∧ 75 → 100（行 2 完全放开——两窗同权）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: false, orchestrationEnabled: true, upperLimit: 75) == 100,
-          "set-7", "mode 关 ∧ 编排开 ∧ target 75 → 100（行 3 全开语义与域 100 对齐——set 80 会重造「UI 已停用实际限 80」残留）")
+            modeActive: false, upperLimit: 75) == 100,
+          "set-7", "mode 关 ∧ target 75 → 100（行 3 全开语义与域 100 对齐——set 80 会重造「UI 已停用实际限 80」残留）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: false, orchestrationEnabled: false, upperLimit: 85) == 100,
-          "set-7", "mode 关 ∧ 编排关 ∧ target 85 → 100（行 3 不分流）")
+            modeActive: false, upperLimit: 85) == 100,
+          "set-7", "mode 关 ∧ target 85 → 100（行 3 恒等）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: false, orchestrationEnabled: false, upperLimit: 75,
+            modeActive: false, upperLimit: 75,
             degraded: true) == 100,
           "set-7", "mode 关 ∧ degraded → 仍 100（行 3 优先于 degraded 行——真停用即全开）")
 
-    // set-8（八行表行 4-6，编排开三行）：≥80 → target（MCL 主导——对账即周期
-    // 防线）；<80 非 degraded → 100（sub80 承载，MCL 让域管）；<80 ∧ degraded
-    // → 80（0.23.0 §④ 行 6 翻新 = degradedWriteValue(for:)=max(target,80)，<80
-    // 目标即 80——与 Topoff 降级稳态钳/四写点同源；漏行后果 = 对账写 100 与编排
-    // 钳互搏 30s 乒乓）。
+    // set-8（四行表行 4，0.23.1 收敛语义）：degraded → degradedWriteValue(for:)=
+    // max(target,80)（<80 目标 80 不变——域通道死亡最后防线；≥80 目标随 target——
+    // 与 Topoff 降级稳态钳/四写点同源）；非 degraded → 100（**域承载全区间新常态**
+    // ——MCL 让域管；原「编排开 ∧ ≥80 → target」行随编排退役删除：≥80 域承载即
+    // MCL 主导替代，App 侧该区间由宽读静默门兜住不再补偿）。
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 85) == 85,
-          "set-8", "编排开 ∧ target 85 → 85（行 4——MCL 主导，App set 执法的周期对账面）")
-    check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 80) == 80,
-          "set-8", "编排开 ∧ target 80（边界）→ 80（行 4 判据 ≥80）")
-    check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 75) == 100,
-          "set-8", "编排开 ∧ target 75（<80 非 degraded）→ 100（行 5——MCL 必须 100 让域管）")
-    check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 75,
+            modeActive: true, upperLimit: 75,
             degraded: true) == 80,
-          "set-8", "编排开 ∧ target 75 ∧ degraded → 80（行 6 对齐编排钳——R1-P0 漏行补全）")
-
-    // set-9（八行表行 7-8，编排关两行——**0.23.0 §④ 行 7 翻新**）：degraded →
-    // degradedWriteValue(for:)=max(target,80)（<80 目标 80 不变——域通道死亡最后
-    // 防线；≥80 目标随域随写 target——降级写值统一后编排关 degraded 85 停 85，
-    // 对账期望随行，防 D2×W4 新互搏）；非 degraded（含 <80 与 ≥80）→ 100
-    //（**§1.1 域承载全区间**——MCL 必须 100 让域管；旧「<80→80 兜底」行为 G1
-    // 实证有害〔MCL 80 主导顶掉域 75〕废除；旧「≥80→nil」同废——全区间恒有
-    // 期望值，对账不缺位）。
+          "set-8", "target 75 ∧ degraded → 80（行 4——max(75,80)，域通道死亡最后防线）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 75,
-            degraded: true) == 80,
-          "set-9", "编排关 ∧ target 75 ∧ degraded → 80（行 7——max(75,80)=80，域通道死亡最后防线）")
-    check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 85,
+            modeActive: true, upperLimit: 85,
             degraded: true) == 85,
-          "set-9", "编排关 ∧ target 85 ∧ degraded → 85（**0.23.0 §④ 行 7 翻新**：max(85,80)=85——降级写值统一后域随写 target，期望随行不再钳 80）")
+          "set-8", "target 85 ∧ degraded → 85（**0.23.0 §④ 翻新保留**：max(85,80)=85——降级写值统一后期望随行不再钳 80）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 80,
+            modeActive: true, upperLimit: 80,
             degraded: true) == 80,
-          "set-9", "编排关 ∧ target 80（边界）∧ degraded → 80（行 7 边界恒等——max(80,80)）")
+          "set-8", "target 80（边界）∧ degraded → 80（行 4 边界恒等——max(80,80)）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 75) == 100,
-          "set-9", "编排关 ∧ target 75（<80 非 degraded）→ 100（行 8——旧 80 兜底行为 G1 有害废除）")
+            modeActive: true, upperLimit: 75) == 100,
+          "set-8", "target 75（<80 非 degraded）→ 100（域承载——MCL 让域管）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 85) == 100,
-          "set-9", "编排关 ∧ target 85（≥80 非 degraded）→ 100（行 8——旧 nil 缺位废除：域承载全区间，MCL 必须 100）")
+            modeActive: true, upperLimit: 85) == 100,
+          "set-8", "target 85（≥80 非 degraded）→ 100（**0.23.1 收敛**——原「编排开 → target」行删除：域承载全区间，MCL 必须 100）")
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: false, upperLimit: 100) == 100,
-          "set-9", "编排关 ∧ target 100 → 100（行 8 全开恒等）")
+            modeActive: true, upperLimit: 100) == 100,
+          "set-8", "target 100 → 100（全开恒等）")
 
-    // set-9b：缺省参数保源兼容（degraded/两窗缺省 false——既有构造点零 diff；
-    // 26 平台消费面 orchestrationTerminal/osMajorVersion 门内恒不达）。
+    // set-9b：缺省参数保源兼容（degraded/两窗缺省 false——既有构造点零 diff）。
     check(NativeLimitSet.shutdownExpectation(
-            modeActive: true, orchestrationEnabled: true, upperLimit: 85) == 85,
-          "set-9b", "缺省三参（degraded=false/两窗 false）→ 行 4 target（既有调用点行为确定）")
+            modeActive: true, upperLimit: 85) == 100,
+          "set-9b", "缺省三参（degraded=false/两窗 false）→ 100（域承载新常态——期望表收敛后唯一非 degraded 值）")
 
-    // set-9c（**0.23.0 迁移钉面**——原 DischargeOscillationDomain :177/:267 的 W4
-    // 断言随振荡场景域收缩迁入本域，行 6/7 翻新基底不灭）：
+    // set-9c（迁移钉面保留——原 DischargeOscillationDomain :177/:267 的 W4 断言）：
     check(NativeLimitSet.shutdownExpectation(
-        modeActive: true, orchestrationEnabled: false, upperLimit: 80) == 100,
-          "set-9c", "编排关 ∧ target 80 → 期望 100（迁移自振荡域 乒乓-2——0.21.3 §2.1 行 8，域承载全区间 MCL 100 让域管）")
+        modeActive: true, upperLimit: 80) == 100,
+          "set-9c", "target 80 → 期望 100（迁移自振荡域 乒乓-2——域承载全区间 MCL 100 让域管）")
     check(NativeLimitSet.shutdownExpectation(
-        modeActive: false, orchestrationEnabled: true, upperLimit: 80) == 100,
+        modeActive: false, upperLimit: 80) == 100,
           "set-9c", "mode 关 → 关断期望恒 100（迁移自振荡域 矩阵-4——行 3 真停用=放开，优先于 degraded 行）")
 }
 
@@ -206,28 +208,17 @@ private func runDegradedWriteValueScenarios() throws {
     check(Topoff.degradedLimit == 80, "降-1",
           "degradedLimit == 80（边界角色保留——sub80Carried/domainBackstop/CHHysteresis 门不随写值统一漂移）")
 
-    // 降-2（写点 ①convergenceRoute desired）：degraded 稳态断言目标随写值统一。
-    let desired75 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: true, healProbeActive: false
-    )
-    check(desired75.orchestrationDesired == 80, "降-2",
-          "degraded ∧ target 75 ∧ 编排开 → 编排钳 80（写点①——<80 恒 80 与旧值恒等）")
-    let desired85 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 85, sub80Capable: true, actionActive: false,
-        degraded: true, healProbeActive: false
-    )
-    check(desired85.orchestrationDesired == 85, "降-2",
-          "degraded ∧ target 85 ∧ 编排开 → 断言 85（**写点①翻新**——max(85,80)=85，编排钳不再拉 80）")
-    let probe75 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: true, healProbeActive: true
-    )
-    check(probe75.orchestrationDesired == nil, "降-2",
-          "degraded ∧ 探针观察窗 ∧ target 75（承载态）→ 编排静默（既有互斥臂零变化；≥80 编排开不进 owned——域承载门不变）")
+    // 降-2（原写点 ①convergenceRoute desired）：**0.23.1 编排退役删除**——原「编排
+    // 钳 degradedWriteValue」断言面随断言链退役（desired 恒 nil，写点①消失）；
+    // 降级写值仅剩 channelTick/healTick 三写点（降-3/降-4 承接）。
+    do {
+        let route = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false
+        )
+        check(route.topoffOwned && route.convergenceTarget == 75, "降-2",
+              "路由签名收敛锚（0.23.1——degraded/healProbe 输入删除，写点①随断言链退役；降级写值由状态机写点承接）")
+    }
 
     // 降-3（写点 ②channelTick strike 降级拍）：第 3 strike 降级写随写值统一。
     do {
@@ -295,68 +286,51 @@ private func runDegradedWriteValueScenarios() throws {
     }
 }
 
-// MARK: - ⑥ convergenceRoute fullOnce 窗（§1.3 临时放开窗）
+// MARK: - ⑥ convergenceRoute fullOnce 窗（§1.3 临时放开窗；0.23.1 两输出签名翻新）
 
 private func runConvergenceRouteFullOnceWindowScenarios() throws {
-    // set-10：窗内汇聚目标/断言目标强制 100（等价「完全放开」——域随写 100 防 agent
-    // 层对抗 App set；断言防 valueChange 回拉 policy 值致临时放开 30-60s 坍缩）。
-    // topoffOwned 失效（convergenceTarget=100 不 <80）。
+    // set-10：窗内汇聚目标强制 100（等价「完全放开」——域随写 100，M1 模型 v2
+    // 域写值直接执法）。topoffOwned 失效（窗排除——R1-P1-1 保留）。
     let window75 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false, fullOnceWindow: true
+        modeActive: true, chargingDisabledWindow: false,
+        upperLimit: 75, sub80Capable: true, actionActive: false, fullOnceWindow: true
     )
-    check(window75.convergenceTarget == 100, "set-10", "窗内 target 75 → 汇聚目标 100（域随写 100）")
-    check(window75.orchestrationDesired == 100, "set-10", "窗内断言目标 100（防 valueChange 回拉 75）")
-    check(!window75.topoffOwned, "set-10", "窗内 topoffOwned 失效（100 不 <80——channelTick 不对抗）")
+    check(window75.convergenceTarget == 100, "set-10", "窗内 target 75 → 汇聚目标 100（域随写 100——M1 域写值直接执法）")
+    check(!window75.topoffOwned, "set-10", "窗内 topoffOwned 失效（窗排除——channelTick 不对抗，卫生臂跟 100）")
     let window85 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 85, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false, fullOnceWindow: true
+        modeActive: true, chargingDisabledWindow: false,
+        upperLimit: 85, sub80Capable: true, actionActive: false, fullOnceWindow: true
     )
-    check(window85.convergenceTarget == 100 && window85.orchestrationDesired == 100 && !window85.topoffOwned,
+    check(window85.convergenceTarget == 100 && !window85.topoffOwned,
           "set-10", "窗内 target 85 → 同形态（policy ≥80 分支同样强制 100）")
-    // set-11：窗与编排开关互斥次序——编排关 ∧ 窗在 → desired nil（开关门先行）；
-    // 汇聚目标仍 100（域侧放开不受编排开关门——但窗会随 setOrchestration toggle 清除，
-    // 本行为仅覆盖 toggle 与 tick 竞争窗）。
-    let windowOff = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false, fullOnceWindow: true
-    )
-    check(windowOff.orchestrationDesired == nil, "set-11", "编排关 ∧ 窗在 → desired nil（开关门先于窗——App 消费面首门不可绕过）")
-    check(windowOff.convergenceTarget == 100, "set-11", "编排关 ∧ 窗在 → 汇聚目标仍 100（域侧按窗放开）")
-    // set-12：mode 门仍最优先——mode 关 ∧ 窗在 → 全 nil（窗位随 disable 清除，
+    // set-12：mode 门仍最优先——mode 关 ∧ 窗在 → 汇聚 nil（窗位随 disable 清除，
     // 纯函数层面 mode 门兜底）。
     let windowDisabled = Topoff.convergenceRoute(
-        modeActive: false, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false, fullOnceWindow: true
+        modeActive: false, chargingDisabledWindow: false,
+        upperLimit: 75, sub80Capable: true, actionActive: false, fullOnceWindow: true
     )
-    check(windowDisabled.convergenceTarget == nil && windowDisabled.orchestrationDesired == nil,
-          "set-12", "mode 关 ∧ 窗在 → 双 nil（mode 门最优先——R3-P1 期望派生由调用侧承担）")
-    // set-13：缺省参数零 diff（26 回归锚——既有构造不传 fullOnceWindow，真值表逐值不变）。
+    check(windowDisabled.convergenceTarget == nil && !windowDisabled.topoffOwned,
+          "set-12", "mode 关 ∧ 窗在 → 汇聚 nil ∧ 不承载（mode 门最优先——R3-P1 期望派生由调用侧承担）")
+    // set-13：缺省参数零 diff（26/既有构造回归锚——不传 fullOnceWindow，真值表
+    // 逐值不变；0.23.1 两输出签名）。
     let legacy75 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 75, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false
+        modeActive: true, chargingDisabledWindow: false,
+        upperLimit: 75, sub80Capable: true, actionActive: false
     )
-    check(legacy75.convergenceTarget == 75 && legacy75.orchestrationDesired == nil && legacy75.topoffOwned,
-          "set-13", "缺省（窗 false）→ target 75 汇聚、desired nil（topoff 承载）——0.20.2 既有真值零回归")
+    check(legacy75.convergenceTarget == 75 && legacy75.topoffOwned,
+          "set-13", "缺省（窗 false）→ target 75 汇聚（topoff 承载）——0.23.1 收敛签名逐值锚")
     let legacy85 = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 85, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false
+        modeActive: true, chargingDisabledWindow: false,
+        upperLimit: 85, sub80Capable: true, actionActive: false
     )
-    check(legacy85.convergenceTarget == 85 && legacy85.orchestrationDesired == 85 && !legacy85.topoffOwned,
-          "set-13", "缺省 target 85 → 0.19.20 链逐值不变（26 行为零变化回归锚）")
-    // set-14：OrchestrationState 窗位形态（内存态不持久化——重启自然收敛）。
-    check(OrchestrationState.empty.fullOnceWindowActive == false,
-          "set-14", "空状态窗位 false（daemon 启动初值）")
-    var windowState = OrchestrationState.empty
-    windowState.fullOnceWindowActive = true
-    check(windowState.fullOnceWindowActive && windowState != OrchestrationState.empty,
-          "set-14", "窗位置位可见（Equatable 合成含新字段——27 复活臂置位）")
+    check(legacy85.convergenceTarget == 85 && legacy85.topoffOwned,
+          "set-13", "缺省 target 85 → 域承载全区间（0.23.1 新常态逐值锚——窗语义不受影响）")
+    // set-14：窗位宿主随编排退役翻新——原 OrchestrationState 五字段面删除，窗位
+    // 落 daemon 核心态 `fullOnceWindowActive`（CellarCoreCheck 不可 import daemon，
+    // 结构面由 wire round-trip 钉死——TopoffReadbackDomain 全域-3 窗排除 + 本域
+    // set-10 窗语义互证）。
+    check(Topoff.shutdownLimit == 100, "set-14",
+          "窗域写值源钉面（daemon 置窗 → observation tick 卫生臂写 shutdownLimit=100——原 pending(100) 产出链随批删除）")
 }
 
 // MARK: - ⑦ 恢复臂 XPC 通道
@@ -370,15 +344,12 @@ private func runRestoreWireScenarios() throws {
         let msg = DaemonXPC.makeMessage(cmd: NativeLimitSet.restoreCommand, upper: 0, hysteresis: 0)
         let parsed = DaemonXPC.validateRequest(msg)
         check(parsed?.cmd == "restoreChargeLimit" && parsed?.upper == 0 && parsed?.hysteresis == 0,
-              "set-15", "恢复臂消息 → cmd 提取 + 无参形态（daemon 端恢复目标 = policy.upperLimit 快照）")
+              "set-15", "恢复臂消息 → cmd 提取 + 无参形态（0.23.1 daemon 端 = 清窗 + 清锁存 + 即时 tick 域写 policy.upperLimit——原拒收面随编排退役删除）")
     }
-    // set-16：恢复臂拒收错误形态（R3-P3-1——编排开关关，文案同 fullOnce 27 前置）。
-    check(OneShotStartRejection.orchestrationSwitchOff.message
-              == "系统限充执行已停用——请在通用页开启后使用",
-          "set-16", "恢复臂拒收文案钉死（同 fullOnce 27 前置——R3-P3-1 同适用）")
 }
 
-// MARK: - ⑧ doctor 检查 17 set 分支 + 检查 19/20 残留检测
+// MARK: - ⑧ doctor 检查 17 执行通道（恢复/对账用）+ 检查 20 关断残留（0.23.1：
+// 检查 19 临时放开残留随编排退役删除——读回 100 即域承载稳态，触发面 = 常态必误报）
 
 private func runDoctorNativeLimitScenarios() throws {
     let snapshot = try? BatterySnapshotParser.parse(batteryProps(), timestamp: Date())
@@ -388,10 +359,10 @@ private func runDoctorNativeLimitScenarios() throws {
         osMajorVersion: Int = 27,
         daemonMode: String = "active",
         daemonUpperLimit: Int = 85,
-        daemonOrchestrationEnabled: Bool = true,
         daemonCapabilities: [String]? = ["orchestration"],
         daemonSub80State: Sub80State? = nil,
         daemonSuppressed: Bool? = nil,
+        daemonHealProbe: Bool? = nil,
         daemonFullOnceWindow: Bool? = nil,
         daemonScheduleWindow: Bool? = nil
     ) -> DoctorInputs {
@@ -404,8 +375,9 @@ private func runDoctorNativeLimitScenarios() throws {
             daemonStatus: DaemonStatus(
                 version: "t", mode: daemonMode, upperLimit: daemonUpperLimit, hysteresis: 2,
                 capabilities: daemonCapabilities,
-                orchestration: OrchestrationStatus(enabled: daemonOrchestrationEnabled),
+                orchestration: OrchestrationStatus(enabled: false),
                 sub80State: daemonSub80State,
+                sub80HealProbeActive: daemonHealProbe,
                 sub80MechanismSuppressed: daemonSuppressed,
                 fullOnceWindowActive: daemonFullOnceWindow,
                 chargingDisabledWindowActive: daemonScheduleWindow,
@@ -419,23 +391,20 @@ private func runDoctorNativeLimitScenarios() throws {
     func check17(_ inputs: DoctorInputs) -> DoctorCheck? {
         DoctorReportGenerator.generate(inputs).checks.first { $0.name == "编排通道" }
     }
-    func check19(_ inputs: DoctorInputs) -> DoctorCheck? {
-        DoctorReportGenerator.generate(inputs).checks.first { $0.name == "临时放开残留" }
-    }
     func check20(_ inputs: DoctorInputs) -> DoctorCheck? {
         DoctorReportGenerator.generate(inputs).checks.first { $0.name == "关断残留" }
     }
 
-    // 医生-16（检查 17 收敛版——0.23.0 §② Shortcuts 备用退役）：判定门 = MCL 探测。
+    // 医生-16（检查 17 改文案版——0.23.1「执行通道（恢复/对账用）」）：判定门 = MCL 探测。
     do {
         let embedded = check17(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil),
             mclAttempted: true
         ))
         check(embedded?.status == .pass
-                  && embedded?.detail.contains("App 内嵌 set 通道（唯一）") == true
+                  && embedded?.detail.contains("执行通道（恢复/对账用）") == true
                   && embedded?.detail.contains("读回 85%") == true,
-              "医生-16", "27 ∧ MCL 可读 → PASS「App 内嵌 set 通道（唯一）」（0.23.0 收敛——快捷指令备用语义退役）")
+              "医生-16", "27 ∧ MCL 可读 → PASS「执行通道（恢复/对账用）」（0.23.1 改文案——编排断言面退役，set 剩余职责 = 恢复链 + W4 对账）")
         // 26 同输入 → INFO 不适用形态（26 无 App 内嵌 set 面——daemon 直控）。
         let legacy = check17(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil),
@@ -443,9 +412,8 @@ private func runDoctorNativeLimitScenarios() throws {
             osMajorVersion: 26
         ))
         check(legacy?.status == .info && legacy?.detail.contains("仅 macOS 27+") == true,
-              "医生-16", "26 ∧ MCL 可读 → INFO 不适用（收敛版——原 shortcuts 指引三分支退役）")
-        // 27 ∧ MCL 类缺席 → INFO set 通道不可用（域通道承接 + 系统设置退路，
-        // **无快捷指令指引**——红队 F2 语义真空修复）。
+              "医生-16", "26 ∧ MCL 可读 → INFO 不适用（daemon 直控）")
+        // 27 ∧ MCL 类缺席 → INFO set 通道不可用（域通道承接 + 系统设置退路）。
         let classMissing = check17(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: false, limit: nil,
                                      failureDetail: "PowerUISmartChargeClient 类缺席"),
@@ -455,42 +423,20 @@ private func runDoctorNativeLimitScenarios() throws {
                   && classMissing?.detail.contains("App 内嵌 set 通道不可用") == true
                   && classMissing?.detail.contains("类缺席") == true
                   && classMissing?.detail.contains("系统设置") == true,
-              "医生-16", "27 ∧ MCL 类缺席 → INFO set 不可用（域承接 + 系统设置退路——不再指引创建快捷指令）")
+              "医生-16", "27 ∧ MCL 类缺席 → INFO set 不可用（域承接 + 系统设置退路）")
         // mclAttempted 缺省 → 零渲染（检查 15/16 同款条件渲染兼容约束）。
         check(check17(doctorInputs()) == nil,
-              "医生-16", "mclProbeAttempted 缺省 → 检查 17 不渲染（收敛版判定门 = MCL 探测）")
+              "医生-16", "mclProbeAttempted 缺省 → 检查 17 不渲染（判定门 = MCL 探测）")
+        // **0.23.1 检查 19 退役锚**：原「临时放开残留」检查不再渲染（读回 100 ∧
+        // policy<100 的触发面 = 域承载稳态——退役后无任何输入组合产出该检查）。
+        check(DoctorReportGenerator.generate(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil),
+            mclAttempted: true, daemonUpperLimit: 85
+        )).checks.first { $0.name == "临时放开残留" } == nil,
+              "医生-16", "检查 19 退役——读回 100 ∧ policy 85 不再产出「临时放开残留」（位号留空——编号空洞如实登记）")
     }
 
-    // 医生-17（检查 19 临时放开残留）：读回 100 ∧ policy < 100 → INFO + 恢复指引；
-    // **0.21.3 §2.1 fullOnce 窗在位（wire）→ 零渲染**（窗内读回 100 是显式放开
-    // 意图非残留——旧「属预期形态」附注由显式窗态取代）。
-    do {
-        let residual = check19(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85
-        ))
-        check(residual?.status == .info && residual?.detail.contains("临时放开未恢复") == true
-                  && residual?.detail.contains("恢复限充") == true,
-              "医生-17", "读回 100 ∧ policy 85 → INFO 残留 + 恢复指引（R2-P2-4 同式判定）")
-        check(check19(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonFullOnceWindow: true)) == nil,
-              "医生-17", "fullOnce 窗在位（daemon wire）→ 检查 19 零渲染（显式放开意图非残留——0.21.3 §2.1）")
-        // 正常态：读回 85 == policy 85 → 不渲染。
-        check(check19(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85)) == nil,
-              "医生-17", "读回 == policy → 检查 19 不渲染")
-        // 编排开关关 → 不渲染（读回 100 属 §1.5 关断期望态——检查 20 承接，不双报）。
-        check(check19(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: false)) == nil,
-              "医生-17", "编排开关关 → 检查 19 不渲染（关断期望态归检查 20）")
-        // 未探测缺省 → 零渲染（条件渲染兼容约束——既有 count 断言零回归）。
-        check(check19(doctorInputs()) == nil, "医生-17", "mclProbeAttempted 缺省 → 检查 19 不渲染")
-    }
-
-    // 医生-18（检查 20 关断残留→MCL 对账）：0.21.3 §2.1 八行表期望派生 × 读回
+    // 医生-18（检查 20 关断残留→MCL 对账）：0.23.1 四行表期望派生 × 读回
     // 失配矩阵 + **§1.3 suppressed/残留双态合取**（suppressed 优先 FAIL 抬退出码
     // ——「info 恒不抬」纪律的登记例外；无 suppressed 才评残留 INFO）。
     do {
@@ -528,7 +474,7 @@ private func runDoctorNativeLimitScenarios() throws {
         // disable（mode 关）→ 期望 100；读回 85 ≠ 100 → INFO + 修正后指引（三分支教育）。
         let disabledMismatch = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
-            daemonMode: "disabled", daemonUpperLimit: 85, daemonOrchestrationEnabled: true
+            daemonMode: "disabled", daemonUpperLimit: 85
         ))
         check(disabledMismatch?.status == .info && disabledMismatch?.detail.contains("期望值 100%") == true
                   && disabledMismatch?.detail.contains("读回 85%") == true
@@ -537,73 +483,60 @@ private func runDoctorNativeLimitScenarios() throws {
         // disable 一致 → PASS。
         let disabledMatch = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonMode: "disabled", daemonUpperLimit: 85, daemonOrchestrationEnabled: true
+            daemonMode: "disabled", daemonUpperLimit: 85
         ))
         check(disabledMatch?.status == .pass && disabledMatch?.detail.contains("MCL 对账一致") == true,
               "医生-18", "mode 关 + 读回 100 → PASS 对账一致")
-        // 编排开 ∧ ≥80（行 4）：读回失配 → INFO（周期对账面可见化——旧 nil 缺位废除）。
-        let executingMismatch = check20(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 80, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: true
-        ))
-        check(executingMismatch?.status == .info
-                  && executingMismatch?.detail.contains("期望值 85%") == true,
-              "医生-18", "编排开 ∧ 85 + 读回 80 → INFO 期望 85（行 4——MCL 主导区间的对账可见化）")
-        let executingMatch = check20(doctorInputs(
+        // 行 4 非 degraded（域承载全区间新常态）：期望 100；读回 85 → INFO。
+        let domainCarry = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: true
+            daemonUpperLimit: 85
         ))
-        check(executingMatch?.status == .pass,
-              "医生-18", "编排开 ∧ 85 + 读回 85 → PASS（行 4 一致）")
-        // 编排开 ∧ <80 非 degraded（行 5）：期望 100；读回 85 → INFO（MCL 让域管）。
+        check(domainCarry?.status == .info && domainCarry?.detail.contains("期望值 100%") == true,
+              "医生-18", "target 85 非降级 + 读回 85 → INFO 期望 100（**0.23.1 四行表**——原「编排开 → target」行随编排退役删除，域承载全区间 MCL 让域管）")
+        let domainCarryMatch = check20(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
+            daemonUpperLimit: 85
+        ))
+        check(domainCarryMatch?.status == .pass,
+              "医生-18", "target 85 非降级 + 读回 100 → PASS（行 4 非 degraded 臂一致）")
+        // <80 非 degraded：期望 100（MCL 让域管）。
         let sub80Mismatch = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 75, daemonOrchestrationEnabled: true
+            daemonUpperLimit: 75
         ))
         check(sub80Mismatch?.status == .info && sub80Mismatch?.detail.contains("期望值 100%") == true,
-              "医生-18", "编排开 ∧ 75 + 读回 85 → INFO 期望 100（行 5——MCL 100 让域管）")
-        // 编排开 ∧ <80 ∧ degraded（行 6）：期望 80。
+              "医生-18", "target 75 + 读回 85 → INFO 期望 100（域承载——MCL 100 让域管）")
+        // degraded（行 4 钳臂）：期望 max(target,80)。
         let degradedClamp = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 75, daemonOrchestrationEnabled: true,
-            daemonSub80State: .degraded
+            daemonUpperLimit: 75, daemonSub80State: .degraded
         ))
         check(degradedClamp?.status == .info && degradedClamp?.detail.contains("期望值 80%") == true,
-              "医生-18", "编排开 ∧ 75 ∧ degraded + 读回 100 → INFO 期望 80（行 6 对齐编排钳——R1-P0 漏行）")
-        // 编排关 ∧ 非 degraded（行 8）：期望 100；读回 100 → PASS（**0.21.3 重定版**
-        // ——旧「编排关 ∧ <80 → 期望 80」G1 有害引导与旧「≥80 → nil 不渲染」缺位
-        // 一并废除：域承载全区间，MCL 必须 100）。
-        let orchOffSub80Harmful = check20(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 80, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 75, daemonOrchestrationEnabled: false
+              "医生-18", "target 75 ∧ degraded + 读回 100 → INFO 期望 80（行 4 钳臂——域通道死亡最后防线）")
+        let degraded85 = check20(doctorInputs(
+            mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
+            daemonUpperLimit: 85, daemonSub80State: .degraded
         ))
-        check(orchOffSub80Harmful?.status == .info
-                  && orchOffSub80Harmful?.detail.contains("期望值 100%") == true,
-              "医生-18", "编排关 ∧ 75 + 读回 80 → INFO 期望 100（行 8 重定版——旧「期望 80」G1 有害引导废除）")
-        let orchOffMatch = check20(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 100, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: false
-        ))
-        check(orchOffMatch?.status == .pass,
-              "医生-18", "编排关 ∧ 85 + 读回 100 → PASS（行 8 一致——旧 nil 不渲染缺位废除）")
+        check(degraded85?.status == .pass,
+              "医生-18", "target 85 ∧ degraded + 读回 85 → PASS（行 4 钳臂 max(85,80)=85——0.23.0 §④ 翻新保留）")
         // 两窗行（行 1/2）：窗在位 → 期望 100；读回 85 → INFO（窗语义=完全放开）。
         let windowMismatch = check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 85, daemonOrchestrationEnabled: true,
-            daemonFullOnceWindow: true
+            daemonUpperLimit: 85, daemonFullOnceWindow: true
         ))
         check(windowMismatch?.status == .info && windowMismatch?.detail.contains("期望值 100%") == true,
               "医生-18", "fullOnce 窗 + 读回 85 → INFO 期望 100（行 1 窗覆盖——wire 供给）")
-        // code-review P3 补钉：静默态失配 → 附注文案（域承载态不对账属预期）——
-        // 与补偿臂同一门函数单一真相；防文案漂移（编排关∧active∧75 失配形态）。
+        // code-review P3 补钉：静默态失配 → 附注文案（**0.23.1 宽读**——sub80State
+        // == .active 即静默全区间，含 ≥80）——与补偿臂同一门函数单一真相；防文案漂移。
         let silencedMismatch = check20(doctorInputs(
-            mclProbe: MCLDoctorProbe(readable: true, limit: 75, failureDetail: nil), mclAttempted: true,
-            daemonUpperLimit: 75, daemonOrchestrationEnabled: false, daemonSub80State: .active
+            mclProbe: MCLDoctorProbe(readable: true, limit: 85, failureDetail: nil), mclAttempted: true,
+            daemonUpperLimit: 85, daemonSub80State: .active
         ))
         check(silencedMismatch?.status == .info
               && silencedMismatch?.detail.contains("不对账属预期") == true
               && silencedMismatch?.detail.contains("自动对账补偿") == false,
-              "医生-19", "静默态失配（编排关∧75）→ 附注「不对账属预期」且无补偿承诺（文案分支钉面）")
+              "医生-19", "静默态失配（域承载 active ∧ 85 失配）→ 附注「不对账属预期」且无补偿承诺（**0.23.1 宽读钉面**——文案分支）")
         // 读回类缺席 → 不渲染（读通道死态无对账可言——诚实缺席）。
         check(check20(doctorInputs(
             mclProbe: MCLDoctorProbe(readable: false, limit: nil, failureDetail: "类缺席"),
@@ -619,7 +552,7 @@ private func runDoctorNativeLimitScenarios() throws {
     }
 }
 
-// MARK: - ⑨ 0.22.4 补偿臂静默门（方案 §3.1 v2 门式 + §5 清单 ≥10 case）
+// MARK: - ⑨ 0.22.4 → **0.23.1 宽读**补偿臂静默门（§0.9 红队钉面 + 场景 ≥10 case）
 
 private func runCompensationSilencedScenarios() throws {
     // 门-1（mode/两窗优先级）：mode 非 active → 不静默（W4-now 即时变体放开语义
@@ -627,97 +560,59 @@ private func runCompensationSilencedScenarios() throws {
     // 显式放开，期望 100 与域随写 100 同值）。
     check(!NativeLimitSet.compensationSilenced(
         modeActive: false, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 75,
-        orchestrationEnabled: true),
+        healProbeActive: false, sub80State: .active),
         "门-1", "mode 非 active → 不静默（放开语义保留）")
     check(!NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: true, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 75,
-        orchestrationEnabled: true),
+        healProbeActive: false, sub80State: .active),
         "门-1", "fullOnce 窗在位 → 不静默（窗覆盖期望 100——域同值无互搏）")
     check(!NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: true,
-        healProbeActive: false, sub80State: .active, upperLimit: 75,
-        orchestrationEnabled: true),
+        healProbeActive: false, sub80State: .active),
         "门-1", "chargingDisabled 日程窗在位 → 不静默（完全放开同值）")
 
-    // 门-2（G7 域承载全区间·编排关）：sub80 .active ∧ 编排关 → 静默，<80 与
-    // ≥80 any target 同判（域自足——M5；编排关区间无 MCL 主导写入者）。
+    // 门-2（**0.23.1 宽读钉死**）：sub80State == .active 即静默——<80 与 ≥80 同判
+    //（域承载全区间新常态；域写值直接流入 MCL 执法——任何区间补偿写都对域写值对抗）。
     check(NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 75,
-        orchestrationEnabled: false),
-        "门-2", "编排关 ∧ active ∧ target 75 → 静默（G7 域承载——13:32 元凶面）")
+        healProbeActive: false, sub80State: .active),
+        "门-2", "active ∧ target <80 → 静默（域承载——13:32 元凶面）")
     check(NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 85,
-        orchestrationEnabled: false),
-        "门-2", "编排关 ∧ active ∧ target 85（≥80 全区间）→ 静默（域随写 85 直接执法）")
+        healProbeActive: false, sub80State: .active),
+        "门-2", "active ∧ target ≥80 → 同静默（**宽读**——原「编排开 ∧ ≥80 不静默」分支随编排退役删除；域承载全区间即 MCL 主导替代）")
 
-    // 门-3（编排开 ∧ <80）：静默（W1 <80 不写 + W4 静默 → D1 自足——矩阵行 3）。
+    // 门-3（混装 G1 防钉面，红队 §0.9）：新 App + 旧 daemon 混装窗——旧 daemon
+    // 编排开 ∧ ≥80 域不承载但 wire sub80State 仍 .active；宽读静默使新 App 补偿臂
+    // 不对旧 daemon 的 MCL 主导执法写 100（窄读即 G1 复活）。
     check(NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 75,
-        orchestrationEnabled: true),
-        "门-3", "编排开 ∧ active ∧ target 75 → 静默（域承载——<80 命中门第一支）")
+        healProbeActive: false, sub80State: .active),
+        "门-3", "混装窗（旧 daemon 编排开 ∧ ≥80 → wire active）→ 静默（G1 防线——宽读钉死）")
 
-    // 门-4（F1/P0 防御性钉面·编排开 ∧ ≥80）：**不静默**——sub80State 虽 .active
-    // 但 NOT owned，W4 是本区间周期对账防线唯一执行者（矩阵行 4；门误杀即失防）。
+    // 门-4（degraded 稳态裁决）：**不静默**——W4 写 max(target,80) =「域通道死亡
+    // 最后防线」，与 D2 域镜像同值零对抗。
     check(!NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 85,
-        orchestrationEnabled: true),
-        "门-4", "编排开 ∧ active ∧ target 85 → 不静默（F1 防线保留——本区间对账唯一执行者）")
-    check(!NativeLimitSet.compensationSilenced(
-        modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 80,
-        orchestrationEnabled: true),
-        "门-4", "编排开 ∧ active ∧ target 80（边界恒等）→ 不静默（≥80 判据下界钉面）")
+        healProbeActive: false, sub80State: .degraded),
+        "门-4", "degraded 稳态 → 不静默（写 max(target,80) 最后防线——与 D2 同值零对抗）")
 
-    // 门-5（degraded 稳态裁决·两轨分歧收敛格）：编排开/关皆 **不静默**——W4 写
-    // 80 =「域通道死亡最后防线」，与 D2 域镜像 80 同值零对抗（矩阵行 6/7）。
-    check(!NativeLimitSet.compensationSilenced(
-        modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .degraded, upperLimit: 75,
-        orchestrationEnabled: true),
-        "门-5", "degraded 稳态 ∧ 编排开 → 不静默（写 80 最后防线——与 D2 同值零对抗）")
-    check(!NativeLimitSet.compensationSilenced(
-        modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .degraded, upperLimit: 75,
-        orchestrationEnabled: false),
-        "门-5", "degraded 稳态 ∧ 编排关 → 不静默（防线保留——行 7 同裁决）")
-
-    // 门-6（F2 探针互搏补格）：degraded ∧ healProbeActive → **静默**（override
+    // 门-5（F2 探针互搏补格）：degraded ∧ healProbeActive → **静默**（override
     // 先于 degraded 保留判定——不静默则 MCL 80 压制 75 观察窗，证据窗 [74,75]
     // 结构性不可达 → 每小时探针必败 degraded 永不自愈）。
     check(NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: true, sub80State: .degraded, upperLimit: 75,
-        orchestrationEnabled: true),
-        "门-6", "degraded ∧ 自愈探针观察窗 → 静默（F2——探针窗让位，证据窗可达）")
+        healProbeActive: true, sub80State: .degraded),
+        "门-5", "degraded ∧ 自愈探针观察窗 → 静默（F2——探针窗让位，证据窗可达）")
 
-    // 门-7（79/80 边界双 case·门第一支 upperLimit < 80 判据）。
-    check(NativeLimitSet.compensationSilenced(
-        modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 79,
-        orchestrationEnabled: true),
-        "门-7", "编排开 ∧ target 79（<80 边界下侧）→ 静默（域承载判据 <80）")
-    check(!NativeLimitSet.compensationSilenced(
-        modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .active, upperLimit: 80,
-        orchestrationEnabled: true),
-        "门-7", "编排开 ∧ target 80（边界上侧）→ 不静默（80 恒等属 MCL 主导区）")
-
-    // 门-8（26 红线）：sub80State nil 恒不静默（26/通道关既有行为——恒走原对账）；
+    // 门-6（26 红线）：sub80State nil 恒不静默（26/通道关既有行为——恒走原对账）；
     // .off 同不静默（关断清理后 off 语义既有）。
     check(!NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: nil, upperLimit: 75,
-        orchestrationEnabled: true),
-        "门-8", "sub80State nil（26/无能力机）→ 不静默（26 红线——nil 恒走原对账）")
+        healProbeActive: false, sub80State: nil),
+        "门-6", "sub80State nil（26/无能力机）→ 不静默（26 红线——nil 恒走原对账）")
     check(!NativeLimitSet.compensationSilenced(
         modeActive: true, fullOnceWindow: false, chargingDisabledWindow: false,
-        healProbeActive: false, sub80State: .off, upperLimit: 75,
-        orchestrationEnabled: true),
-        "门-8", "sub80State .off（关断清理后）→ 不静默（off 既有行为不变）")
+        healProbeActive: false, sub80State: .off),
+        "门-6", "sub80State .off（关断清理后）→ 不静默（off 既有行为不变）")
 }

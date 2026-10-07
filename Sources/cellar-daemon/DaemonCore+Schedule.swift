@@ -93,15 +93,19 @@ extension DaemonCore {
         let baseMode = policy.mode
         var applied = false
         if entry.chargingDisabled == true {
-            // v0.19.20 R2 P1：27 终态下 chargingDisabled 转移 = **纯簿记完成**——
-            // 锚点照常写入、跳过 SMC 写（backend 缺席恒不可写：逐 tick warn 顺延
-            // ≈960 条/8h 夜窗 + 「放开窗口」静默失效的缺口根治）、「放开」由编排链
-            // 在窗期间 desired 强制 100 兑现（等价完全放开，退出边沿恢复 base）。
-            // warn 改 info 一次性（转移是进入边沿，非逐 tick）。26- 行为不变。
-            if orchestrationTerminalLocked {
+            // v0.19.20 R2 P1 → **0.23.1 R1 裁决保留（更名 + 注释翻新）**：27 终态下
+            // chargingDisabled 转移 = **日程断电保护纯簿记进入臂**（27 日程断电簿记——
+            // 无 pending 冲刷；全库冲刷在 DaemonCore+Topoff topoffShutdownCleanupLocked）
+            // ——锚点照常写入、跳过 SMC 写（backend 缺席恒不可写：逐 tick warn 顺延
+            // ≈960 条/8h 夜窗 + 「放开窗口」静默失效的缺口根治）、「放开」由观测 tick
+            // 在窗期间汇聚目标强制 100 兑现（域随写 100，等价完全放开，退出边沿恢复
+            // base）。warn 改 info 一次性（转移是进入边沿，非逐 tick）。26- 行为不变。
+            // 判别 = 27 平台终态（modernBackendTerminalLocked——原编排终态门更名，
+            // 行为零变化；勿删本臂：删除即 27 夜窗静默失效回归）。
+            if modernBackendTerminalLocked {
                 events.append(LogEvent(
                     category: .control, level: .info,
-                    message: "日程 \(entry.id.prefix(8))：编排模式窗口内完全放开充电（纯簿记——跳过 SMC 写，desired 强制 100%，退出边沿恢复 base 快照）"
+                    message: "日程 \(entry.id.prefix(8))：窗口内完全放开充电（27 纯簿记——跳过 SMC 写，域随写 100%，退出边沿恢复 base 快照）"
                 ))
                 applied = true
             } else if let backend {

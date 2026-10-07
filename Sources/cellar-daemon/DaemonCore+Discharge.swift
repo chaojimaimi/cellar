@@ -430,16 +430,15 @@ extension DaemonCore {
 /// 现态重新介入，方案 §2.3）。
 ///
 /// 0.20 M1a §2.2 #9 + **0.20 M1b 兑现**：`backend` 放宽为可选——nil（27，CHTE 不在
-/// 位）→ 收敛=回归汇聚目标：≥80 编排链**同拍补发**（观测段路由后同 tick 跑
-/// orchestrationTickLocked——动作已清轨，lastApplied != desired 立即 valueChange
-/// 补发）；**<80 topoff 随写续接已接通**（同拍汇聚点分流 topoffOwned → channelTick
-/// 幂等重写域恢复执法；本臂仅落收敛语义日志，域写由汇聚点统一执行防双写）。
+/// 位）→ 收敛=回归汇聚目标：观测 tick（observationTickLocked——0.23.1 编排退役
+/// 更名）同拍跑汇聚点路由，域写幂等重写 target（≥80 §3.6 卫生臂 / <80 channelTick
+/// 随写续接；本臂仅落收敛语义日志，域写由汇聚点统一执行防双写）。
 /// 26 传非 nil backend → 原样 CHTE enforce（行为不变）。
     func enforceLimitChargingLocked(backend: (any ChargingBackend)?, temperatureC: Double?, events: inout [LogEvent]) {
         guard let backend else {
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "终态/取消：27 收敛=回归汇聚目标（充电执法交编排/topoff 通道——≥80 编排链同拍补发，<80 topoff 同拍汇聚点随写续接）"
+                message: "终态/取消：27 收敛=回归汇聚目标（充电执法交 topoff 域承载通道——下拍观测 tick 域写幂等续接）"
             ))
             return
         }

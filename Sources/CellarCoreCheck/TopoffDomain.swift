@@ -378,132 +378,111 @@ func runTopoffDomainScenarios() {
               "自愈-6", "观察窗中拔电 → 门不适用（窗照常推进 + 超时臂收尾补写 80——最小改动不扩权）")
     }
 
-    // ---- ⑤b §3.7 关断清理状态不变量（P3-3 场景钉死——路由前置条件面）----
+    // ---- ⑤b §3.7 关断清理状态不变量（P3-3 场景钉死——路由前置条件面；0.23.1 翻新）----
 
     // 清理-1：daemon 关断清理分支的触发前置（纯函数可钉面）——**仅 mode 非 active**
-    //（0.21.3 §1.1 域承载全区间后：编排关 ∧ ≥80 不再清理——旧「清理前置」臂为
-    // G7 根治面废除，域随写 target + 执法链承载）；<80 编排关 → topoffOwned
-    //（不清理）。daemon 侧按此消费（CellarCoreCheck 不可 import daemon，
-    // 调用点次序由 daemon 注记 + code-review 走查兜底）。
+    //（0.23.1 编排退役定版：域承载全区间即新常态——mode active 期 ≥80 一律 owned
+    // 域随写 target 执法，永不清理；编排开关入参随批删除）。daemon 侧按此消费
+    //（CellarCoreCheck 不可 import daemon，调用点次序由 daemon 注记 + code-review
+    // 走查兜底）。
     do {
         let modeNil = Topoff.convergenceRoute(
-            modeActive: false, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(modeNil.convergenceTarget == nil && modeNil.orchestrationDesired == nil && !modeNil.topoffOwned,
+            modeActive: false, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(modeNil.convergenceTarget == nil && !modeNil.topoffOwned,
               "清理-1", "mode 非 active → 清理前置成立（域随写 100 + off）")
         let modeNil85 = Topoff.convergenceRoute(
-            modeActive: false, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
+            modeActive: false, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
         check(modeNil85.convergenceTarget == nil && !modeNil85.topoffOwned,
-              "清理-1", "mode 非 active ∧ 编排关 ∧ 85 → 清理前置成立（mode 门最优先——owned 扩展不触及）")
-        let orchOff75 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(orchOff75.topoffOwned,
-              "清理-1", "编排关 ∧ 目标 <80 → topoff 承载（不清理——topoff 不受编排开关门）")
-        let orchOff85 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(orchOff85.topoffOwned && orchOff85.convergenceTarget == 85,
-              "清理-1", "编排关 ∧ 目标 85 → **0.21.3 §1.1 域承载全区间**（owned 扩展——旧清理前置臂废除；violation/strike/degraded 链生效）")
+              "清理-1", "mode 非 active ∧ 85 → 清理前置成立（mode 门最优先——域承载不触及）")
+        let owned75 = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(owned75.topoffOwned,
+              "清理-1", "目标 <80 → topoff 承载（不清理——mode active 域承载全区间）")
+        let owned85 = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(owned85.topoffOwned && owned85.convergenceTarget == 85,
+              "清理-1", "目标 85 → **域承载全区间（0.23.1 新常态）**（owned——旧清理前置臂废除；violation/strike/degraded 链生效）")
     }
 
-    // ---- ⑤ 汇聚点路由真值表（§3.1 R1-P3）----
+    // ---- ⑤ 汇聚点路由真值表（§3.1；0.23.1 编排退役翻新——desired 推导链删除，
+    // 路由收敛为「汇聚目标 + 承载判定」两输出）----
 
-    // 路由-1：单通道互斥（sub80 ∧ <80 ∧ !degraded → topoff 独占，编排静默）。
+    // 路由-1：<80 topoff 承载（域执法原臂）。
     do {
         let route = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(route == (convergenceTarget: 75, orchestrationDesired: Int?.none, topoffOwned: true),
-              "路由-1", "<80 topoff 承载 → 编排静默 desired=nil（单通道互斥钉死）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(route == (convergenceTarget: 75, topoffOwned: true),
+              "路由-1", "<80 topoff 承载（域通道独占执法——单通道语义钉死）")
     }
 
-    // 路由-2：降级稳态 → 编排钳 80；自愈观察窗 → 编排静默（topoff 独占）。
+    // 路由-2：降级/自愈态不再参与路由分支（**0.23.1**：原「降级稳态 → 编排钳 80 /
+    // 自愈观察窗 → 编排静默」desired 分支随断言链退役删除——degraded/healProbe
+    // 是 channelTick/healTick 状态机内部态，路由面已无感知）。
     do {
-        let steady = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false)
-        check(steady.orchestrationDesired == 80 && steady.topoffOwned,
-              "路由-2", "降级稳态 → 编排钳 80（域随写 80 同值——§3.2 诚实降级）")
-        let probing = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: true)
-        check(probing.orchestrationDesired == nil && probing.topoffOwned,
-              "路由-2", "自愈观察窗 → 编排静默（topoff 独占执法——行为观察有效前提）")
+        let route = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(route.topoffOwned && route.convergenceTarget == 75,
+              "路由-2", "路由签名收敛：degraded/healProbe 输入删除（0.23.1——降级/自愈链由 channelTick/healTick 状态机承担，路由面恒 owned <80）")
     }
 
-    // 路由-3：≥80 → 0.19.20 原链逐值（nativeTarget/chargingDisabled 100 窗）。
+    // 路由-3：≥80 域承载（**0.23.1 domainBackstop 新语义**——原「编排开 ∧ ≥80 →
+    // 编排原样」分支删除，domainBackstop 的 `!orchestrationEnabled` 前置项删除）；
+    // chargingDisabled 100 窗保留（窗排除原样）。
     do {
         let r85 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(r85 == (convergenceTarget: 85, orchestrationDesired: 85, topoffOwned: false),
-              "路由-3", "≥80 → 编排原样 85（topoffOwned=false——§3.6 域随写卫生由副作用面承接）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(r85 == (convergenceTarget: 85, topoffOwned: true),
+              "路由-3", "≥85 → owned（域承载全区间——§3.6 卫生臂随写 target + 执法链生效）")
         let r100 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: true,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(r100 == (convergenceTarget: 100, orchestrationDesired: 100, topoffOwned: false),
-              "路由-3", "chargingDisabled 窗 → 汇聚目标 100（放开充电——topoff 不承载，域随写卫生跟 100）")
+            modeActive: true, chargingDisabledWindow: true,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(r100 == (convergenceTarget: 100, topoffOwned: false),
+              "路由-3", "chargingDisabled 窗 → 汇聚目标 100（放开充电——topoff 不承载，域随写卫生跟 100；窗排除保留）")
     }
 
-    // 路由-4：编排开关门独立性（R1-P3 位置约束）——编排关 ∧ <80 → topoff 仍承载。
-    // **0.21.3 §1.1 重定版**：编排关 ∧ ≥80 → **owned（域承载全区间）**——旧「不
-    // 承载 + §3.7 清理态保持」为 G7（≥80 执法链空缺）废除面；desired 恒 nil
-    //（编排静默——域独占执法，MCL 对账防线归 §2.1 expectation 编排行）。
+    // 路由-4：fullOnce 窗排除（R1-P1-1，0.23.1 保留）——窗内不进 owned（窗覆盖
+    // 优先；窗后回落域承载/卫生分支）。
     do {
-        let route = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(route.topoffOwned && route.orchestrationDesired == nil,
-              "路由-4", "编排开关关 ∧ 目标 <80 → topoff 仍承载（topoff 同受 mode/actionActive 门、不受编排开关门）")
-        let off85 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(off85.topoffOwned && off85.orchestrationDesired == nil,
-              "路由-4", "编排开关关 ∧ 目标 85 → **owned 扩展**（域承载全区间执法——desired=nil 编排静默）")
+        let windowed = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false, fullOnceWindow: true)
+        check(!windowed.topoffOwned && windowed.convergenceTarget == 100,
+              "路由-4", "fullOnce 窗 ∧ 75 → 汇聚目标强制 100 ∧ 不进 owned（窗语义即完全放开——域随写 100）")
     }
 
-    // 路由-5：26 回归（sub80Capable=false → 0.19.20 链逐值 + topoffOwned 恒 false）。
+    // 路由-5：26 回归（sub80Capable=false → topoffOwned 恒 false——0.23.1 语义下
+    // 26 仍零触及，红线锚）。
     do {
         let r75 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(r75.topoffOwned == false && r75.orchestrationDesired == 80,
-              "路由-5", "26（无 sub80）∧ <80 → 既有 nativeTarget 钳 80 逐值（topoff 零触及）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: false, actionActive: false)
+        check(r75.topoffOwned == false && r75.convergenceTarget == 75,
+              "路由-5", "26（无 sub80）∧ <80 → topoff 零触及（owned 恒 false——26 红线锚）")
         let r85 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(r85.orchestrationDesired == nil && r85.topoffOwned == false,
-              "路由-5", "26 ∧ 编排关 → desired=nil 逐值（0.19.20 链零变化）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: false, actionActive: false)
+        check(r85.topoffOwned == false && r85.convergenceTarget == 85,
+              "路由-5", "26 ∧ 85 → topoff 零触及（sub80 门内恒 false——26 红线锚）")
     }
 
     // 路由-6：actionActive 执法总开关（topoff 不承载）+ mode 门（关断清理面）。
     do {
         let duringAction = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: true,
-            degraded: false, healProbeActive: false)
-        check(!duringAction.topoffOwned && duringAction.orchestrationDesired == 80,
-              "路由-6", "动作活跃 → topoff 不承载（放电/校准维护分支掌权——执法总开关）；desired 沿既有链（断言由 assertionRequest 规则 2 actionActive → none 压制——0.19.20 语义零变化）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: true)
+        check(!duringAction.topoffOwned && duringAction.convergenceTarget == 75,
+              "路由-6", "动作活跃 → topoff 不承载（放电/校准维护分支掌权——执法总开关）")
         let modeOff = Topoff.convergenceRoute(
-            modeActive: false, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(modeOff.convergenceTarget == nil && modeOff.orchestrationDesired == nil && !modeOff.topoffOwned,
+            modeActive: false, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(modeOff.convergenceTarget == nil && !modeOff.topoffOwned,
               "路由-6", "mode 非 active → 汇聚目标 nil（关断清理面——域随写 100 + off）")
     }
 

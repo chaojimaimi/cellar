@@ -20,84 +20,68 @@ import Foundation
 /// 放电振荡批收敛面场景域入口（Main.main 调用）。
 func runDischargeOscillationDomainScenarios() throws {
 
-    // ---- ① 乒乓循环回归断链第一环（真机事件 target=80 编排关——方案 §0.1/§0.4）----
-    // 修前形态（已入档定谳）：编排关 ∧ target 80 → 汇聚点守卫清理域 100 + off →
+    // ---- ① 乒乓循环回归断链第一环（真机事件 target=80——方案 §0.1/§0.4）----
+    // 修前形态（已入档定谳）：target 80 → 汇聚点守卫清理域 100 + off →
     // agent 跟域 100 持续充电 → 过冲 82 → 自动放电循环自持。修后断链钉面（原第二/
     // 三环——W4 期望 100 与门 a/熔断——随 0.23.0 自动机退役收敛：W4 断言迁
-    // NativeLimitSetDomain 行 8，自动放电臂整体不存在 = 第三环结构性断链）：
+    // NativeLimitSetDomain 行 4，自动放电臂整体不存在 = 第三环结构性断链）；
+    // **0.23.1 编排退役**：域承载全区间即常态——断链不变量由「owned 恒成立」
+    // 单点钉死（原「编排开/关」双态钉面随编排开关退役收敛）。
 
-    // 乒乓-1：断链第一环——域随写 target（编排关 ∧ target 80 → 汇聚目标 80 非 100、
-    // 非清理、**0.21.3 §1.1 起域承载执法（owned 扩展）**、编排静默）。乒乓形态不
+    // 乒乓-1：断链第一环——域随写 target（target 80 → 汇聚目标 80 非 100、
+    // 非清理、**域承载执法（owned）**）。乒乓形态不
     // 复活的论证：owned 的 strike 链只重写域值（80 与卫生分支同值）；0.23.0 起自动
     // 放电触发链已删除——循环发起体结构性消失。
     let incident = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-        upperLimit: 80, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false
+        modeActive: true, chargingDisabledWindow: false,
+        upperLimit: 80, sub80Capable: true, actionActive: false
     )
     check(incident.convergenceTarget == 80, "乒乓-1",
-          "编排关 ∧ target 80 → 汇聚目标 80（域随写 80——域恢复滞回根治面；修前清理域 100 已废除）")
-    check(incident.orchestrationDesired == nil, "乒乓-1",
-          "编排关 → 编排静默（开关仅门控 App set 执行通道——域通道不受门，架构自述不变量对齐）")
+          "target 80 → 汇聚目标 80（域随写 80——域恢复滞回根治面；修前清理域 100 已废除）")
     check(incident.topoffOwned, "乒乓-1",
-          "target 80 ∧ 编排关 → **0.21.3 §1.1 owned 扩展**（域承载全区间执法——violation/strike 链只重写域 80；0.23.0 起自动放电臂已退役，循环断链保持）")
+          "target 80 → **域承载全区间执法**（violation/strike 链只重写域 80；0.23.0 起自动放电臂已退役，循环断链保持）")
 
-    // ---- ② 行为矩阵六行 × 边界 79/80/81（方案 §2.3 全形态）----
+    // ---- ② 行为矩阵六行 × 边界 79/80/81（方案 §2.3 全形态；0.23.1 翻新——
+    // 编排开/关双态随编排退役收敛单态，断言面删除）----
 
-    func route(_ orchestrationEnabled: Bool, _ upperLimit: Int)
-        -> (convergenceTarget: Int?, orchestrationDesired: Int?, topoffOwned: Bool) {
+    func route(_ upperLimit: Int) -> (convergenceTarget: Int?, topoffOwned: Bool) {
         Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: orchestrationEnabled,
+            modeActive: true,
             chargingDisabledWindow: false, upperLimit: upperLimit,
-            sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false
+            sub80Capable: true, actionActive: false
         )
     }
 
-    // 矩阵-1：行 1/2（target <80 ∧ 编排开/关）——topoff 承载、编排静默（开关独立性）；
-    // 边界 79 承载 / 80 不承载（<80 判据边界）。
-    check(route(true, 79).topoffOwned && route(true, 79).convergenceTarget == 79
-              && route(true, 79).orchestrationDesired == nil,
-          "矩阵-1", "target 79 ∧ 编排开 → topoff 承载 79、编排静默（<80 域执法——App set 拒 <80 不参与）")
-    check(route(false, 79).topoffOwned && route(false, 79).convergenceTarget == 79
-              && route(false, 79).orchestrationDesired == nil,
-          "矩阵-1", "target 79 ∧ 编排关 → 同行 1（topoff 不受编排开关门——域随写语义一致化对称面）")
+    // 矩阵-1：行 1（target <80）——topoff 承载；边界 79 承载。
+    check(route(79).topoffOwned && route(79).convergenceTarget == 79,
+          "矩阵-1", "target 79 → topoff 承载 79（<80 域执法——App set 拒 <80 不参与）")
     check(NativeLimitSet.setTarget(for: 79) == nil, "矩阵-1",
           "target 79 恢复臂不写 MCL（0.22.4 §3.2 映射退役：<80 → nil——执行体永不向原生 MCL 写 <80 值，也不再写 100 补值〔13:32 互搏元凶链〕；域写值直接执法）")
 
-    // 矩阵-2：行 3/4（target ≥80 ∧ 编排开/关）——域随写 target、编排开断言 target、
-    // 编排关静默；边界 80/81 双侧。
-    check(route(true, 80).convergenceTarget == 80 && !route(true, 80).topoffOwned
-              && route(true, 80).orchestrationDesired == 80,
-          "矩阵-2", "target 80（边界）∧ 编排开 → 域随写 80 + 断言 80（0.21.1 改后域=target）")
-    check(route(true, 81).convergenceTarget == 81 && route(true, 81).orchestrationDesired == 81,
-          "矩阵-2", "target 81 ∧ 编排开 → 域随写 81 + 断言 81（≥80 全区间随写）")
-    check(route(false, 80).convergenceTarget == 80 && route(false, 80).orchestrationDesired == nil,
-          "矩阵-2", "target 80 ∧ 编排关 → 域随写 80 + 编排静默（乒乓断链第一环——矩阵行 4）")
-    check(route(false, 81).convergenceTarget == 81 && route(false, 81).orchestrationDesired == nil,
-          "矩阵-2", "target 81 ∧ 编排关 → 域随写 81（域故障时 MCL 80 兜底——行 2 同构；0.23.0 起无自动放电熔断面）")
+    // 矩阵-2：行 2/3（target ≥80）——域随写 target + owned（0.23.1 新常态）；
+    // 边界 80/81 双侧。
+    check(route(80).convergenceTarget == 80 && route(80).topoffOwned,
+          "矩阵-2", "target 80（边界）→ 域随写 80 ∧ owned（域承载全区间新常态——断链第一环持续钉面）")
+    check(route(81).convergenceTarget == 81 && route(81).topoffOwned,
+          "矩阵-2", "target 81 → 域随写 81 ∧ owned（≥80 全区间随写）")
 
-    // 矩阵-3：行 5（fullOnce/日程窗）——域 100、断言 100、topoff 失效（完全放开；
+    // 矩阵-3：行 4（fullOnce/日程窗）——域 100、topoff 失效（完全放开；
     // 原窗内自动放电静默钉面随触发链退役收敛为「无触发链」）。
     let windowRow = Topoff.convergenceRoute(
-        modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: true,
-        upperLimit: 80, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false
+        modeActive: true, chargingDisabledWindow: true,
+        upperLimit: 80, sub80Capable: true, actionActive: false
     )
-    check(windowRow.convergenceTarget == 100 && windowRow.orchestrationDesired == 100
-              && !windowRow.topoffOwned,
-          "矩阵-3", "chargingDisabled 日程窗 → 域 100 + 断言 100 + topoff 失效（完全放开）")
+    check(windowRow.convergenceTarget == 100 && !windowRow.topoffOwned,
+          "矩阵-3", "chargingDisabled 日程窗 → 域 100 + topoff 失效（完全放开）")
 
-    // 矩阵-4：行 6（mode 关真停用）——汇聚 nil、断言 nil（原 shutdownExpectation
+    // 矩阵-4：行 5（mode 关真停用）——汇聚 nil（原 shutdownExpectation
     // 断言已迁 NativeLimitSetDomain set-7——W4 行 3）。
     let offRow = Topoff.convergenceRoute(
-        modeActive: false, orchestrationEnabled: true, chargingDisabledWindow: false,
-        upperLimit: 80, sub80Capable: true, actionActive: false,
-        degraded: false, healProbeActive: false
+        modeActive: false, chargingDisabledWindow: false,
+        upperLimit: 80, sub80Capable: true, actionActive: false
     )
-    check(offRow.convergenceTarget == nil && offRow.orchestrationDesired == nil
-              && !offRow.topoffOwned,
-          "矩阵-4", "mode 关 → 汇聚 nil + 断言 nil + topoff 失效（真停用——off 语义收紧后唯一 off 源）")
+    check(offRow.convergenceTarget == nil && !offRow.topoffOwned,
+          "矩阵-4", "mode 关 → 汇聚 nil + topoff 失效（真停用——off 语义收紧后唯一 off 源）")
 
     // ---- ③ wire（sub80WrittenLimit / autoDischargeSuspended——字段保留零变化）----
 

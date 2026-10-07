@@ -161,19 +161,17 @@ func runTopoffPersistenceDomainScenarios() throws {
     // 调用点注记 + code-review 走查兜底（CellarCoreCheck 不可 import daemon）。
     do {
         let route26 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false)
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: false, actionActive: false)
         check(!route26.topoffOwned
                 && !Topoff.shouldPersistHonestyChange(previous: TopoffChannelState(),
                                                       current: TopoffChannelState()),
               "持久-6", "26 路由（topoffOwned 恒 false）→ 无状态变更 → 持久化触发恒 false（状态文件 26 不生成——红线锚）")
         let route26Degraded = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: false, actionActive: false,
-            degraded: true, healProbeActive: false)
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: false, actionActive: false)
         check(!route26Degraded.topoffOwned,
-              "持久-6", "26 ∧ 载入态 degraded=true → topoff 仍不承载（持久化脏读不外溢——26 行为零变化）")
+              "持久-6", "26（sub80Capable=false）→ topoff 恒不承载（载入态 degraded 不外溢——26 行为零变化；0.23.1 路由签名收敛后由 sub80Capable 单门承担）")
     }
 
     // ---- ⑦ 触发源（三触发钉死；域写/观察窗簿记不触发——R2-P3）----

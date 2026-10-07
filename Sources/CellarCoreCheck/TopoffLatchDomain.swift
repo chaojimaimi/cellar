@@ -344,7 +344,7 @@ func runTopoffLatchDomainScenarios() {
         DaemonStatus(
             version: "t", mode: "active", upperLimit: upperLimit, hysteresis: 2,
             capabilities: ["orchestration", DaemonXPC.capabilitySub80],
-            orchestration: OrchestrationStatus(enabled: true),
+            orchestration: OrchestrationStatus(enabled: false),   // 0.23.1 退役照填（enabled 数据源硬编码 false）
             sub80State: sub80State, sub80Hysteresis: hysteresis,
             fullOnceWindowActive: fullOnce, chargingDisabledWindowActive: scheduleWindow,
             timestamp: tick(0))

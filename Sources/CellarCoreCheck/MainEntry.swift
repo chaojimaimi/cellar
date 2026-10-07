@@ -373,24 +373,26 @@ struct Main {
         // 缺席保持/校准与 fullOnce 守卫拒绝文案双口径/doctor 第 15 项分支——纯函数
         // 面，不触碰真实 plist）。
         try runNativeLimitWireDomainScenarios()
-        // v0.19.20 M1：Shortcuts 编排场景域（方案 §2 清单：nativeTarget 三分支/
-        // assertionRequest 真值表全分支（R2 复审定版次序）/WP-5 fullOnce 两测试钉
-        // （26 legacy [] / 26 瞬态 nil 可启动）/F-1 三处透传钉/wire 编解码往返+
-        // 旧 JSON 缺字段容忍/chargingDisabled 在窗 desired=100 真值表路径/doctor
-        // 检查 17 + 检查 15 的 27 注册残留语义——纯函数面，OrchestrationDomain）。
-        try runOrchestrationDomainScenarios()
-        // 0.21.0 M1a：set 路径场景域（方案 §1 全部：set 分流与拒绝链（≥80 set/
-        // <80 钳 80/Code=4 结构化拒绝文案钉死）/fullOnce 27（编排开关关拒收/开关
-        // 开放行/<80 policy 分支/26 回归由编排-8..10 背书）/执行器抽象（set 优先/
-        // fallback 触发阈值 2/会话驻留/Code=4 中性）/恢复臂判定源（读回驱动）/
-        // 关断残留期望值（R3-P1 拆分规则全矩阵）/convergenceRoute fullOnce 窗
-        // （缺省参数零 diff——26 回归锚）/恢复臂 XPC 通道/doctor 检查 17 set 分支
-        // + 19/20 残留检测——纯函数面，NativeLimitSetDomain）。
+        // **0.23.1 编排退役**：原 OrchestrationDomain 场景域（nativeTarget 三分支/
+        // assertionRequest 真值表/WP-5 fullOnce 开关拒收钉/F-1 编排开关透传钉/
+        // orchestration wire 编解码往返/doctor 检查 17 旧文案）随编排链退役整域删除
+        // ——F-1 编排开关 policy 透传钉迁移 OrchestrationRetirementDomain（退役-6 PolicyStore round-trip）（字段保留 = 冻结偏好镜像）、
+        // wire 编解码往返钉迁移 NativeLimitWireDomain（命令族 wire 兼容保留）、
+        // fullOnce 前置/期望表/静默门钉迁 NativeLimitSetDomain set-5/set-7..9/
+        // 门-1..6、退役面钉（零消费/observationTick 迁移）落新域
+        // OrchestrationRetirementDomain（源文件结构钉面——零消费断言/迁移钉）。
+        runOrchestrationRetirementDomainScenarios()
+        // 0.21.0 M1a → **0.23.1 翻新**：set 路径场景域（set 分流与拒绝链（≥80 set/
+        // <80 → nil 不写/Code=4 结构化拒绝文案钉死）/fullOnce 27（平台判别原生守卫
+        // 绕过——set-5/26 红线锚）/恢复臂 XPC 通道/关断残留期望值（**四行表**）/
+        // compensationSilenced **宽读静默门**/convergenceRoute fullOnce 窗/
+        // doctor 检查 17（恢复/对账用）+ 检查 20（19 退役）——纯函数面，
+        // NativeLimitSetDomain）。
         try runNativeLimitSetDomainScenarios()
-        // 0.20 M1b：topoffprotection <80% 限充通道场景域（方案 §3 全部：写入器原子序/
+        // 0.20 M1b → **0.23.1 翻新**：topoffprotection 限充通道场景域（写入器原子序/
         // 违规与证据判定/channelTick 状态机（幂等写/验证窗/strike 重申/冷却/降级/24h
-        // 复位）/healTick 自愈/汇聚点路由真值表（单通道互斥/降级钳 80/编排开关门独立/
-        // 26 回归逐值）——纯函数面，TopoffDomain）。
+        // 复位）/healTick 自愈/汇聚点路由真值表（**两输出收敛签名**——desired 推导链
+        // 随编排退役删除，域承载全区间新常态/26 回归逐值）——纯函数面，TopoffDomain）。
         runTopoffDomainScenarios()
         // 0.20.2 §3：超带轻量重申场景域（触发带/冷却/不动降级计数/healProbe 窗不触发
         // 四组——纯函数面，TopoffReassertDomain）。

@@ -325,11 +325,11 @@ public enum DoctorReportGenerator {
         if let topoffCheck = topoffDomain(inputs) {
             checks.append(topoffCheck)
         }
-        // 0.21.0 §1.3 检查 19：fullOnce 临时放开残留 + §1.5 检查 20：关断残留
-        // （条件渲染同 9-18——mclProbeAttempted 缺省零渲染；info 恒不抬退出码）。
-        if let fullOnceResidualCheck = fullOnceResidual(inputs) {
-            checks.append(fullOnceResidualCheck)
-        }
+        // 0.21.0 §1.5 检查 20：关断残留（条件渲染同 9-18——mclProbeAttempted 缺省
+        // 零渲染；info 恒不抬退出码，suppressed FAIL 臂除外）。
+        // **0.23.1 编排退役**：原检查 19（fullOnce 临时放开残留）随批退役——新常态
+        // 下读回 100 即域承载稳态，触发面 = 常态必误报；位号 19 留空（编号空洞如实
+        // 登记，17/18/20 位次不重排）。
         if let shutdownResidualCheck = shutdownResidual(inputs) {
             checks.append(shutdownResidualCheck)
         }

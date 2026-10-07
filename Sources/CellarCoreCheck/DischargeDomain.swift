@@ -665,34 +665,34 @@ func runDischargeDomainScenarios() throws {
 
     // 放电-32：三分支真值表（26 回归 + 27 豁免 + 止损保留）。
     do {
-        // 26 瞬态窗口（非终态）→ 恒计数（26 行为零变化——编排门不含 26 瞬态）。
+        // 26 瞬态窗口（非终态）→ 恒计数（26 行为零变化——平台门不含 26 瞬态（0.23.1 更名 modernBackendTerminal））。
         check(Discharge.observationRoute(
-                orchestrationTerminal: false, isDischargeAction: true, actionActive: true,
+                modernBackendTerminal: false, isDischargeAction: true, actionActive: true,
                 controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
               "放电-32", "26 瞬态（backend 暂缺）∧ 放电活跃 → noteMonitoringLoss（既有 90s 止损语义零变化）")
         // 27 + 放电活跃 + 控制面可写 + 快照在位 → 维护子分支（豁免 backend 缺席成因）。
         check(Discharge.observationRoute(
-                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                modernBackendTerminal: true, isDischargeAction: true, actionActive: true,
                 controlWritable: true, snapshotAvailable: true) == .maintainDischarge,
               "放电-32", "27 终态 ∧ 放电活跃 ∧ 控制面可写 ∧ 快照在位 → maintainDischarge（仅豁免 backend 缺席成因）")
         // R2-P3 时序锚：快照缺席（采样失败）→ 照常计数（不推进完成判定——90s 盲态止损保留）。
         check(Discharge.observationRoute(
-                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                modernBackendTerminal: true, isDischargeAction: true, actionActive: true,
                 controlWritable: true, snapshotAvailable: false) == .noteMonitoringLoss,
               "放电-32", "27 ∧ 放电活跃 ∧ 快照缺席（采样失败）→ noteMonitoringLoss（R2-P1：采样失败成因不豁免）")
         // 控制面缺席 → 照常计数。
         check(Discharge.observationRoute(
-                orchestrationTerminal: true, isDischargeAction: true, actionActive: true,
+                modernBackendTerminal: true, isDischargeAction: true, actionActive: true,
                 controlWritable: false, snapshotAvailable: true) == .noteMonitoringLoss,
               "放电-32", "27 ∧ 放电活跃 ∧ 控制面不可写 → noteMonitoringLoss（fail-closed）")
         // 非放电动作活跃（27 上校准/fullOnce 均不可达——防御计数）。
         check(Discharge.observationRoute(
-                orchestrationTerminal: true, isDischargeAction: false, actionActive: true,
+                modernBackendTerminal: true, isDischargeAction: false, actionActive: true,
                 controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
               "放电-32", "27 ∧ 其他动作活跃（防御）→ noteMonitoringLoss（轨道门控谓词 no-op 兜底）")
         // 空轨 → 巡检兜底 + 自动触发插桩。
         check(Discharge.observationRoute(
-                orchestrationTerminal: true, isDischargeAction: false, actionActive: false,
+                modernBackendTerminal: true, isDischargeAction: false, actionActive: false,
                 controlWritable: true, snapshotAvailable: true) == .patrolResidual,
               "放电-32", "27 ∧ 空轨 → patrolResidual（§2.2 #7 残留巡检兜底落位观测段）")
     }

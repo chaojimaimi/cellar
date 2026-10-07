@@ -220,109 +220,55 @@ private func runCalibrationSuppressionPlanScenarios() {
           "校准共存-8", "识别窗 10 < strike 验证窗 20（R1-P2-4 前提常量关系钉死）")
 }
 
-// MARK: - ④' convergenceRoute 扩参（②断言静默 desired=nil）
+// MARK: - ④' 校准抑制路由消费面（**0.23.1 编排退役翻新**——原「②断言静默 desired=nil」
+// 扩参矩阵随断言链退役删除：convergenceRoute 不再消费 calibrationSuspected，校准
+// 抑制的执法面由 daemon 侧 suppressionPlan 三臂承接（校准共存-13/14/15 钉面），
+// 路由仅钉汇聚目标/承载两输出不受校准态影响）
 
 private func runCalibrationRouteScenarios() {
-    // 校准-9：主力区间（≥80）断言静默——校准态 → desired=nil（否则 assertionRequest
-    // 规则 5 enforcement 在 80-90 区间照常 set 对抗校准，R1 指正的主抑制臂）。
+    // 校准共存-9：路由面不受校准态影响（0.23.1 锚——校准抑制不改变汇聚目标与
+    // 承载判定；topoff 臂静默由 daemon 早退承接，域值/簿记冻结）。
     do {
         let baseline = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(baseline.orchestrationDesired == 85,
-              "校准共存-9", "基线：target=85 → desired=85（既有链）")
-        let suppressed = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false,
-            calibrationSuspected: true)
-        check(suppressed.orchestrationDesired == nil && suppressed.convergenceTarget == 85,
-              "校准共存-9", "校准态：desired=nil（断言静默）∧ 汇聚目标不变（85——topoff 臂静默由 daemon 早退承接）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(baseline.convergenceTarget == 85 && baseline.topoffOwned,
+              "校准共存-9", "基线：target=85 → 汇聚 85 ∧ owned（域承载全区间）")
+        check(baseline == Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false),
+              "校准共存-9", "路由签名收敛：calibrationSuspected 输入删除（0.23.1——抑制面 = daemon 侧 suppressionPlan 三臂，路由输出恒等）")
     }
 
-    // 校准-10：降级钳 80 断言一并静默（degraded 稳态 desired=80 分支被校准分支
-    // 前置短路——钳 80 set 会对抗校准充满）。
+    // 校准共存-10：降级态与校准态对路由输出不可见（原「降级钳 80 断言静默」分支随
+    // 断言链退役——degraded 由 channelTick/healTick 状态机承担）。
     do {
-        let degradedBaseline = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false)
-        check(degradedBaseline.orchestrationDesired == Topoff.degradedLimit,
-              "校准共存-10", "基线：降级稳态 → 钳 80（0.20 M1b 既有链）")
-        let degradedCalibrating = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            calibrationSuspected: true)
-        check(degradedCalibrating.orchestrationDesired == nil,
-              "校准共存-10", "降级 ∧ 校准态 → desired=nil（钳 80 断言一并静默）")
-        check(degradedCalibrating.topoffOwned,
-              "校准共存-10", "topoffOwned 判定不受校准影响（daemon 早退分支消费——域值/簿记冻结）")
+        let route = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(route.convergenceTarget == 75 && route.topoffOwned,
+              "校准共存-10", "<80 → topoff 承载（域值/簿记冻结由 daemon 早退分支消费——路由面无校准感知）")
     }
 
-    // 校准-11：优先序——fullOnce 窗（用户显式放开，断言 100 与校准同向）> 校准；
-    // mode 关 > 校准（硬关断不受抑制影响）；编排开关关 > 校准。
+    // 校准共存-11：窗优先序保留（0.23.1）——fullOnce/日程窗汇聚目标 100（窗豁免
+    // 同权放行经 suppressionPlan）。
     do {
         let fullOnce = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false,
-            fullOnceWindow: true, calibrationSuspected: true)
-        check(fullOnce.orchestrationDesired == Topoff.shutdownLimit,
-              "校准共存-11", "fullOnce 窗 ∧ 校准态 → desired=100（显式放开优先——同向加速）")
-        let modeOff = Topoff.convergenceRoute(
-            modeActive: false, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false,
-            calibrationSuspected: true)
-        check(modeOff.orchestrationDesired == nil && modeOff.convergenceTarget == nil,
-              "校准共存-11", "mode 关 ∧ 校准态 → 既有关断语义（nil/nil——硬关断不受抑制影响）")
-        let orchestrationOff = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false,
-            calibrationSuspected: true)
-        check(orchestrationOff.orchestrationDesired == nil,
-              "校准共存-11", "编排开关关 ∧ 校准态 → desired=nil（门 1 先于校准分支）")
-    }
-
-    // 校准-12：缺省参零 diff（26 回归锚第三把）——同输入下扩参前后逐值相等
-    //（校准-9/10 基线断言即证；此处显式钉缺省参形态）。
-    do {
-        let explicit = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 90, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false,
-            fullOnceWindow: false, hysteresisEnabled: false, hysteresisActive: false,
-            calibrationSuspected: false)
-        let defaulted = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 90, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(explicit == defaulted,
-              "校准共存-12", "calibrationSuspected 缺省 false = 显式 false（26 既有构造零 diff——回归锚）")
-    }
-
-    // 校准共存-11 扩臂（review P3-1）：日程窗 ∧ 校准态 → desired=nil（两窗断言臂
-    // 不同权——fullOnce 窗先于校准分支保持 100，日程窗后于校准分支让位；域随写
-    // 100 两窗同权放行经 suppressionPlan 窗豁免）。良性自洽见 convergenceRoute 头注。
-    do {
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false, fullOnceWindow: true)
+        check(fullOnce.convergenceTarget == Topoff.shutdownLimit && !fullOnce.topoffOwned,
+              "校准共存-11", "fullOnce 窗 → 汇聚 100 ∧ 不承载（显式放开——域随写 100 同向加速）")
         let scheduleWindow = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: true,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(scheduleWindow.orchestrationDesired == Topoff.shutdownLimit,
-              "校准共存-11", "基线：日程窗 → 断言 100（既有链）")
-        let scheduleWindowCalibrating = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: true,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false,
-            calibrationSuspected: true)
-        check(scheduleWindowCalibrating.orchestrationDesired == nil,
-              "校准共存-11", "日程窗 ∧ 校准态 → desired=nil（断言让位——P3-1 角，与 fullOnce 窗不同权）")
-        check(scheduleWindowCalibrating.convergenceTarget == Topoff.shutdownLimit,
-              "校准共存-11", "日程窗 ∧ 校准态 → 汇聚目标仍 100（域随写放行——窗豁免同权）")
+            modeActive: true, chargingDisabledWindow: true,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(scheduleWindow.convergenceTarget == Topoff.shutdownLimit
+                  && !scheduleWindow.topoffOwned,
+              "校准共存-11", "日程窗 → 汇聚 100 ∧ 不承载（域随写放行——窗豁免同权）")
+        let modeOff = Topoff.convergenceRoute(
+            modeActive: false, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(modeOff.convergenceTarget == nil && !modeOff.topoffOwned,
+              "校准共存-11", "mode 关 → 既有关断语义（nil/不承载——硬关断不受抑制影响）")
     }
 }
 

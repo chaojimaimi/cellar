@@ -45,14 +45,14 @@ enum ControlAttempt: Equatable {
     /// Phase 5 v1.6 充电日程（重试 = 重发上次整包配置 JSON——全键覆盖语义下幂等
     /// 无害，照 setThermal 形态；payload = 宿主页 encode 的紧凑 JSON）。
     case setChargeSchedule(String)
-    /// v0.19.20 充电编排开关（重试 = 重发同值 setOrchestration——幂等，照开关类
-    /// 形态）。
-    case setOrchestration(Bool)
-    /// 0.21.0 §1.3 恢复限充（重试 = 重发 restoreChargeLimit——daemon 侧幂等置
-    /// pending(policy.upperLimit)，照动作类形态）。
+    /// 0.21.0 §1.3 恢复限充（重试 = 重发 restoreChargeLimit——0.23.1 daemon 侧
+    /// 幂等清窗 + 即时 tick 域写 target，照动作类形态）。
     case restoreChargeLimit
     /// 0.21.0 §2.4 CHIE 迟滞备用通道开关（重试 = 重发同值——幂等，照开关类形态）。
     case setChHysteresisEnabled(Bool)
+    // `.setOrchestration` case 已退役（0.23.1 编排退役——App 发送端/通用页编排节
+    // 随批删除；旧 App 混装窗的 setOrchestration XPC 命令兼容由 daemon 冻结偏好
+    // 照写面承接）。
     // .setMagSafeLed case 已退役（v1.10 M2：LED 切换外迁独立轻路径，不写
     // lastAttempt——失败重试 = 用户重选 Picker，构造点随 runControl 迁出消失）。
 
@@ -85,9 +85,6 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.setThermal")
         case .setChargeSchedule:
             return CellarL10n.s("status.summary.setChargeSchedule")
-        case .setOrchestration:
-            return CellarL10n.sRenamed(
-                "status.summary.execution", fallback: "status.summary.orchestration")
         case .restoreChargeLimit:
             return CellarL10n.s("status.summary.restoreLimit")
         case .setChHysteresisEnabled:

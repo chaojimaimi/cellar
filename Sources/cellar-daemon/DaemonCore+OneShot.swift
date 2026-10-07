@@ -51,31 +51,29 @@ extension DaemonCore {
         let nativeReading = NativeChargeLimit.load(
             rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)
         )
-        // v0.19.20 WP-5：capabilities 注入。0.21.0 §1.3 语义重定版：27 臂从拒绝
-        // 改为「编排开关前置检查」（R2-P1——关 → .orchestrationSwitchOff 拒收；
-        // 开 → 放行）；26 瞬态（nil）/26 legacy（[]）照常放行（26 行为零变化）。
+        // **0.23.1 编排退役**：27 臂收敛为平台判别 + 原生守卫绕过（放行交下方
+        // 置窗臂）；原「编排开关前置检查」（开关关 → .orchestrationSwitchOff 拒收）
+        // 随编排开关决策消费面退役删除；26 瞬态（nil）/26 legacy（[]）照常走
+        // 原生守卫（26 行为零变化）。
         if let rejection = fullOnceStartPrecondition(
             mode: policy.mode, externalConnected: external, nativeLimit: nativeReading,
-            capabilities: capabilities, orchestrationEnabled: policy.orchestrationEnabled
+            capabilities: capabilities
         ) {
             throw rejection
         }
-        // 0.21.0 §1.3：27 复活分支——**不启动动作轨**（26 语义保留），置
-        // pending(100) 交 App set（免 root 免快捷指令）+ 开临时放开窗 + 即时 tick
-        // （域随写 100——等价「完全放开」，防 agent 层对抗 App set；断言链经
-        // hasOutstanding 去抖不重签）。policy.upperLimit < 80 分支同样合法——
-        // pendingTarget=100 可 set（NativeLimitSet.setTarget 钳制面在 App 执行体）。
-        if orchestrationTerminalLocked {
-            let now = Date()
+        // 0.21.0 §1.3 → **0.23.1 置窗-only 化**：27 分支——**不启动动作轨**（26
+        // 语义保留），开临时放开窗 + 即时 tick（observationTick → 汇聚点域随写
+        // 100——等价「完全放开」，M1 模型 v2 域写值直接执法）。原 pending(100)
+        // 产出（token/target/lastRequestAt）随断言链退役删除——App 消费链已不存在，
+        // 窗内充电放开完全由域承载。policy.upperLimit < 80 分支同样合法——窗毕
+        // 用户显式恢复臂即时 tick 域写回 target。无超时/自动恢复（用户显式，§0
+        // 裁决 10——走查措辞维持）。
+        if modernBackendTerminalLocked {
             actionTrack.clearUserActionLatch()   // 用户动作清除终态锁存（P0-2 对齐）
-            let token = UUID().uuidString
-            orchestrationState.pendingToken = token
-            orchestrationState.pendingTarget = NativeLimitSet.fullOnceTarget
-            orchestrationState.lastRequestAt = now
-            orchestrationState.fullOnceWindowActive = true
+            fullOnceWindowActive = true
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "fullOnce 27 复活：临时放开窗开启——pending(100) 待 App set（免 root），恢复经恢复臂 pending(\(policy.upperLimit))；无超时/自动恢复（用户显式）"
+                message: "fullOnce 27：临时放开窗开启——域随写 100（免 root 免 set，M1 模型 v2 域写值直接执法）；恢复经恢复臂即时 tick 域写回 target；无超时/自动恢复（用户显式）"
             ))
             performTickLocked(events: &events)
             return buildStatusLocked()
@@ -111,18 +109,16 @@ extension DaemonCore {
         }
 
         if !actionTrack.isActive {
-            // 0.21.1 §3.1（M1a P3-1）：27 fullOnce 复活态取消——临时放开窗 + pending(100)
-            // 清理，语义 = 恢复臂同款恢复 pending(policy.upperLimit)（App set 回 policy
-            // 值，域随写同拍重申；无窗 → 下方既有幂等成功路径零变化——26 恒走本路径）。
-            if orchestrationState.fullOnceWindowActive {
-                orchestrationState.fullOnceWindowActive = false
-                let token = UUID().uuidString
-                orchestrationState.pendingToken = token
-                orchestrationState.pendingTarget = policy.upperLimit
-                orchestrationState.lastRequestAt = Date()
+            // 0.21.1 §3.1（M1a P3-1）→ **0.23.1 清窗-only 化**：27 fullOnce 临时
+            // 放开态取消——窗关闭 + 即时 tick（observationTick → 汇聚点域写回
+            // target：恢复臂同款收敛；M1 模型 v2 域写值直接执法）。原「恢复
+            // pending(policy.upperLimit) 产出」随断言链退役删除（无窗 → 下方既有
+            // 幂等成功路径零变化——26 恒走本路径）。
+            if fullOnceWindowActive {
+                fullOnceWindowActive = false
                 events.append(LogEvent(
                     category: .control, level: .info,
-                    message: "fullOnce 临时放开已取消：窗关闭——恢复 pending(\(policy.upperLimit)) 待 App set（免 root，域随写即时 tick 重申）"
+                    message: "fullOnce 临时放开已取消：窗关闭——即时 tick 域写回 target（\(policy.upperLimit)%，恢复臂同款收敛）"
                 ))
                 performTickLocked(events: &events)
                 return buildStatusLocked()

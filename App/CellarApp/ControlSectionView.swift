@@ -82,12 +82,13 @@ struct ControlSectionView: View {
             )
             .disabled(isModeDisabled || isActionActive)
             // 0.20 WP2 §3.4：<80 标注按 sub80 能力分流——
-            // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 通道）→ 回落进度
+            // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 域承载通道）→ 回落进度
             //  （active ∧ percent > 目标）/ 降级横幅（degraded，随写值参数化）——
             //   Sub80StatusView 参数驱动组件（CellarUICheck 可快照）。**0.23.0 §③
             //   实验性摘帽**：原 experimentalTarget 徽章参数删除（sub80 已非实验特性）；
-            // - 无能力（26 / 27 无 CHIE）：0.19.20 钳 80 原样——编排生效中 <80 行内
-            //   标注（S6 原生范围硬限 80-100，daemon nativeTarget 钳 80 应用）。
+            // - 无能力（26 / 27 无 CHIE）：钳 80 原样。**0.23.1 编排退役**：原「编排
+            //   生效中 <80 行内标注（原生最低 80）」分支删除（R4/常规 P1-6——<80 全
+            //   区间域承载后该标注失实；`panel.orchestration.minNative` 键随批删）。
             if sub80Capable {
                 Sub80StatusView(
                     degraded: statusController.daemonStatus?.sub80State == .degraded,
@@ -110,11 +111,6 @@ struct ControlSectionView: View {
                 ))
                 .disabled(isModeDisabled || statusController.busy)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            } else if statusController.orchestrationActive, Int(upperLimit) < 80 {
-                Text(CellarL10n.s("panel.orchestration.minNative"))
-                    .font(.caption)
-                    .foregroundStyle(theme.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack {

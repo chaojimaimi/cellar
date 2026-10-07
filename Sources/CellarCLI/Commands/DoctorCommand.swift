@@ -212,7 +212,7 @@ struct DoctorCommand: ParsableCommand {
 
         // 检查 17（0.23.0 §② Shortcuts 备用退役）：原 `shortcuts list` 用户会话
         // 探测随批删除——判定收敛为 MCL 读回探测单源（见 DoctorOrchestration）。
-        // 检查 17 + 检查 19/20（0.21.0 §1.2/§1.3/§1.5）：MCL 读回只读
+        // 检查 17 + 检查 20（0.21.0 §1.2/§1.5；0.23.1 检查 19 随编排退役删除——位号留空）：MCL 读回只读
         // 探测（用户会话 GET——非 root 读级可用，S3 实证；doctor 只读契约，set 面
         // 不入 doctor；失败结构化落入 probe，不静默）。
         let mclProbe = MCLReadbackProbe.probe()

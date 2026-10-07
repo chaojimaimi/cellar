@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.1-alpha]
+
+> 背景：0.19.20 编排链退役后架构收敛「daemon 域承载」单通道（模型 v2 实证——域写值直接流入 MCL 执法，App set 断言链无职责）。本批为年度最大删除手术：**编排退役 ≠ 整文件删除**——待删面里的 27 执法引擎（观测 tick）、26 红线平台门、恢复臂与 wire 兼容面为幸存者，全部函数级拆解处理（双轨三轮评审终版：常规 PASS + 红队「退役面完备」，§0 裁决十条全落字）。wire 零 schema 变化（orchestration 载荷照填 enabled=false、`capabilityOrchestration` 照报作 27 平台判别标记、setOrchestration/reportOrchestration 命令族保留、两窗字段沿更名门恒填）。
+
+### Removed
+
+- **编排链全链退役（daemon 域承载单通道收敛）**：`NativeOrchestration.swift` 整删（nativeTarget/assertionRequest 决策族/OrchestrationState 五字段；wire 三类型先迁 `DaemonXPC.swift`）；`Topoff.convergenceRoute` desired 推导链删除（域承载全区间即新常态——domainBackstop 的编排开关前置项显式删）；daemon 观测 tick ③断言签发臂删（①日程转移 + ②汇聚点路由消费迁移为独立 `observationTickLocked`，挂点保留）；`discardStaleOrchestrationPendingLocked` 删；fullOnce 27 分支/cancelAction 27 臂置窗-清窗-only 化（pending 产出臂删）；`restoreChargeLimit` 重写（清窗 + 清锁存 + 即时 tick 域写 target——pending 产出与编排开关前置拒收删）。
+- **App 侧编排执行链八项删**：consumeOrchestrationPending / orchestrationTask / processedOrchestrationTokens / 编排状态·开关·生效中三计算属性 / setOrchestration 发送端 / ingest pending 消费挂点 / ControlAttempt.setOrchestration / embeddedExecutorAvailable（唯一消费面 = 编排节）；`OrchestrationSectionView` 整删 + 通用页编排节删 + 面板/自动化页「原生最低 80」标注删（<80 全区间域承载后失实——R4/常规 P1-6）。
+- **doctor 检查 19 退役**：fullOnce 临时放开残留检测删除（新常态下 MCL 读回 100 即域承载稳态，触发面 = 常态必误报）；连带 `NativeLimitSet.fullOnceRestoreAvailable` 退役（唯一双消费面随批消失）；检查 19 位号留空（编号空洞如实登记，17/18/20 位次不重排）。
+- **测试/golden/l10n 清账**：OrchestrationDomain 整域删除（78 check——F-1 透传钉迁政策镜像面、wire 编解码往返钉迁 NativeLimitWireDomain）；Topoff/TopoffReadback/CHHysteresis/CalibrationCoexistence/DischargeOscillation/NativeLimitSet 六域 desired/开关参断言翻新；新增 OrchestrationRetirementDomain 结构钉面（冻结偏好零消费断言/observationTick 迁移钉/置窗-清窗-only 化钉/恢复臂重写钉 + Schedule 断电簿记臂保留钉/wire 恒填钉）；892 → 875 场景；Orchestration_* golden 5 组 30 张删（456 → 426）；l10n 死键 26 删（settings.orchestration.*/settings.execution.*/fallback 四键/schedule.nativeFloor）。
+
+### Changed
+
+- **26 红线平台门更名（行为零变化）**：daemon `orchestrationTerminalLocked` → `modernBackendTerminalLocked`（6 消费点：观测 tick 挂点/observationRoute 入参/Schedule:101 断电簿记臂〔R1 保留仅更名+注释翻新〕/wire 两窗三键恒填门等）；App `orchestrationTerminal` → `platformModern`（6 消费点：W4 对账门/MCL 采样门/fullOnce 按钮二态/temporaryFullOpenActive/nativeLimitFullOnceHintWord）；`Discharge.observationRoute` 入参同步更名。`capabilityOrchestration` 能力串照报——旧 App 与全部消费点依赖它作平台标记。
+- **fullOnce 纯 daemon 化（R4）**：27 前置收敛平台判别 + 原生守卫绕过（`.orchestrationSwitchOff`/`.orchestrationTerminal` 拒因删除）；置窗后即观察 tick 域随写 100（M1 模型 v2——域写值直接执法）；`temporaryFullOpenActive` 判定源改挂 wire `fullOnceWindowActive`（横幅/恢复按钮随 daemon 置窗/清窗轮询自然刷新）；窗毕维持用户显式恢复（无超时无自动——现状 27 语义走查措辞修正）。
+- **MCL 对账面收敛**：`shutdownExpectation` 八行表 → **四行表**（两窗/mode 关恒 100 / degraded → max(target,80) / 非 degraded 域承载 → 100——原「编排开 ∧ ≥80 → target」行随编排退役删除）；`compensationSilenced` **宽读钉死**（`sub80State == .active` 即静默全区间含 ≥80——防新 App + 旧 daemon 混装窗 G1 复活，红队 §0.9）。
+- **setOrchestrationEnabled 冻结偏好化**：收敛为 policy 照写 + persist + 回读（toggle 清窗臂与即时 tick 删除——命令触发的行为臂随断言链退役，防旧 App 混装窗内切开关无声取消在途 fullOnce 窗）；`reportOrchestration` 收敛 token 幂等日志 no-op；`orchestrationStatusLocked` 改硬编码 false 数据源（冻结偏好镜像——policy 读回路删除）。
+- **R10 域生效值失配提示迁家**：原编排节 readbackLine 的「系统设置 X% 已被 Cellar 目标 Y% 覆盖」提示迁通用页守护进程节尾行（新键 `settings.domain.overrideNotice`；数据源 = MCL 读回 30s 采样，面板恢复臂判定源共用）。
+- **doctor 检查 17 改文案**：「执行通道：App 内嵌 set 通道（唯一）」→「执行通道（恢复/对账用）」（编排断言面退役后 set 通道剩余职责 = 恢复链 + W4 对账残余车道；探测对象 = MCL set 可用性不变）。
+
+### 文档与版本
+
+- 四方版本 0.23.1-alpha（CFBundleVersion 2310）；FAQ 2 处编排提法改写（Q14 快捷指令退役注记 → 0.23.1 全链退役 + 混装升级纪律；域通道降级措辞去「编排断言同步」）；README zh/en 编排行与快照/l10n 数字（426 golden / 477 key）；SMC-NOTES §11.16（退役清单 + **≥80 守备迁移时延登记**〔行为通道收敛链 ~30 min–1h，周期读回对 MCL-only 漂移无感知的最坏承接链如实入账〕+ **混装死面登记**〔旧 App fullOnce/恢复死面 = 有界退化，FAQ 升级纪律承接；新 App + 旧 daemon 恢复靠域写，前提 = 静默门宽读〕）。
+
+### 固定不变（本批红线核对）
+
+- **wire 零 schema 变化**：orchestration 载荷照填（enabled=false/pending 恒 nil——值语义按冻结窗收敛为预期变化）、`capabilityOrchestration` 照报、两窗字段沿 modernBackendTerminal 门恒填、setOrchestration/reportOrchestration/restoreChargeLimit 命令族与键组保留（旧 App 混装窗可发不报错）；Schedule:101 日程断电簿记臂保留（27 夜窗零回归）；26 平台全部消费点行为零变化。
+
 ## [0.23.0-alpha]
 
 > 背景：四层根因链已闭环（模型 v2 定谳：域写值直接流入 MCL 执法），0.21.2 收紧模式实证自动放电在健康态永不触发（目标 70、电量 95+、零触发），Shortcuts 备用通道自 0.21.0 embedded set 主通道化后边际价值归零。本批为年度最大简化批：**退役不再产生价值的自动机与备用通道**，把交互矩阵写者面收敛到最小稳定集——简化不许删出新洞（交互矩阵随审，双轨评审 + 红队 F1-F11 全吸收）。wire 零变化（`autoDischargeEnabled` policy 镜像照填、`autoDischargeSuspended` 恒 false、能力上报不变）。

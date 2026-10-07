@@ -71,13 +71,10 @@ let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Loc
 // v0.19.10 自 336 扩 342——风扇节温度源不支持态 6 新增（FanSection_sourceUnsupported_*：
 // cpuSkinSupported=false 态「源 Picker 可用 + fan.sourceUnsupported 注记」新形态
 // 钉死，既有 FanSection 构造零改动）；
-// v0.19.20 自 342 扩 354——充电编排节 2 态 12 新增（Orchestration_ready/failed：
-// 就绪态 + 上次失败详情态（失败详情 = daemon 回报 lastError 样例串）新组件
-// OrchestrationSectionView 形态钉死，回调控件空闭包——渲染无副作用））；
-// 0.20 M2 自 354 扩 390——WP4 已停转 2 态 12（StatusLine_fanStopped_dual/single）
-// + WP2 sub80 组件 3 态 18（Sub80Status_experimental/falling/degraded）
-// + WP3 读回展示 1 态 6（Orchestration_readback）——全部全新文件（新增非扰动；
-// 既有 >0 thirdRow 与 Orchestration_ready/failed 构造零改动零 diff）
+// v0.19.20 自 342 扩 354——充电编排节 2 态 12 新增（Orchestration_ready/failed）；
+// 0.20 M2 自 354 扩 390——WP4 已停转 2 态 12 + WP2 sub80 组件 3 态 18
+// + WP3 读回展示 1 态 6（Orchestration_readback）；
+// **0.23.1 编排退役**：Orchestration_* 全系列 5 组 30 张随组件删除（456 → 426）。
 
 /// 单案例：golden 文件名 `<组件>_<态>_<style>_<scheme>.png` + 视图构造。
 struct SnapshotCase {
@@ -922,44 +919,14 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
-            // v0.19.20 充电编排节 2 态（ready/failed）×6。**0.23.0 §② Shortcuts
-            // 备用退役**：shortcutName/onShortcutNameChange 参数删除（输入框/三步
-            // 指引随批退役——Orchestration_* 全系列预期漂移，CI regen 入账）。
-            // ready 态钉死「开关开 + 就绪」；failed 态钉死「上次失败：详情」行
-            // （失败详情 = daemon 回报 lastError 样例串——MCLSetFailure.
-            // nativeFloorMinimum 0.23.0 摘帽版文案同形）。--regen --only=Orchestration。
-            let orchestrationSections: [(String, OrchestrationSectionView)] = [
-                ("ready", OrchestrationSectionView(
-                    enabled: true,
-                    lastError: nil, busy: false,
-                    onToggleEnabled: { _ in })),
-                ("failed", OrchestrationSectionView(
-                    enabled: true,
-                    lastError: "系统原生限充最低 80——更低目标由 Cellar 限充通道直接执法", busy: false,
-                    onToggleEnabled: { _ in })),
-            ]
-            for (stateName, section) in orchestrationSections {
-                cases.append(SnapshotCase(
-                    name: "Orchestration_\(stateName)_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
-                    width: 304, height: nil, style: style, scheme: scheme
-                ) {
-                    AnyView(wrap(style, scheme) {
-                        section.frame(width: 304, alignment: .leading)
-                    })
-                })
-            }
+            // **0.23.1 编排退役**：原充电编排节 5 组 30 张（Orchestration_ready/
+            // failed/readback/embedded/embeddedOff）随组件删除——wire enabled=false
+            // 照填下编排节将常驻渲染冻结关态，节随批整删（golden 456→426；域生效值
+            // 失配提示迁通用页守护进程节尾行——App 层表面，快照矩阵不可达，登记）。
 
-            // 0.20 M2 自 354 扩 390——六组新形态 36 张（全部全新文件，新增非扰动）：
-            // ①StatusLine_fanStopped_dual/single（WP4 §5：rpm==0 → 「已停转」语汇
-            //   词——GA 低温静息停转判谳 §11.3.1，0 是有效读数非门控；双扇两格 +
-            //   单扇合一两形态；既有 >0 thirdRow 构造零改动 → 既有 golden 零 diff）；
-            // ②Sub80Status_experimental/falling/degraded（WP2 §3.4：实验性徽章 +
-            //   说明 / 回落进度「回落中 82%→75%」/ 降级横幅——参数驱动新组件
-            //   Sub80StatusView，三态全缺省 EmptyView 由宿主门控保证零渲染）；
-            // ③Orchestration_readback（WP3 §4：读回展示行「当前生效上限（读回）：
-            //   75%」——宿主页组装成品串样例；readbackLine 缺省 nil → 既有
-            //   Orchestration_ready/failed 构造零改动零 diff）。
-            //   --regen --only=StatusLine_fanStopped / Sub80Status / Orchestration_readback 分组跑。
+            // 0.20 M2 自 354 扩 390——WP4 已停转 2 态 12（StatusLine_fanStopped_dual/single）
+            // + WP2 sub80 组件 3 态 18（Sub80Status_experimental/falling/degraded）；
+            // **0.23.1**：WP3 读回展示组（Orchestration_readback）随编排节退役删除。
             let fanStoppedBase = makeSnapshot(percent: 90, isCharging: false, externalConnected: true,
                                               amperageMA: 0,
                                               adapter: ["Watts": 96, "AdapterVoltage": 20_150,
@@ -1045,66 +1012,11 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
-            cases.append(SnapshotCase(
-                name: "Orchestration_readback_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
-                width: 304, height: nil, style: style, scheme: scheme
-            ) {
-                AnyView(wrap(style, scheme) {
-                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
-                    OrchestrationSectionView(
-                        enabled: true,
-                        lastError: nil, busy: false,
-                        readbackLine: "当前生效上限（读回）：75%", readbackIsWarning: false,
-                        onToggleEnabled: { _ in }
-                    ).frame(width: 304, alignment: .leading)
-                })
-            })
-
-            // 0.21.0 M1a 自 390 扩 391——set 可用态 1 组 6 张（全部全新文件，新增非
-            // 扰动；R2-P3-3 两态快照矩阵的另一半）：Orchestration_embedded 钉死
-            // 「embeddedExecutorAvailable=true——快捷指令名输入框隐藏 + setup 指引
-            // 降级为说明性文案（内嵌执行通道接管）+ 读回行」。开关文案诚实化
-            // （「编排」→「系统限充执行」）随 0.21 catalog 新键变化——既有
-            // Orchestration_ready/failed/readback golden 预期 regen（方案 §7.2）。
-            // --regen --only=Orchestration 分组跑。
-            cases.append(SnapshotCase(
-                name: "Orchestration_embedded_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
-                width: 304, height: nil, style: style, scheme: scheme
-            ) {
-                AnyView(wrap(style, scheme) {
-                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
-                    OrchestrationSectionView(
-                        enabled: true,
-                        lastError: nil, busy: false,
-                        readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
-                        embeddedExecutorAvailable: true,
-                        onToggleEnabled: { _ in }
-                    ).frame(width: 304, alignment: .leading)
-                })
-            })
-
-            // 0.21.3 §3.2 文案分流第二态 1 组 6 张（全新文件——新增非扰动）：
-            // Orchestration_embeddedOff 钉死「enabled=false ∧
-            // embeddedExecutorAvailable=true——执行通道行分流为『内部域执法（本
-            // 开关仅控制 App 内嵌 set 通道）』」（0.21.2 登记的误导文案修正——
-            // 域执法不受本开关门）。既有 Orchestration_embedded golden 随
-            // channelOn 文案预期 regen。
-            // --regen --only=Orchestration 分组跑。
-            cases.append(SnapshotCase(
-                name: "Orchestration_embeddedOff_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
-                width: 304, height: nil, style: style, scheme: scheme
-            ) {
-                AnyView(wrap(style, scheme) {
-                    // 0.23.0 §②：shortcutName/onShortcutNameChange 参数删除。
-                    OrchestrationSectionView(
-                        enabled: false,
-                        lastError: nil, busy: false,
-                        readbackLine: "当前生效上限（读回）：85%", readbackIsWarning: false,
-                        embeddedExecutorAvailable: true,
-                        onToggleEnabled: { _ in }
-                    ).frame(width: 304, alignment: .leading)
-                })
-            })
+            // **0.23.1 编排退役**：原 Orchestration_readback / Orchestration_embedded /
+            // Orchestration_embeddedOff 三组 18 张（WP3 读回展示 + set 可用态 + 关态
+            // 分流）随编排节组件删除——通用页「系统限充执行」节与读回行整体退役；
+            // 域生效值失配提示（R10）迁通用页守护进程节尾行（App 层组装，快照矩阵
+            // 不可达，登记）。
         }
     }
     return cases

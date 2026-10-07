@@ -4,6 +4,93 @@ import Foundation
 import XPC
 #endif
 
+// MARK: - 编排 wire 类型（0.23.1「编排退役批」自 NativeOrchestration.swift 迁入——R6：
+// 三类型为 wire 兼容面保留照填，决策族已随批退役；文件删除后本处是单一真相）
+
+/// 编排 wire 键与输入面常量（照 ChargeScheduleWireKeys 先例：XPCServer 臂 /
+/// DaemonXPCClient / validateRequest 三处同源）。0.23.1：setOrchestration/
+/// reportOrchestration 命令族**保留**（wire 零 schema 变化——旧 App 混装窗可发不报错；
+/// daemon 侧语义收敛为冻结偏好照写 / token 幂等日志 no-op）。
+public enum OrchestrationWireKeys {
+    /// setOrchestration 命令字面量（编排开关写入通道——R1 P0-2：原本没有任何
+    /// 写入通道）。
+    public static let command = "setOrchestration"
+    /// reportOrchestration 命令字面量（App 执行回报——确认链）。
+    public static let reportCommand = "reportOrchestration"
+    /// setOrchestration 单键（UINT64 0/1——R2 P3：统一既有开关键型，照 auto/
+    /// magSafeLedMode 先例，不引入新键型）。
+    public static let enabled = "orchestrationEnabled"
+    /// reportOrchestration token 键（STRING ≤64——幂等消费键，daemon 签发 UUID）。
+    public static let token = "orchestrationToken"
+    /// reportOrchestration ok 键（UINT64 0/1）。
+    public static let ok = "orchestrationOk"
+    /// reportOrchestration detail 键（STRING ≤8192——上限照 scheduleJson 先例；
+    /// 可选：ok=true 时缺席）。
+    public static let detail = "orchestrationDetail"
+    /// token 字节长度上限。
+    public static let maxTokenLength = 64
+    /// detail 字节长度上限（与 validateRequest 白名单 / XPCServer 臂同源）。
+    public static let maxDetailLength = 8192
+
+    /// 开关值域（0/1 白名单——与 Discharge.validAutoFlag 同尺）。
+    public static func validEnabled(_ raw: UInt64) -> Bool { raw <= 1 }
+
+    /// token 校验（非空 + ≤64 字节；字节口径与 xpc_string_get_length 一致）。
+    public static func validToken(_ token: String) -> Bool {
+        !token.isEmpty && token.utf8.count <= maxTokenLength
+    }
+
+    /// detail 校验（≤8192 字节；空串合法 = 无详情）。
+    public static func validDetail(_ detail: String) -> Bool {
+        detail.utf8.count <= maxDetailLength
+    }
+}
+
+/// reportOrchestration 请求载荷（三键缺席保持 nil——类型混淆已在 validateRequest
+/// 整包拒绝，值域由 XPCServer 臂复核）。
+public struct OrchestrationReportWire: Equatable, Sendable {
+    public var token: String?
+    public var ok: UInt64?
+    public var detail: String?
+
+    public init(token: String? = nil, ok: UInt64? = nil, detail: String? = nil) {
+        self.token = token
+        self.ok = ok
+        self.detail = detail
+    }
+}
+
+/// 编排状态载荷（DaemonStatus.orchestration 可选字段——buildStatusLocked **恒填**
+/// 照 magSafeLed 先例：内存组装零读盘，UD-7 防 ingest 整体覆盖触发「旧 daemon」
+/// 闪断；合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容）。
+/// **0.23.1 编排退役**：`enabled` 数据源改 daemon 侧硬编码 false（冻结偏好镜像——
+/// wire schema 不动，pending 五键旧 daemon 形态照容）；决策消费面 = 0（App 侧
+/// OrchestrationSectionView 随批删除）。
+public struct OrchestrationStatus: Codable, Equatable, Sendable {
+    /// 编排开关（0.23.1 起恒 false——冻结偏好镜像照填）。
+    public var enabled: Bool
+    /// 待执行断言 token（nil = 无待执行）。**0.23.1 起 daemon 恒 nil**（断言链
+    /// 随批退役；字段保留 = wire 零 schema 变化——旧 daemon 回包非 nil 值 App 照容）。
+    public var pendingToken: String?
+    /// 待执行目标百分比（与 pendingToken 同拍签发——0.23.1 起 daemon 恒 nil）。
+    public var pendingTarget: Int?
+    /// 最近一次确认生效的目标（ok 回报写入——0.23.1 起 daemon 恒 nil）。
+    public var lastApplied: Int?
+    /// 最近一次失败回报详情（ok=false 回报写入——0.23.1 起 daemon 恒 nil）。
+    public var lastError: String?
+
+    public init(
+        enabled: Bool, pendingToken: String? = nil, pendingTarget: Int? = nil,
+        lastApplied: Int? = nil, lastError: String? = nil
+    ) {
+        self.enabled = enabled
+        self.pendingToken = pendingToken
+        self.pendingTarget = pendingTarget
+        self.lastApplied = lastApplied
+        self.lastError = lastError
+    }
+}
+
 /// daemon 状态快照（XPC 回包 / CLI 渲染 / doctor 检查共用；Codable JSON 通讯载荷）。
 ///
 /// lastAction 为最近一次策略/事件动作的人类可读描述（如 "enforce:disableCharging"、
@@ -68,6 +155,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// v0.19.20 编排状态载荷（buildStatusLocked **恒填**——内存组装零读盘，照
     /// magSafeLed 先例，UD-7：全回包携带防 ingest 覆盖触发「旧 daemon」闪断；
     /// 合成 Codable decodeIfPresent——旧 daemon 回包缺席 → nil 天然兼容）。
+    /// **0.23.1 编排退役**：daemon 侧数据源硬编码 false（enabled）+ 恒 nil（pending
+    /// 四键）——wire schema 零变化，消费面仅存旧 App 混装兼容。
     public var orchestration: OrchestrationStatus?
     /// 0.20 M1a 合盖状态（§2.2 合盖拒绝闸；追加式可选字段——合成 Codable
     /// decodeIfPresent，旧 daemon 回包缺席 / 旧客户端解码 → nil 兼容，wire 零破坏）。
@@ -119,14 +208,15 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 域读回一致清零（锁存期 daemon 对非违规 owned 拍也补采样读回——覆写源
     /// 停止后下一拍即解除，随轮询自然消失〔review P1 半死态根治〕）。
     public var sub80MechanismSuppressed: Bool?
-    /// 0.21.3 §2.1 MCL 对账期望派生的两窗输入（shutdownExpectation 八行表行 1/2）：
-    /// fullOnce 临时放开窗是否在位（orchestrationState.fullOnceWindowActive）。
-    /// **orchestrationTerminal 门内恒填**（27 观测段；26/旧 daemon 缺席 = 无此
-    /// 特性——App 对账循环 orchestrationTerminal 门内天然不消费，decodeIfPresent
+    /// 0.21.3 §2.1 MCL 对账期望派生的两窗输入（shutdownExpectation 行 1/2）：
+    /// fullOnce 临时放开窗是否在位（**0.23.1 起 daemon 核心态 `fullOnceWindowActive`**
+    /// ——原 OrchestrationState 五字段随编排退役删除，窗位独立最小态迁出）。
+    /// **modernBackendTerminal 门内恒填**（27 观测段；26/旧 daemon 缺席 = 无此
+    /// 特性——App 对账循环 platformModern 门内天然不消费，decodeIfPresent
     /// wire 兼容先例）。
     public var fullOnceWindowActive: Bool?
     /// 同上——chargingDisabled 日程窗是否在位（scheduleState.lastAppliedEntryId
-    /// 派生的显式字段——单一真相，勿由 App 侧再派生）。orchestrationTerminal
+    /// 派生的显式字段——单一真相，勿由 App 侧再派生）。modernBackendTerminal
     /// 门内恒填。
     public var chargingDisabledWindowActive: Bool?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
@@ -289,7 +379,12 @@ public enum DaemonXPC {
     // nil，nil = 旧 daemon 门控），行为变更第九次破例 bump（install 后 getStatus
     // 版本核对，防 CLI/App 对 stale daemon，UD-9；M4 发布批补 Info.plist/
     // package-release.sh 两方）。
-    public static let daemonVersion = "0.23.0-alpha"
+    // 0.23.1-alpha（2026-10-06）：编排退役批——编排链决策族/断言链/pending 消费面
+    // 全批退役（daemon 域承载单通道收敛，模型 v2 实证）；wire 零 schema 变化
+    //（orchestration 载荷照填 enabled=false、setOrchestration/reportOrchestration
+    // 命令族与键保留、capabilityOrchestration 照报作 27 平台判别标记）——协议
+    // 零变更，随版本矩阵同步 bump（doctor 三方一致纪律）。
+    public static let daemonVersion = "0.23.1-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

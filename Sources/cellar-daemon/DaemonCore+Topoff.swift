@@ -21,27 +21,26 @@ extension DaemonCore {
                 .chargingDisabled == true
     }
 
-    /// 汇聚点双通道路由消费（orchestrationTickLocked 内、applyScheduleTransitionLocked
-    /// 之后调用——§3.1 路由挂点）。返回编排断言目标 desired（nil = 编排静默）；
-    /// topoff 副作用（域写/验证/重申/降级/自愈/卫生/关断清理）在本方法内完成。
-    ///
-    /// 次序契约：路由判定（纯函数）→ topoff 副作用 → 返回 desired 给断言链——
-    /// 副作用先行不改变断言输入（desired 在纯函数内已定）。
+    /// 汇聚点路由消费（observationTickLocked ②内、applyScheduleTransitionLocked
+    /// 之后调用——§3.1 路由挂点）。**0.23.1 编排退役**：原「返回编排断言目标
+    /// desired」随断言链退役删除（desired 恒 nil，消费面已不存在）——本方法收敛
+    /// 为 Void 副作用承载；topoff 副作用（域写/验证/重申/降级/自愈/卫生/关断清理）
+    /// 在本方法内完成。
     func topoffConvergenceRouteLocked(
         now: Date, snapshot: BatterySnapshot, events: inout [LogEvent]
-    ) -> Int? {
+    ) {
         let sub80Capable = capabilities?.contains(DaemonXPC.capabilitySub80) == true
         // chargingDisabled 在窗判定（§3.1 汇聚目标派生输入——等价「完全放开」窗口）。
         let chargingDisabledWindowActive = chargingDisabledWindowActiveLocked
         // 0.21.0 §3.1 校准窗口识别（模式指纹；决策纯函数 CalibrationCoexistence.tick
-        // ——CellarCoreCheck 场景域钉死）。本函数调用点在 orchestrationTickLocked
-        //（27 终态门控）——26 执法段/瞬态窗口零触及（红线：26 平台正常路径零变化）。
+        // ——CellarCoreCheck 场景域钉死）。本函数调用点在 observationTickLocked
+        //（27 平台判别门控）——26 执法段/瞬态窗口零触及（红线：26 平台正常路径零变化）。
         // 完全放开窗（fullOnce 临时放开窗 ∨ chargingDisabled 日程窗）惰性拍——窗内
         // 充到 100 是显式意图，指纹不推进不进出（防误报「target=100 永不满足」的窗
         // 形态推广）。边沿副作用：识别命中拍同步清零 violationTicks（R1-P2-4：识别
         // 10 tick < strike 验证窗 20 tick——校准证据优先于违规证据；非持久化字段，
         // 零落盘面）+ 进出 persistLog（§3.2 可观测——daemon.log 持久轨迹 + LogEvent 环）。
-        let fullOpenWindowActive = orchestrationState.fullOnceWindowActive
+        let fullOpenWindowActive = fullOnceWindowActive
             || chargingDisabledWindowActive
         let calibrationTick = CalibrationCoexistence.tick(
             state: calibrationCoexistenceState,
@@ -54,17 +53,16 @@ extension DaemonCore {
         calibrationCoexistenceState = calibrationTick.state
         if calibrationTick.risingEdge {
             topoffState.violationTicks = 0
-            let message = "校准抑制进入：模式指纹命中（≥\(CalibrationCoexistence.percentGate)% ∧ 外接 ∧ 充电 ∧ target ≤ \(CalibrationCoexistence.targetGate) 持续 \(CalibrationCoexistence.detectionTicks) tick）——strike/轻量重申/域随写/编排断言暂停，校准结束自动恢复（识别误报可能：模式识别非公开信号，方案 §3.2 诚实边界）"
+            let message = "校准抑制进入：模式指纹命中（≥\(CalibrationCoexistence.percentGate)% ∧ 外接 ∧ 充电 ∧ target ≤ \(CalibrationCoexistence.targetGate) 持续 \(CalibrationCoexistence.detectionTicks) tick）——strike/轻量重申/域随写暂停，校准结束自动恢复（识别误报可能：模式识别非公开信号，方案 §3.2 诚实边界）"
             Self.persistLog("校准共存：\(message)")
             events.append(LogEvent(category: .control, level: .info, message: message))
         } else if calibrationTick.fallingEdge {
-            let message = "校准抑制退出：指纹失效（percent < \(CalibrationCoexistence.percentGate) ∨ target > \(CalibrationCoexistence.targetGate)）——既有链恢复（下拍幂等重写/断言对账）"
+            let message = "校准抑制退出：指纹失效（percent < \(CalibrationCoexistence.percentGate) ∨ target > \(CalibrationCoexistence.targetGate)）——既有链恢复（下拍幂等重写/域对账）"
             Self.persistLog("校准共存：\(message)")
             events.append(LogEvent(category: .control, level: .info, message: message))
         }
         // 0.21.0 §2.2：迟滞 tick 消费（**sub80 门内——26 零触及**；置于路由计算之前，
-        // convergenceRoute 以本拍挂载结论为输入——挂载/退出同拍反映到 desired，
-        // 消编排钳 80 与迟滞压 75 的跨拍互搏窗）。fullOnce 临时放开窗并入退出臂
+        // convergenceRoute 以本拍挂载结论为输入）。fullOnce 临时放开窗并入退出臂
         // （语义同 chargingDisabled 窗——「完全放开」期充到 100 是预期，迟滞执法
         // 75 会对抗放开，§1.3）。
         // ⚠️ 登记局限（code-review P3-3，接受不修）：本调用先于 healTick——探针
@@ -76,30 +74,20 @@ extension DaemonCore {
             hysteresisTickLocked(
                 snapshot: snapshot,
                 chargingDisabledWindow: chargingDisabledWindowActive,
-                fullOnceWindow: orchestrationState.fullOnceWindowActive, events: &events
+                fullOnceWindow: fullOnceWindowActive, events: &events
             )
         }
         let route = Topoff.convergenceRoute(
             modeActive: policy.mode == "active",
-            orchestrationEnabled: policy.orchestrationEnabled == true,
             chargingDisabledWindow: chargingDisabledWindowActive,
             upperLimit: policy.upperLimit,
             sub80Capable: sub80Capable,
             actionActive: actionTrack.isActive,
-            degraded: topoffState.degraded,
-            healProbeActive: topoffState.healProbeActive,
-            // 0.21.0 §1.3：fullOnce 临时放开窗——汇聚目标/断言目标强制 100（等价
-            // 「完全放开」：域随写 100 防 agent 层对抗 App set；断言防 valueChange
-            // 回拉 policy 值）。
-            fullOnceWindow: orchestrationState.fullOnceWindowActive,
-            // 0.21.0 §2.1 迟滞路由（R1-P1-4）：迟滞 active → desired=nil（编排静默）。
-            hysteresisEnabled: policy.chHysteresisEnabled == true,
-            hysteresisActive: hysteresisState.mounted,
-            // 0.21.0 §3.1 校准抑制路由（R1-P1-5 臂②）：抑制态 → desired=nil
-            //（App set 断言静默——降级钳 80 与 80-90 主力区间 enforcement 一并静默）。
-            calibrationSuspected: calibrationCoexistenceState.suspected
+            // 0.21.0 §1.3：fullOnce 临时放开窗——汇聚目标强制 100（等价「完全
+            // 放开」：域随写 100，M1 模型 v2 域写值直接执法）。
+            fullOnceWindow: fullOnceWindowActive
         )
-        guard sub80Capable else { return route.orchestrationDesired }   // 非 sub80 机：零行为（26 回归锚）
+        guard sub80Capable else { return }   // 非 sub80 机：零行为（26 回归锚）
         // 0.20.2 §2 诚实性状态持久化：**写入点钉在 sub80 门内**（26 平台不生成
         // 状态文件——红线）。defer 收口本方法全部变更路径；触发源判定
         // （strike / 降级跳变 / off 关断）在 helper 内经 Topoff 纯函数承担，域写
@@ -108,10 +96,10 @@ extension DaemonCore {
         defer { persistTopoffHonestyStateLocked(previous: honestyBefore) }
         // 0.20.1 观测性：每 tick 一行持久轨迹（wedge 事件教训——LogEvent 内存环随进程
         // 消失致事后不可溯源；本行落 daemon.log，卡死时最后一行即 wedge 现场）。
-        Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) desired=\(route.orchestrationDesired.map(String.init) ?? "nil") percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
+        Self.persistLog("topoff tick：target=\(route.convergenceTarget.map(String.init) ?? "nil") owned=\(route.topoffOwned) percent=\(snapshot.percent) charging=\(snapshot.isCharging) ext=\(snapshot.externalConnected) degraded=\(topoffState.degraded) off=\(topoffState.off) lastWritten=\(topoffState.lastWrittenLimit.map(String.init) ?? "nil")")
         // 0.22.3 §3 失速检测（观测层第二传感器——锚点维护 + stallDue 判定；纯函数
         // Topoff.stallTick 钉面，daemon 只消费）。置于 owned 分支外——!owned 重置
-        // 条件全拍生效（mode 关 / 全开窗 / 编排开 ≥80 等非承载拍锚点必清）；校准
+        // 条件全拍生效（mode 关 / 全开窗等非承载拍锚点必清）；校准
         // 抑制拍 isCharging=true 天然落重置条件，锚点不滞留。
         let stallAnchorBefore = topoffState.stallAnchor
         let stallPlan = Topoff.stallTick(
@@ -138,7 +126,7 @@ extension DaemonCore {
         // 27-only 变更，26 红线无虞。
         guard let convergenceTarget = route.convergenceTarget else {
             topoffShutdownCleanupLocked(now: now, events: &events)
-            return route.orchestrationDesired
+            return
         }
         // 0.21.0 §3.1 三臂抑制消费（R1-P1-5——计划纯函数 CalibrationCoexistence.
         // suppressionPlan 钉面，CellarCoreCheck 场景域钉死）：校准态 topoff 臂全部
@@ -146,23 +134,22 @@ extension DaemonCore {
         // 同冻结：校准期 percent ≥95 充电本身构成违规证据形态，推进必致误 strike/
         // 误降级/误 heal-fail 写 80 对抗校准）∧ 超带轻量重申不发（notifyOnly 随之
         // 静默）；③ 域随写卫生暂停（校准需要充满 100——域值随写会钉住 agent 停充；
-        // 退出拍后既有链恢复，首拍幂等重写/断言对账停摆期漂移）。stale pending 撤销
-        // 保留（单通道互斥簿记——防抑制窗内 App 消费陈旧断言对抗校准）。mode
-        // 关断清理（上方不变量——0.21.1 起仅 mode 臂，编排开关关断不再清理）优先级更高——硬关断不受校准抑制影响；**完全放开窗
+        // 退出拍后既有链恢复，首拍幂等重写停摆期漂移）。mode
+        // 关断清理（上方不变量——仅 mode 臂）优先级更高——硬关断不受校准抑制影响；**完全放开窗
         // 豁免**（窗内各臂天然指向 100——抑制会冻结域随写 100 的对账写，纯函数钉面）。
         let suppression = CalibrationCoexistence.suppressionPlan(
             suspected: calibrationCoexistenceState.suspected,
             fullOpenWindow: fullOpenWindowActive
         )
         if suppression.suspendTopoffArms {
-            if route.topoffOwned { discardStaleOrchestrationPendingLocked(events: &events) }
-            return route.orchestrationDesired
+            return
         }
         if route.topoffOwned {
-            // 通道承载（<80 或 0.21.3 §1.1 编排关全区间）：off 清除（重新承载）→
-            // 单通道互斥簿记 → 状态机推进。
+            // 通道承载（<80 或域承载全区间）：off 清除（重新承载）→ 状态机推进。
+            // **0.23.1 编排退役**：原「单通道互斥簿记」（discardStaleOrchestration-
+            // PendingLocked——撤销在轨编排断言）随断言链退役删除（pending 状态已
+            // 不存在）。
             if topoffState.off { topoffState.off = false }
-            discardStaleOrchestrationPendingLocked(events: &events)
             // 0.22.3 §3 失速拍观测（stallDue → 本拍强制域读回 + persistLog「失速
             // 检测触发」；锚点已在 stallTick 触发拍刷新——30 min 节奏封顶，防每
             // 30s 复读风暴）。
@@ -284,35 +271,21 @@ extension DaemonCore {
                     ? "topoff 轻量重申：通知已发（域值未变）"
                     : "topoff 轻量重申：通知发送失败（域值未变——strike 管道 10 min 兜底）")
             }
-            return route.orchestrationDesired
+            return
         }
         // 动作活跃（放电/校准）→ 域写一并静默（维护分支掌权——域值由终态后同拍
         // 汇聚恢复，防动作期无谓写抖动）。
-        guard !actionTrack.isActive else { return route.orchestrationDesired }
+        guard !actionTrack.isActive else { return }
         // ≥80（含 chargingDisabled 窗 100）：§3.6 域随写卫生——域值同步随写至汇聚
-        // 目标（先值后态 + 通知；消除稳态互搏 + ≥80 双保险，含 fresh 首 tick 的
-        // 0.19.20 实验期域残留同步）。**0.21.1 §2.2 起可达性 = mode active ∧ 无动作**
-        // ——域随写覆盖全区间、**不受编排开关门**（本修法把被守卫分支违反的架构
-        // 自述不变量——文件头「topoff 不受编排开关门」——修回对齐；编排关 ∧ ≥80
-        // 不再走关断清理，域随写 target 即「域恢复滞回」根治面，target 100 场景
-        // 域随写 100 与旧清理写 100 同值但语义=随写非退出）。26 平台无此卫生（sub80 门）。
+        // 目标（先值后态 + 通知；消除稳态互搏，含 fresh 首 tick 的域残留同步）。
+        // **可达性 = mode active ∧ 无动作**——域随写覆盖全区间（0.23.1 编排退役后
+        // 域承载即全区间常态：编排关 ∧ ≥80 不走关断清理，域随写 target 即「域恢复
+        // 滞回」根治面，target 100 场景域随写 100 与旧清理写 100 同值但语义=随写
+        // 非退出）。26 平台无此卫生（sub80 门）。
         if topoffState.off { topoffState.off = false }
         if topoffState.lastWrittenLimit != convergenceTarget {
             _ = topoffExecuteWriteLocked(limit: convergenceTarget, now: now, events: &events)
         }
-        return route.orchestrationDesired
-    }
-
-    /// 单通道互斥簿记：topoff 承载时撤销在轨编排断言（pending）——防 App 消费陈旧
-    /// 断言与 topoff 域值短暂互搏（迟到回报 token 不匹配自然丢弃）。
-    private func discardStaleOrchestrationPendingLocked(events: inout [LogEvent]) {
-        guard orchestrationState.hasOutstanding else { return }
-        orchestrationState.pendingToken = nil
-        orchestrationState.pendingTarget = nil
-        events.append(LogEvent(
-            category: .control, level: .info,
-            message: "topoff 通道承载：已撤销在轨编排断言（单通道互斥——陈旧 pending 与域值互搏防护）"
-        ))
     }
 
     /// 域写入执行（TopoffWriter 接线：defaults/notifyutil 子进程；daemon root 上下文）。
@@ -405,8 +378,8 @@ extension DaemonCore {
         // 挂载/退出跳变 persistLog（§2.2 状态与可观测——每次翻转落盘 daemon.log）。
         if plan.state.mounted != mountedBefore {
             Self.persistLog(plan.state.mounted
-                ? "CHIE 迟滞挂载：备用通道执法中（实验性；编排静默——降级稳态第二生命线，约 1 循环/天）"
-                : "CHIE 迟滞退出：挂载解除（落 80 编排钳——现状；thermalTerminated=\(plan.state.thermalTerminated)）")
+                ? "CHIE 迟滞挂载：备用通道执法中（实验性；域随写暂缓——降级稳态第二生命线，约 1 循环/天）"
+                : "CHIE 迟滞退出：挂载解除（域随写恢复——thermalTerminated=\(plan.state.thermalTerminated)）")
         }
         guard let write = plan.adapterWrite else { return }
         hysteresisExecuteWriteLocked(

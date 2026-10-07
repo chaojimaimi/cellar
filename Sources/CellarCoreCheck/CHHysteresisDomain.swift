@@ -1,8 +1,9 @@
 // CellarCoreCheck —— 0.21.0 §2 CHIE 迟滞备用后端场景域（方案 §2.1/§2.2/§2.3/§2.4）
 //
-// 按域拆独立文件（评审 P2-9 先例）。覆盖清单（M1b 工单验收门禁钉死项）：
-// ①迟滞路由三分支（convergenceRoute 扩展 hysteresisEnabled/active：on → desired=nil
-//   编排静默 / off → 降级钳 80 现状 / CHIE 不可写（enabled ∧ !active）→ 钳 80）
+// 按域拆独立文件（评审 P2-9 先例）。覆盖清单（M1b 工单验收门禁钉死项；0.23.1
+// 编排退役翻新）：
+// ①迟滞路由（**0.23.1 编排参删**——原「迟滞 on → desired=nil 编排静默」三分支随
+//   断言链退役删除；迟滞互斥语义由 CHHysteresis.tick 挂载门/互斥矩阵承载）
 // ②迟滞判定带宽（0x8/0x00 边界逐字：percent > target+滞回 → 0x8；percent ≤ target →
 //   0x00；地板 ≤60 恢复；带内无动作；幂等；ext 门）
 // ③互斥矩阵四角（actionActive / healProbe / chargingDisabled / 合盖 + 热第五角）
@@ -36,69 +37,30 @@ func runCHHysteresisDomainScenarios() {
     runCHHysteresisLegacyRegressionScenarios()
 }
 
-// MARK: - ① 迟滞路由三分支（§2.1 R1-P1-4 定版）
+// MARK: - ① 迟滞路由（**0.23.1 编排参删翻新**——原三分支 desired 断言随断言链退役
+// 删除；迟滞互斥语义由 CHHysteresis.tick 挂载门与互斥矩阵（迟滞-5..8）承载）
 
 private func runCHHysteresisRouteScenarios() {
-    // 迟滞-1：三分支——迟滞 on（enabled ∧ active）→ desired=nil（编排静默——消
-    // 编排钳 80 与迟滞压 75 互搏）；off（开关关 / 未挂载）→ 降级钳 80 现状；
-    // CHIE 不可写（enabled ∧ !active）→ 钳 80 现状。
+    // 迟滞-1：路由面收敛锚——迟滞 on/off/CHIE 不可写三态在路由输出上的不可分性
+    //（0.23.1：convergenceRoute 不再消费 hysteresisEnabled/active——编排静默语义
+    // 随断言链退役；迟滞执法由 daemon 侧 hysteresisTickLocked + 路由 topoffOwned
+    // 门承接，路由仅钉汇聚目标/承载两输出）。
     do {
         let on = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: true, hysteresisActive: true)
-        check(on == (convergenceTarget: 75, orchestrationDesired: Int?.none, topoffOwned: true),
-              "迟滞-1", "迟滞 on（degraded ∧ opt-in ∧ active）→ desired=nil（编排静默——互搏消解）")
-        let off = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: false, hysteresisActive: false)
-        check(off.orchestrationDesired == Topoff.degradedLimit,
-              "迟滞-1", "开关关（off）→ 降级钳 80 现状（0.20 M1b 既有链零变化）")
-        let unwritable = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: true, hysteresisActive: false)
-        check(unwritable.orchestrationDesired == Topoff.degradedLimit,
-              "迟滞-1", "CHIE 不可写（opt-in 但未挂载）→ 钳 80 现状（降级链不可用臂）")
-    }
-
-    // 迟滞-2：边界角——active 但 enabled 缺席（契约违例防御：路由要求双真）→ 钳 80
-    // 不静默；编排开关关 ∧ 迟滞 active → desired=nil（门 1 先于迟滞分支——语义等价）；
-    // chargingDisabled 窗 → topoffOwned=false → 迟滞分支不可达 → desired=100（窗内
-    // 完全放开——迟滞静默由 tick 互斥门承接）。
-    do {
-        let enabledMissing = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: false, hysteresisActive: true)
-        check(enabledMissing.orchestrationDesired == Topoff.degradedLimit,
-              "迟滞-2", "active 但开关缺席（契约违例防御）→ 钳 80（路由要求 enabled ∧ active 双真）")
-        let orchOff = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: true, hysteresisActive: true)
-        check(orchOff.orchestrationDesired == nil && orchOff.topoffOwned,
-              "迟滞-2", "编排关 ∧ 迟滞 active → desired=nil（topoff 不受编排开关门——既有门序）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(on == (convergenceTarget: 75, topoffOwned: true),
+              "迟滞-1", "<80 → topoff 承载（迟滞挂载态由 CHHysteresis.tick 挂载门承接——路由签名收敛锚）")
         let window = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: true,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: true, hysteresisActive: true)
-        check(window == (convergenceTarget: 100, orchestrationDesired: 100, topoffOwned: false),
-              "迟滞-2", "chargingDisabled 窗 → 汇聚/断言 100（完全放开——迟滞 tick 互斥门静默，路由不变）")
+            modeActive: true, chargingDisabledWindow: true,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(window == (convergenceTarget: 100, topoffOwned: false),
+              "迟滞-1", "chargingDisabled 窗 → 汇聚 100 ∧ 不承载（完全放开——迟滞 tick 互斥门静默，路由不变）")
         let action = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: true,
-            degraded: true, healProbeActive: false,
-            hysteresisEnabled: true, hysteresisActive: true)
-        check(!action.topoffOwned && action.orchestrationDesired == 80,
-              "迟滞-2", "动作活跃 → topoff 不承载 → 迟滞分支不可达 → desired=80（断言由 assertionRequest 规则 2 压制——0.19.20 语义零变化）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: true)
+        check(!action.topoffOwned,
+              "迟滞-1", "动作活跃 → topoff 不承载 → 迟滞分支不可达（迟滞 tick 挂载门 actionActive 拒绝——执法总开关）")
     }
 }
 
@@ -568,28 +530,20 @@ private func runCHHysteresisPolicyXPCScenarios() {
 // MARK: - ⑧ 26 回归锚（缺省参数零 diff）
 
 private func runCHHysteresisLegacyRegressionScenarios() {
-    // 迟滞-22：convergenceRoute 缺省 hysteresisEnabled/active → 0.20 M1b 既有链
-    // 逐值（26 / 既有调用点零 diff——缺省参数即回归锚；TopoffDomain 路由-1..6 全绿
-    // 互证）。
+    // 迟滞-22：convergenceRoute 收敛签名回归锚（**0.23.1 编排参删**——原「缺省
+    // hysteresisEnabled/active 零 diff」锚随签名收敛翻新为两输出逐值锚；26 红线
+    // 由 sub80Capable 单门承担）。
     do {
-        let degraded75 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false)
-        check(degraded75.orchestrationDesired == 80 && degraded75.topoffOwned,
-              "迟滞-22", "缺省参数 ∧ 降级稳态 → 钳 80（0.20 M1b 逐值——迟滞未接入形态）")
-        let active75 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(active75 == (convergenceTarget: 75, orchestrationDesired: Int?.none, topoffOwned: true),
-              "迟滞-22", "缺省参数 ∧ active 承载 → 编排静默（TopoffDomain 路由-1 逐值复钉）")
+        let owned75 = Topoff.convergenceRoute(
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: true, actionActive: false)
+        check(owned75 == (convergenceTarget: 75, topoffOwned: true),
+              "迟滞-22", "收敛签名 ∧ <80 → 承载（TopoffDomain 路由-1 逐值复钉——迟滞全链语义由 CHHysteresis.tick 承接）")
         let legacy26 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 75, sub80Capable: false, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(legacy26.topoffOwned == false && legacy26.orchestrationDesired == 80,
-              "迟滞-22", "26（sub80Capable=false）→ 0.19.20 链逐值（迟滞全链 26 零触及——红线锚）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 75, sub80Capable: false, actionActive: false)
+        check(legacy26.topoffOwned == false && legacy26.convergenceTarget == 75,
+              "迟滞-22", "26（sub80Capable=false）→ owned 恒 false（迟滞全链 26 零触及——红线锚）")
     }
     // 迟滞-23：State 初值（fresh = 未挂载/无热终止/无驻留/零计数——重启后首拍按
     // 开关 + CHIE 可写性重估的 §2.4 形态）。

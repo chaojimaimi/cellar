@@ -22,7 +22,7 @@
 - **充满一次**：临时充电到 100%（出行前满电等），完成后自动恢复限充；完整电池校准请用一键校准（见下）
 - **放电到上限**：将适配器断电，用电池把电量降至限充目标后自动恢复（实时供电功率可视化；支持条件见下文）
 - **只读监测无需 root**：电量、充放状态、电压、电流、温度、循环次数、电池健康度、设计/满充容量、电芯电压、适配器详情
-- **CLI + root daemon**：一次安装，开机自动管理；`doctor` 一键二十项诊断（含设备兼容性行、原生限充共存、MagSafe 指示灯、编排/限充执行与 MCL 对账检查）
+- **CLI + root daemon**：一次安装，开机自动管理；`doctor` 一键十九项诊断（含设备兼容性行、原生限充共存、MagSafe 指示灯、限充执行通道（恢复/对账用）与 MCL 对账检查）
 
 ## 图形界面（App）
 
@@ -124,7 +124,7 @@ sudo .build/release/cellar install
 ```bash
 cellar status          # 状态一览（后端、电量、充放、控制键、daemon 状态）
 cellar status --json   # 同上，机器可读 JSON（daemon/route/local 三段，脚本化）
-cellar doctor          # 二十项诊断报告（退出码 0/1/2 可用于脚本）
+cellar doctor          # 十九项诊断报告（退出码 0/1/2 可用于脚本）
 cellar doctor --devices  # 输出本机设备兼容性单行（欢迎附于 issue 反馈）
 sudo cellar set 80     # 设置上限 80%（范围 60–100，可加 --hysteresis n）
 sudo cellar disable    # 停用限充管理，恢复系统默认充电
@@ -149,15 +149,15 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 892 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
+swift run CellarCoreCheck   # 875 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
                             # 放电安全门控、校准调度、热保护配置、原生限充检测、MagSafe LED、
                             # topoff <80% 通道、本地化完整性
-bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 92.06%）
-swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 462 张权威〔0.22.0 入库值；
-                            # 0.23.0 退役 Sub80Status_experimental 6 张 + Orchestration_*/
-                            # Sub80Status_* 文案漂移——CI snapshot-regen 后按 456 核对〕）
-                            # + 本地化完整性门（502 key × en/zh-Hans）
+bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 91.97%）
+swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 456 张权威〔0.23.0 入库值；
+                            # 0.23.1 退役 Orchestration_* 5 组 30 张——CI snapshot-regen 后
+                            # 按 426 核对〕）
+                            # + 本地化完整性门（477 key × en/zh-Hans）
 ```
 
 硬件在环验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）随版本发布执行，记录于 CHANGELOG。

@@ -1,52 +1,28 @@
 import Foundation
 
-// MARK: - 0.21.0 §1.3/§1.5 检查 19/20：MCL 残留检测（doctor 第 19/20 项；照
-// DoctorOrchestration.swift 的 extension DoctorReportGenerator 先例拆分——
-// DoctorReport.swift 行数纪律）
+// MARK: - 0.21.0 §1.5 检查 20：MCL 对账残留（doctor；照 DoctorOrchestration.swift
+// 的 extension DoctorReportGenerator 先例拆分——DoctorReport.swift 行数纪律）
 //
-// 两项均 27 门控（MCL 读回仅在 set 路径语境有语义——26 上 Cellar 从不写 MCL，
+// 检查 20 门控 27（MCL 读回仅在 set 路径语境有语义——26 上 Cellar 从不写 MCL，
 // 读回值是系统自有状态，检测必属误报）。0.21.3 §1.3 登记**例外**：检查 20 的
-// suppressed FAIL 臂抬退出码（现 info 恒不抬纪律的唯一例外——机制被系统设置
-// 关闭是需要用户行动的真故障形态）。R3-P3-3：27 无 actionTrack——「非 fullOnce
-// 在轨」条件恒真，**如实省略**，不为此造假轨道判定（0.21.3 §2.1 起 fullOnce
-// 窗在位经 wire fullOnceWindowActive 显性化，检查 19 据此窗内零渲染）。
+// suppressed FAIL 臂抬退出码（info 恒不抬纪律的唯一例外——机制被系统设置关闭是
+// 需要用户行动的真故障形态）。
+//
+// **0.23.1 编排退役**：原检查 19（fullOnce 临时放开残留，DoctorNativeLimit.swift
+// fullOnceResidual）**退役**——新常态下 MCL 读回 100 = 域承载非降级区间的稳态值
+//（四行表行 4 非 degraded → 100），原触发面「读回 100 ∧ policy<100 ∧ active」
+// 即常态 → 每跑必误报，残留语义随断言链消失；连带 `NativeLimitSet.
+// fullOnceRestoreAvailable`（唯一生产消费者 = 面板恢复臂判定源，判定源已改挂
+// wire fullOnceWindowActive）一并退役。检查 19 位号留空（编号空洞如实登记，
+// 不重排既有 17/18/20 位次）；检查 20 表随 shutdownExpectation 四行化翻新。
 
 extension DoctorReportGenerator {
-    /// 检查 19（§1.3）：fullOnce 临时放开残留——MCL 读回 100 ∧ policy < 100
-    /// （判定源与面板恢复臂同式：NativeLimitSet.fullOnceRestoreAvailable，读回
-    /// 驱动非轨道判定）→ INFO + 恢复指引。渲染条件：27 ∧ daemon 在线 ∧ 编排终态
-    /// ∧ mode active ∧ 编排开关开（开关关时读回 100 属 §1.5 关断期望态——检查
-    /// 20 承接，本项不双报）∧ MCL 读回在位 ∧ **fullOnce 窗不在位**（0.21.3 §2.1
-    /// wire 供给——窗内读回 100 是显式放开意图非残留）。
-    static func fullOnceResidual(_ inputs: DoctorInputs) -> DoctorCheck? {
-        guard inputs.mclProbeAttempted, inputs.osMajorVersion >= 27,
-              let mcl = inputs.mclProbe, mcl.readable, let readback = mcl.limit,
-              let status = inputs.daemonStatus,
-              status.capabilities?.contains(DaemonXPC.capabilityOrchestration) == true,
-              status.mode == "active",
-              status.orchestration?.enabled == true
-        else { return nil }
-        // 0.21.3 §2.1：窗在位（daemon wire）→ 显式放开期，非残留——零渲染
-        //（旧「若刚点击充满一次属预期形态」附注由显式窗态取代）。
-        guard status.fullOnceWindowActive != true else { return nil }
-        guard NativeLimitSet.fullOnceRestoreAvailable(
-            mclReadback: readback, policyUpperLimit: status.upperLimit
-        ) else { return nil }
-        return DoctorCheck(
-            name: "临时放开残留", status: .info,
-            detail: "原生限充读回 100% 而策略上限 \(status.upperLimit)%——临时放开未恢复"
-                + "。请在 Cellar 面板点击「恢复限充」，或调整上限/重开限充自动收敛"
-        )
-    }
-
-    /// 检查 20（§1.5 + 0.21.3 重定版）：MCL 对账残留——期望值派生
-    ///（NativeLimitSet.shutdownExpectation **八行表**：两窗/mode 关恒 100 /
-    /// 编排开 ≥80 → target / 编排开 <80 非 degraded → 100 ∧ degraded → 80 /
-    /// 编排关 degraded → 80 ∧ 非 degraded → 100——旧「编排关 ∧ <80 → 80 兜底」
-    /// 行 G1 实证有害〔MCL 80 主导顶掉域 75〕废除；输入增 degraded + 两窗，
-    /// daemon wire 供给），读回 ≠ 期望 → INFO + 三分支教育指引（G1 修正：不再
-    /// 引导「按需关闭/set 80」——系统设置设具体值或交给 Cellar，绝不用 100%
-    /// 作「关闭」）。
+    /// 检查 20（§1.5 + 0.21.3 重定版 + **0.23.1 四行表**）：MCL 对账残留——期望值
+    /// 派生（NativeLimitSet.shutdownExpectation 四行表：两窗/mode 关恒 100 /
+    /// degraded → max(target,80) / 非 degraded 域承载全区间 → 100——原「编排开
+    /// ∧ ≥80 → target」行随编排退役删除，域承载即新常态），读回 ≠ 期望 → INFO +
+    /// 三分支教育指引（G1 修正：不再引导「按需关闭/set 80」——系统设置设具体值
+    /// 或交给 Cellar，绝不用 100% 作「关闭」）。
     /// **suppressed/残留双态合取（§1.3，R2-P3-3）**：daemon wire
     /// sub80MechanismSuppressed == true → **FAIL 优先**（抬退出码——「info 恒
     /// 不抬」纪律的登记例外；UI-100 机制关闭需用户行动）；无 suppressed 才评
@@ -74,7 +50,6 @@ extension DoctorReportGenerator {
         }
         guard let expected = NativeLimitSet.shutdownExpectation(
             modeActive: status.mode == "active",
-            orchestrationEnabled: status.orchestration?.enabled == true,
             upperLimit: status.upperLimit,
             degraded: status.sub80State == .degraded,
             fullOnceWindowActive: status.fullOnceWindowActive == true,
@@ -87,18 +62,16 @@ extension DoctorReportGenerator {
                     + stallBehaviorHeuristicNote(snapshot: inputs.snapshot, status: status)
             )
         }
-        // 0.22.4 静默态附注（方案 §3.4 复核 P3：域承载态/探针窗域值 target ≠
-        // 期望 80/100 会呈现失配，但 App 补偿臂在该态不对账属预期——与 App 对账
-        // 臂同一纯函数判定，单一真相）。status 仍为 INFO 不改（失配事实如实呈现，
-        // 文案补「属预期」口径防误导）。
+        // 0.22.4 静默态附注（方案 §3.4 复核 P3：域承载态域值 target ≠ 期望 100
+        // 会呈现失配，但 App 补偿臂在该态不对账属预期——与 App 对账臂同一纯函数
+        // 判定〔0.23.1 宽读钉死：sub80State == .active 即静默全区间〕，单一真相）。
+        // status 仍为 INFO 不改（失配事实如实呈现，文案补「属预期」口径防误导）。
         let silenced = NativeLimitSet.compensationSilenced(
             modeActive: status.mode == "active",
             fullOnceWindow: status.fullOnceWindowActive == true,
             chargingDisabledWindow: status.chargingDisabledWindowActive == true,
             healProbeActive: status.sub80HealProbeActive == true,
-            sub80State: status.sub80State,
-            upperLimit: status.upperLimit,
-            orchestrationEnabled: status.orchestration?.enabled == true
+            sub80State: status.sub80State
         )
         return DoctorCheck(
             name: "关断残留", status: .info,

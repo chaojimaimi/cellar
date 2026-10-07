@@ -13,9 +13,14 @@
 // ④ OneShotStartRejection.nativeChargeLimit 平行 case + fullOnceStartPrecondition
 //    守卫矩阵（阻断/fail-open/空策略/mode 优先序）
 // ⑤ doctor 第 15 项分支：无策略/警告/提示/失败/未知/未探测缺省零渲染/十五项顺序
+// ⑥ **0.23.1 迁移钉**（原 OrchestrationDomain 编排-14/15/16/18/19——编排 wire 兼容
+//    面随编排退役保留照填）：OrchestrationStatus 载荷 round-trip / 旧 daemon JSON
+//    缺键容忍 / wire 值域矩阵 / makeMessage+validateRequest 编排键组 / 类型白名单
+//    整包拒绝
 
 import CellarCore
 import Foundation
+import XPC
 
 /// 原生限充 M2 接线场景域入口（Main.main 调用；全部纯函数，不触碰真实 plist）。
 func runNativeLimitWireDomainScenarios() throws {
@@ -357,5 +362,114 @@ func runNativeLimitWireDomainScenarios() throws {
         check(check15.status == .warn && check15.detail.contains("Cellar 执法生效")
                 && check15.detail.contains("二选一") && check15.detail.contains("现行执法（上限") != true,
               "医生-16", "26 + sub80 门控输入 → WARN 现行语义零回归（0.20.2 §1.2 门控仅 osMajorVersion ≥ 27 分支内——26 行为零变化）")
+    }
+
+    try runOrchestrationWireCompatScenarios()
+}
+
+// MARK: - ⑥ 编排 wire 兼容迁移钉（0.23.1 自 OrchestrationDomain 编排-14/15/16/18/19
+// 迁入——wire 零 schema 变化验收面：载荷照容/键组照解/值域照校验）
+
+private func runOrchestrationWireCompatScenarios() throws {
+    // 编排-14（迁移）：OrchestrationStatus round-trip（DaemonStatus.orchestration
+    // 载荷全字段——0.23.1 起 daemon 侧 enabled 恒 false 照填，pending 四键旧
+    // daemon 形态照容）。
+    do {
+        var status = DaemonStatus(version: "t", mode: "active", upperLimit: 85, hysteresis: 2)
+        status.orchestration = OrchestrationStatus(
+            enabled: false, pendingToken: "tok-1234", pendingTarget: 85,
+            lastApplied: 80, lastError: nil
+        )
+        let round = DaemonXPC.encodeStatus(status).flatMap { try? DaemonXPC.decodeStatus($0) }
+        check(round == status && round?.orchestration == status.orchestration,
+              "编排-14", "orchestration 载荷 round-trip 全字段保留（wire 零 schema 变化——pending 四键兼容照容）")
+        var failure = DaemonStatus(version: "t", mode: "active", upperLimit: 85, hysteresis: 2)
+        failure.orchestration = OrchestrationStatus(
+            enabled: false, pendingToken: nil, pendingTarget: nil,
+            lastApplied: 85, lastError: "原生限充 set 通道不可用（PowerUISmartChargeClient 类缺席）"
+        )
+        let failureRound = DaemonXPC.encodeStatus(failure).flatMap { try? DaemonXPC.decodeStatus($0) }
+        check(failureRound?.orchestration?.lastError == "原生限充 set 通道不可用（PowerUISmartChargeClient 类缺席）",
+              "编排-14", "lastError 形态 round-trip（旧 daemon 失败回报详情兼容）")
+    }
+    // 编排-15（迁移）：旧 daemon 回包无 orchestration 键 → 解码 nil（升级窗口双向兼容）。
+    do {
+        let legacyJSON = #"{"version":"0.19.11-alpha","mode":"active","upperLimit":80,"hysteresis":2,"timestamp":123.0}"#
+        let legacy = try? JSONDecoder().decode(DaemonStatus.self, from: Data(legacyJSON.utf8))
+        check(legacy?.orchestration == nil && legacy?.upperLimit == 80,
+              "编排-15", "旧 daemon JSON（无 orchestration 键）→ 解码 nil 且既有字段照常（decodeIfPresent）")
+        let partialJSON = #"{"version":"t","mode":"active","upperLimit":80,"hysteresis":2,"orchestration":{"enabled":true},"timestamp":123.0}"#
+        let partial = try? JSONDecoder().decode(DaemonStatus.self, from: Data(partialJSON.utf8))
+        check(partial?.orchestration?.enabled == true && partial?.orchestration?.pendingToken == nil,
+              "编排-15", "载荷子键缺席 → 子键 nil、enabled 照常（合成 Codable decodeIfPresent——旧 daemon 非 nil 值照容）")
+    }
+    // 编排-16（迁移）：wire 值域矩阵（XPCServer 臂 / validateRequest 同源常量）。
+    do {
+        check(OrchestrationWireKeys.validEnabled(0) && OrchestrationWireKeys.validEnabled(1)
+                  && !OrchestrationWireKeys.validEnabled(2),
+              "编排-16", "开关值域 0/1（键型照既有开关统一）")
+        check(!OrchestrationWireKeys.validToken("")
+                  && OrchestrationWireKeys.validToken(String(repeating: "a", count: 64))
+                  && !OrchestrationWireKeys.validToken(String(repeating: "a", count: 65)),
+              "编排-16", "token 非空且 ≤64 字节边界")
+        check(OrchestrationWireKeys.validDetail(String(repeating: "a", count: 8192))
+                  && !OrchestrationWireKeys.validDetail(String(repeating: "a", count: 8193)),
+              "编排-16", "detail ≤8192 字节边界（照 scheduleJson 上限先例）")
+        check(OrchestrationWireKeys.command == "setOrchestration"
+                  && OrchestrationWireKeys.reportCommand == "reportOrchestration",
+              "编排-16", "命令字面量钉死（XPCServer 臂 / DaemonXPCClient 同源——旧 App 混装窗兼容命令族保留）")
+    }
+    // 编排-18（迁移）：makeMessage 编排键组构造（开关单键 + 回报三键；detail 缺席不发键）。
+    do {
+        let enableMsg = DaemonXPC.makeMessage(
+            cmd: OrchestrationWireKeys.command, upper: 0, hysteresis: 0, orchestrationEnabled: 1
+        )
+        let enableParsed = DaemonXPC.validateRequest(enableMsg)
+        check(enableParsed?.orchestrationEnabled == 1 && enableParsed?.orchestrationReport == nil,
+              "编排-18", "setOrchestration 消息 → orchestrationEnabled=1 提取、report nil")
+        let reportMsg = DaemonXPC.makeMessage(
+            cmd: OrchestrationWireKeys.reportCommand, upper: 0, hysteresis: 0,
+            orchestrationReport: OrchestrationReportWire(token: "tok-1", ok: 0, detail: "执行失败")
+        )
+        let reportParsed = DaemonXPC.validateRequest(reportMsg)
+        check(reportParsed?.orchestrationEnabled == nil
+                  && reportParsed?.orchestrationReport == OrchestrationReportWire(token: "tok-1", ok: 0, detail: "执行失败"),
+              "编排-18", "reportOrchestration 消息 → 三键 wire 提取（ok=false + detail）")
+        let okNoDetail = DaemonXPC.makeMessage(
+            cmd: OrchestrationWireKeys.reportCommand, upper: 0, hysteresis: 0,
+            orchestrationReport: OrchestrationReportWire(token: "tok-2", ok: 1, detail: nil)
+        )
+        let okParsed = DaemonXPC.validateRequest(okNoDetail)
+        check(okParsed?.orchestrationReport?.detail == nil
+                  && okParsed?.orchestrationReport?.ok == 1,
+              "编排-18", "ok=true 无 detail → detail 键不发（缺席即「无详情」语义）")
+    }
+    // 编排-19（迁移）：validateRequest 类型白名单——STRING 混入开关节 / token 超长 /
+    // detail 超长 → 整包拒绝；既有命令无编排键 → 双字段 nil 兼容。
+    do {
+        func baseMessage(_ cmd: String) -> xpc_object_t {
+            let msg = xpc_dictionary_create(nil, nil, 0)
+            xpc_dictionary_set_string(msg, DaemonXPC.cmdKey, cmd)
+            xpc_dictionary_set_uint64(msg, DaemonXPC.upperKey, 0)
+            xpc_dictionary_set_uint64(msg, DaemonXPC.hysteresisKey, 0)
+            return msg
+        }
+        let mixed = baseMessage(OrchestrationWireKeys.command)
+        xpc_dictionary_set_string(mixed, OrchestrationWireKeys.enabled, "1")   // STRING 混入 UINT64 键
+        check(DaemonXPC.validateRequest(mixed) == nil,
+              "编排-19", "开关键以 STRING 混入 → 整包拒绝（不崩溃，照 auto 同纪律）")
+        let longToken = baseMessage(OrchestrationWireKeys.reportCommand)
+        xpc_dictionary_set_string(longToken, OrchestrationWireKeys.token, String(repeating: "a", count: 65))
+        check(DaemonXPC.validateRequest(longToken) == nil,
+              "编排-19", "token 超 64 字节 → 整包拒绝")
+        let longDetail = baseMessage(OrchestrationWireKeys.reportCommand)
+        xpc_dictionary_set_string(longDetail, OrchestrationWireKeys.token, "tok")
+        xpc_dictionary_set_string(longDetail, OrchestrationWireKeys.detail, String(repeating: "a", count: 8193))
+        check(DaemonXPC.validateRequest(longDetail) == nil,
+              "编排-19", "detail 超 8192 字节 → 整包拒绝（照 scheduleJson 同纪律）")
+        let plain = baseMessage("setLimits")
+        let plainParsed = DaemonXPC.validateRequest(plain)
+        check(plainParsed?.orchestrationEnabled == nil && plainParsed?.orchestrationReport == nil,
+              "编排-19", "既有命令无编排键 → 编排字段 nil（天然兼容）")
     }
 }

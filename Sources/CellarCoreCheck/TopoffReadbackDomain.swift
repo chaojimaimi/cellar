@@ -1,8 +1,9 @@
 // CellarCoreCheck —— 0.21.3 §1 执法链全区间扩展场景域（方案 phase6-0.21.3 §4.1）
 //
-// 覆盖清单（门禁钉死项；review 修法已并入）：
-// ① owned 扩展矩阵（§1.1）：编排关 79/80/81 边界 / 编排开 ∧ ≥80 不进 owned /
-//    全开窗（chargingDisabled/fullOnce）∧ 编排关 ∧ ≥80 不进 owned（R1-P1-1）/
+// 覆盖清单（门禁钉死项；review 修法已并入；**0.23.1 编排退役翻新**）：
+// ① owned 全区间矩阵（§1.1 + 0.23.1 收敛常态）：79/80/81 边界 / ≥80 全 owned
+//    （原「编排开 ∧ ≥80 不进 owned」分支随编排退役删除——域承载全区间即新常态）/
+//    全开窗（chargingDisabled/fullOnce）∧ ≥80 不进 owned（R1-P1-1 保留）/
 //    窗 ∧ degraded 组合钉死 / 26 恒 false
 // ② 违规拍域读回三分支（§1.2 G7b）：TopoffWriter.read 语义（含 review P2：
 //    看门狗击杀白名单外退出码 → fail-open）/ 覆写 → 重写 + 清零不耗 strike /
@@ -24,93 +25,81 @@ func runTopoffReadbackDomainScenarios() {
     let t0 = Date(timeIntervalSince1970: 2_000_000)
     func tick(_ n: Int) -> Date { t0.addingTimeInterval(Double(n) * 30) }   // 30s tick 节奏
 
-    // ---- ① owned 扩展矩阵（§1.1 域承载全区间——G7 根治面）----
+    // ---- ① owned 全区间矩阵（§1.1——0.23.1 编排退役后即域承载常态）----
 
-    // 全域-1：编排关边界 79/80/81 全 owned（79 = sub80 承载原臂；80/81 = 域承载
-    // 扩展臂——编排关 ∧ ≥80 ∧ 非全开窗）。desired 恒 nil（编排静默——域独占）。
+    // 全域-1：边界 79/80/81 全 owned（79 = sub80 承载原臂；80/81 = 域承载臂——
+    // ≥80 ∧ 非全开窗全 owned）。
     do {
         for upper in [79, 80, 81] {
             let route = Topoff.convergenceRoute(
-                modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-                upperLimit: upper, sub80Capable: true, actionActive: false,
-                degraded: false, healProbeActive: false)
-            check(route.topoffOwned && route.orchestrationDesired == nil
-                    && route.convergenceTarget == upper,
-                  "全域-1", "编排关 ∧ target \(upper) → owned（域承载全区间）∧ desired nil（79 原臂 / 80·81 扩展臂）")
+                modeActive: true, chargingDisabledWindow: false,
+                upperLimit: upper, sub80Capable: true, actionActive: false)
+            check(route.topoffOwned && route.convergenceTarget == upper,
+                  "全域-1", "target \(upper) → owned（域承载全区间——79 原臂 / 80·81 扩展臂）")
         }
     }
 
-    // 全域-2：编排开 ∧ ≥80 不进 owned（通道语义——MCL 主导区间的域违规非通道失效
-    // 证据；degraded 钳 80 会伤害健康的 MCL 执法。周期防线 = §2.1 expectation
-    // 编排行对账）。<80 承载原臂不变。
+    // 全域-2：≥80 全 owned + <80 承载原臂（**0.23.1 编排退役**：原「编排开 ∧ ≥80
+    // 不进 owned」分支删除——domainBackstop 的 `!orchestrationEnabled` 前置项随批
+    // 删除，域承载覆盖全区间即新常态）。
     do {
         for upper in [80, 81, 85, 100] {
             let route = Topoff.convergenceRoute(
-                modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-                upperLimit: upper, sub80Capable: true, actionActive: false,
-                degraded: false, healProbeActive: false)
-            check(!route.topoffOwned && route.orchestrationDesired == upper,
-                  "全域-2", "编排开 ∧ target \(upper) → 不进 owned（MCL 主导语义保持——desired=target 原链）")
+                modeActive: true, chargingDisabledWindow: false,
+                upperLimit: upper, sub80Capable: true, actionActive: false)
+            check(route.topoffOwned && route.convergenceTarget == upper,
+                  "全域-2", "target \(upper) → owned（域承载全区间新常态——violation/strike/degraded 链生效）")
         }
         let sub80 = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: true, chargingDisabledWindow: false,
-            upperLimit: 79, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
-        check(sub80.topoffOwned && sub80.orchestrationDesired == nil,
-              "全域-2", "编排开 ∧ target 79 → owned 原臂不变（<80 topoff 承载——互斥钉死）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 79, sub80Capable: true, actionActive: false)
+        check(sub80.topoffOwned,
+              "全域-2", "target 79 → owned 原臂不变（<80 topoff 承载——互斥钉死）")
     }
 
-    // 全域-3：全开窗排除（R1-P1-1）——编排关 ∧ ≥80 ∧ 窗在（fullOnce /
+    // 全域-3：全开窗排除（R1-P1-1，0.23.1 保留）——≥80 ∧ 窗在（fullOnce /
     // chargingDisabled 两型）→ 不进 owned（convergenceTarget 强制 100；窗内回落
     // §3.6 卫生分支写 100 无执法——窗语义即完全放开；进 owned 会路由 healTick
     // 探针写 100 + 超时臂回写 80，违反「域值随汇聚目标」不变量）。
     do {
         let fullOnce = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false, fullOnceWindow: true)
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false, fullOnceWindow: true)
         check(!fullOnce.topoffOwned && fullOnce.convergenceTarget == 100,
-              "全域-3", "fullOnce 窗 ∧ 编排关 ∧ 85 → 不进 owned（窗覆盖优先——汇聚 100 卫生分支承载）")
+              "全域-3", "fullOnce 窗 ∧ 85 → 不进 owned（窗覆盖优先——汇聚 100 卫生分支承载）")
         let scheduleWindow = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: true,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: false, healProbeActive: false)
+            modeActive: true, chargingDisabledWindow: true,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
         check(!scheduleWindow.topoffOwned && scheduleWindow.convergenceTarget == 100,
-              "全域-3", "chargingDisabled 日程窗 ∧ 编排关 ∧ 85 → 不进 owned（同上——窗语义即完全放开）")
+              "全域-3", "chargingDisabled 日程窗 ∧ 85 → 不进 owned（同上——窗语义即完全放开）")
     }
 
     // 全域-4：窗 ∧ degraded 组合钉死——降级态 + 窗在 → 仍不进 owned（窗覆盖优先于
     // degraded 状态机——窗内不路由 healTick 探针；窗后回落 degraded 稳态承载）。
-    // 无窗 ∧ 编排关 ∧ ≥80 ∧ degraded → owned（healTick 降级自愈链承载——域通道
-    // 死亡时 80 钳 + 每小时重探在域侧自洽）。
+    // 无窗 ∧ ≥80 ∧ degraded → owned（healTick 降级自愈链承载——域通道
+    // 死亡时 max(target,80) 钳 + 每小时重探在域侧自洽）。
     do {
         let windowDegraded = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false, fullOnceWindow: true)
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false, fullOnceWindow: true)
         check(!windowDegraded.topoffOwned && windowDegraded.convergenceTarget == 100,
-              "全域-4", "fullOnce 窗 ∧ 编排关 ∧ 85 ∧ degraded → 不进 owned（窗覆盖优先——降级状态机不路由探针）")
+              "全域-4", "fullOnce 窗 ∧ 85 ∧ degraded → 不进 owned（窗覆盖优先——降级状态机不路由探针）")
         let degradedOwned = Topoff.convergenceRoute(
-            modeActive: true, orchestrationEnabled: false, chargingDisabledWindow: false,
-            upperLimit: 85, sub80Capable: true, actionActive: false,
-            degraded: true, healProbeActive: false)
-        check(degradedOwned.topoffOwned && degradedOwned.orchestrationDesired == nil,
-              "全域-4", "无窗 ∧ 编排关 ∧ 85 ∧ degraded → owned（healTick 自愈链承载；desired nil——编排关静默，MCL 80 兜底归 §2.1 行 7）")
+            modeActive: true, chargingDisabledWindow: false,
+            upperLimit: 85, sub80Capable: true, actionActive: false)
+        check(degradedOwned.topoffOwned,
+              "全域-4", "无窗 ∧ 85 ∧ degraded → owned（healTick 自愈链承载——降级稳态写 max(target,80)）")
     }
 
     // 全域-5：26 红线——sub80Capable=false 全矩阵恒 false（owned 扩展在 sub80 门内，
-    // 26 零触及；0.19.20 既有链逐值不变）。
+    // 26 零触及）。
     do {
-        for orchestration in [true, false] {
-            for upper in [75, 80, 85, 100] {
-                let route = Topoff.convergenceRoute(
-                    modeActive: true, orchestrationEnabled: orchestration,
-                    chargingDisabledWindow: false, upperLimit: upper,
-                    sub80Capable: false, actionActive: false,
-                    degraded: false, healProbeActive: false)
-                check(!route.topoffOwned,
-                      "全域-5", "26 ∧ 编排\(orchestration ? "开" : "关") ∧ target \(upper) → owned 恒 false（红线零触及）")
-            }
+        for upper in [75, 80, 85, 100] {
+            let route = Topoff.convergenceRoute(
+                modeActive: true, chargingDisabledWindow: false, upperLimit: upper,
+                sub80Capable: false, actionActive: false)
+            check(!route.topoffOwned,
+                  "全域-5", "26 ∧ target \(upper) → owned 恒 false（红线零触及）")
         }
     }
 

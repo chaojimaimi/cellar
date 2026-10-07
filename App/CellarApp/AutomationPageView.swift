@@ -83,9 +83,8 @@ struct AutomationPageView: View {
                     activeEntryId: statusController.scheduleStatus?.activeEntryId,
                     busy: statusController.busy,
                     showsTitle: false,
-                    // v0.19.20 WP-4：编排生效中（enabled ∧ 27 终态）→ <80 条目
-                    // 「原生最低 80%」行内标注（列表展示层）。
-                    nativeFloorAnnotation: statusController.orchestrationActive,
+                    // **0.23.1 编排退役**：原「编排生效中 → <80 条目『原生最低 80%』
+                    // 行内标注」随批删除（R4/常规 P1-6——<80 全区间域承载后标注失实）。
                     onToggleEnabled: { toggleEnabled($0) },
                     onAdd: { editing = .new },
                     onEdit: { editing = .entry($0) },

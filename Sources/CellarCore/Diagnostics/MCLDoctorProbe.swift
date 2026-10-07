@@ -11,7 +11,7 @@ import ObjectiveC
 // 只读契约（doctor 全线「不写任何键」）——set 面不入本类型。
 //
 // 探测必须在 CLI 用户会话执行（DoctorCommand 组装——非 root 读级可用，S3 实证）；
-// 失败全部结构化落入 MCLDoctorProbe（检查 17 set 可用分支 / 检查 19 临时放开残留
+// 失败全部结构化落入 MCLDoctorProbe（检查 17 set 可用分支 / 检查 20 关断残留
 // / 检查 20 关断残留的数据源），绝不静默。
 
 /// 探测结果（DoctorInputs.mclProbe 载荷；nil limit ∧ readable=false = 通道缺席）。

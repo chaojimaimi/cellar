@@ -7,34 +7,25 @@ import os
 // StatusController.swift 行数纪律，LED extension 同款拆分惯例；跨文件读取的成员
 // 在主类已放宽 internal——mclClient/mclReadbackValue）
 //
-// **0.23.0 §② Shortcuts 备用通道退役**：原双实现执行器抽象（set 优先 / 快捷指令
-// fallback——ShortcutLimitExecutor/ShortcutsRunning/OrchestrationSettings）随批
-// 退役，执行体收敛 MCLSetLimitExecutor 单实现（LimitExecuting 协议保留为读回重跑
-// 臂的注入缝——单一 conformer）。
+// **0.23.0 §② Shortcuts 备用通道退役 + 0.23.1 编排退役**：原双实现执行器抽象
+//（set 优先 / 快捷指令 fallback）与读回校验重跑臂随编排执行链退役——执行体收敛
+// MCLSetLimitExecutor 单实现（LimitExecuting 协议随唯一注入缝〔读回重跑臂〕删除，
+// 消费点直接构造具体类型）。
 
-/// 限充执行器抽象（§1.1 R1-P2-3；0.23.0 收敛单实现）：编排消费与读回校验失配
-/// 重跑臂共用的执行体缝。返回**读回校验目标**（= NativeLimitSet.setTarget 映射后
-/// 的实际写入值），**0.22.4 模型 v2 起为 Optional**——setTarget <80 → nil（映射
-/// 退役：任何 100/80 补写都只造 M2 环境拖慢域接管，见 NativeLimitSet.setTarget
-/// 头注）；nil = 未执行写（调用方按各自链语义处理——生产链 expected ∈ {80,100,≥80}
-/// 恒非 nil，nil 分支防御性）。抛错 = 执行失败（detail 进回报链；MCLSetFailure 为
+/// set 路径执行体（**唯一执行通道**）：MCLClient setLimit 免 root 直写。阻塞 ObjC
+/// 调用经 Task.detached 承载（主 actor 永不等待——MCLClient 线程纪律）。
+/// 返回**实际写入值**（= NativeLimitSet.setTarget 映射后值）；nil = 未执行写（防御
+/// 分支，见 MCLSetLimitExecutor 执行体内部）；抛错 = 执行失败（MCLSetFailure 为
 /// 结构化失败分类）。
-protocol LimitExecuting: Sendable {
-    func execute(target: Int) async throws -> Int?
-}
-
-/// set 路径执行体（**唯一执行通道**——0.23.0 §② 快捷指令 fallback 退役）：MCLClient
-/// setLimit 免 root 直写。阻塞 ObjC 调用经 Task.detached 承载（主 actor 永不等待
-/// ——MCLClient 线程纪律）。
-struct MCLSetLimitExecutor: LimitExecuting {
+struct MCLSetLimitExecutor: Sendable {
     let client: MCLClient
 
     func execute(target: Int) async throws -> Int? {
         // 0.22.4：<80 → nil（映射退役）。防御分支（生产链 expected 恒 ≥80 不可达）
         // 走抛错而非静默返回——抛错进既有失败链如实上屏/计数，返回 nil 会被对账臂
-        // 当成功复位退避、被回报链报 ok（虚报成功，违反不静默纪律）。用独立错误
-        // 类型而非 MCLSetFailure：分类学语义是 NSError 分类（失败可见面），
-        // 值级防御拒绝不应污染通道健康分类。
+        // 当成功复位退避（虚报成功，违反不静默纪律）。用独立错误类型而非
+        // MCLSetFailure：分类学语义是 NSError 分类（失败可见面），值级防御拒绝不应
+        // 污染通道健康分类。
         guard let value = NativeLimitSet.setTarget(for: target) else {
             throw LimitSetDomainFloor(target: target)
         }
@@ -57,33 +48,32 @@ extension StatusController {
     // MARK: - 0.21.0 §1.5 关断残留闭环（App 侧补偿臂；0.23.0 §② 原执行体路由
     // makeLimitExecutor 随快捷指令 fallback 退役——消费点直接构造 MCLSetLimitExecutor）
 
-    /// App 自发关断（面板 disable / 编排开关关 XPC 成功回包）→ 按表即时对账
+    /// App 自发关断（面板 disable XPC 成功回包）→ 按表即时对账
     /// （主 actor 调度，阻塞 I/O 全 detached——runControl onSuccess 回调语境）。
     /// **0.22.4**：同链受益于每跳新鲜 getStatus 取回（F3 stale 拍修法）与静默门
     /// ——mode 关时门不静默（本变体的放开语义保留，期望恒 100）。
+    /// **0.23.1**：原「编排开关关」自发关断触发点随编排节删除（仅 disable 残留）。
     func reconcileShutdownResidualNow() {
         Task { await reconcileShutdownResidual() }
     }
 
     /// 态驱动对账单跳（R3-P2-2 **读回值驱动**，无需会话记忆——覆盖 App 重启窗）：
     /// 观察 daemonStatus 派生 MCL 期望值（NativeLimitSet.shutdownExpectation——
-    /// **0.21.3 §2.1 八行表统一重定版**：两窗/mode 关恒 100 / 编排开 ≥80 →
-    /// target（MCL 主导，本循环即周期对账防线）/ 编排开 <80 非 degraded → 100
-    ///（MCL 让域管）∧ degraded → 80（对齐编排钳）/ 编排关 degraded → 80（域通道
-    /// 死亡最后防线）∧ 非 degraded → 100（**0.21.3 §1.1 域承载全区间**——旧
-    /// 「<80→80 兜底」为 G1 实证有害形态〔MCL 80 主导顶掉域 75〕，废除）），MCL
-    /// 读回 ≠ 期望 → 补偿 set（走执行器味道——set 优先/驻留 fallback 一致，统一
-    /// API set 保机制使能——三分支分支 2 路径）。
-    /// **0.22.4 模型 v2 门控（方案 §3.1）**：补偿前先过 `NativeLimitSet.
-    /// compensationSilenced` 静默门——域承载态（sub80 .active ∧ <80 ∨ 编排关）与
-    /// 自愈探针观察窗不对账（域写值直接流入 MCL 执法〔M1〕，补偿写 100 = 13:32
-    /// 互搏元凶；MCL=100 = 无限制且诱发 agent 再关〔M2/M4〕）；编排开∧≥80 与
-    /// degraded 稳态防线显式排除（裁决记录见纯函数头注）；输入取每跳新鲜 status
+    /// **0.23.1 四行表**：两窗/mode 关恒 100 / degraded → max(target,80)（域通道
+    /// 死亡最后防线）/ 非 degraded → 100（域承载全区间新常态——原「编排开 ∧ ≥80
+    /// → target」行随编排退役删除）），MCL 读回 ≠ 期望 → 补偿 set（MCLSetLimitExecutor
+    /// 唯一执行通道，统一 API set 保机制使能）。
+    /// **0.22.4 → 0.23.1 门控（宽读钉死，§0.9）**：补偿前先过 `NativeLimitSet.
+    /// compensationSilenced` 静默门——域承载态（sub80State == .active 即静默，
+    /// 全目标区间含 ≥80）与自愈探针观察窗不对账（域写值直接流入 MCL 执法〔M1〕，
+    /// 补偿写 100 = 13:32 互搏元凶；**宽读**防「新 App + 旧 daemon 混装窗」G1
+    /// 复活——旧 daemon 编排开 ∧ ≥80 域不承载但 wire sub80State 仍 .active）；
+    /// degraded 稳态防线显式排除（域通道死亡最后防线）；输入取每跳新鲜 status
     ///（F3，见函数体注）。
     ///
-    /// 门控纪律：**27 终态门**（26 平台 orchestrationTerminal=false → 恒 no-op
+    /// 门控纪律：**27 现代后端门**（26 平台 platformModern=false → 恒 no-op
     /// ——App 写 MCL 属 0.21 新行为，26 红线零增量）；读回缺席（nil）→ 不补偿
-    /// （读回不可用即无法对账，不猜测语义）；期望达成 → 仅刷新按钮判定源；
+    /// （读回不可用即无法对账，不猜测语义）；期望达成 → 仅刷新对账判定源；
     /// **校准可疑豁免（review P2-1）**：读回 > 期望 ∧ App 侧近似指纹命中
     ///（percent ≥95 ∧ charging ∧ target ≤90——`CalibrationCoexistence.
     /// residualCompensationExempt`，CellarCoreCheck 场景域钉死）→ 跳过本轮补偿。
@@ -95,7 +85,7 @@ extension StatusController {
     ///（30s 循环不再每拍空打；成功/对账一致/期望值变化复位——照 WP3 读回失配
     /// 退避 R0-P2 同形态；失败残留由 doctor 检查 20 可见化）。
     func reconcileShutdownResidual() async {
-        guard orchestrationTerminal else { return }
+        guard platformModern else { return }
         // 0.22.4 F3（stale 拍修法）：每跳先取新鲜 status——XPC getStatus 直读经
         // Task.detached 承载（阻塞调用离主 actor，下方 :MCL 读回同款先例；refreshOnce
         // 同形态）。日程窗进出是 daemon 自治转换（无 XPC 回包刷新 wire），缓存 wire
@@ -111,31 +101,28 @@ extension StatusController {
         guard let status else { return }
         let expected = NativeLimitSet.shutdownExpectation(
             modeActive: status.mode == "active",
-            orchestrationEnabled: status.orchestration?.enabled == true,
             upperLimit: status.upperLimit,
             degraded: status.sub80State == .degraded,
             fullOnceWindowActive: status.fullOnceWindowActive == true,
             chargingDisabledWindowActive: status.chargingDisabledWindowActive == true
         )
         guard let expected else { return }
-        // 0.22.4 补偿臂静默门（方案 §3.1 v2 门式；形参全部取 fresh status wire
-        // 字段——缓存态拼参禁，复核 P3-2）：域承载态（.active ∧ <80 ∨ 编排关）与
-        // 自愈探针观察窗不对账属预期——模型 v2 域写值直接流入 MCL 执法，补偿写
-        // 100 即 13:32 互搏元凶。编排开∧≥80（周期对账防线）与 degraded 稳态（最后
-        // 防线）不静默；mode 关（即时变体放开语义）不静默——判据全在纯函数面。
+        // 0.23.1 宽读静默门（方案 §0.9 钉面；形参全部取 fresh status wire 字段
+        // ——缓存态拼参禁，复核 P3-2）：域承载态（.active 全区间）与自愈探针观察窗
+        // 不对账属预期——模型 v2 域写值直接流入 MCL 执法，补偿写 100 即 13:32 互搏
+        // 元凶。degraded 稳态（域通道死亡最后防线）不静默；mode 关（即时变体放开
+        // 语义）不静默——判据全在纯函数面。
         if NativeLimitSet.compensationSilenced(
             modeActive: status.mode == "active",
             fullOnceWindow: status.fullOnceWindowActive == true,
             chargingDisabledWindow: status.chargingDisabledWindowActive == true,
             healProbeActive: status.sub80HealProbeActive == true,
-            sub80State: status.sub80State,
-            upperLimit: status.upperLimit,
-            orchestrationEnabled: status.orchestration?.enabled == true
+            sub80State: status.sub80State
         ) {
             // 首次静默打一条 os_log 说明（会话级——稳态静默不刷日志）。
             if !compensationSilenceLogged {
                 compensationSilenceLogged = true
-                Self.log.info("关断残留对账静默：域承载态/自愈探针期不对账属预期（0.22.4 模型 v2——域写值直接执法，补偿写 100 即互搏；编排开∧≥80 与 degraded 稳态防线保留）")
+                Self.log.info("关断残留对账静默：域承载态/自愈探针期不对账属预期（0.23.1 宽读钉死——域写值直接执法全区间，补偿写 100 即互搏；degraded 稳态防线保留）")
             }
             return
         }

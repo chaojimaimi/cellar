@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - sub80 通道状态组件（0.20 WP2 §3.4；**参数驱动**——CellarUICheck 仅
 // import CellarCore/CellarUI，App 侧 ControlSectionView 薄桥接 StatusController；
-// 照 OrchestrationSectionView 先例）：
+// 照参数驱动组件先例）：
 // - 回落进度（sub80State == active ∧ percent > 目标）：「回落中 82%→75%」——
 //   进度语义不承诺时长（§11.5.1 斜率负载强相关实测事实）；
 // - 降级横幅（sub80State == degraded）：重申×3 封顶后的诚实降级告知——**0.23.0
