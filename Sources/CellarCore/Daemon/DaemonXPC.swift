@@ -384,7 +384,11 @@ public enum DaemonXPC {
     //（orchestration 载荷照填 enabled=false、setOrchestration/reportOrchestration
     // 命令族与键保留、capabilityOrchestration 照报作 27 平台判别标记）——协议
     // 零变更，随版本矩阵同步 bump（doctor 三方一致纪律）。
-    public static let daemonVersion = "0.23.1-alpha"
+    // 0.23.2-alpha（2026-10-07）：充满自动恢复与校准 27 适配批——fullOnce 窗自动
+    // 恢复（充到 100 ~1.5min 自动回落 + 4h 超时兜底）+ 校准 27 能力解禁（CHIE 可写
+    // 臂追加 calibration——守卫随批平台判别绕过）；wire 零 schema 变化（能力串追加
+    // 为上报值变化非键变化）。
+    public static let daemonVersion = "0.23.2-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

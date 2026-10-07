@@ -726,8 +726,11 @@ public enum DoctorReportGenerator {
         // v0.19.20 WP-6：27 上 plist = 「任务注册残留」非「现行上限」（S4 实证：
         // batteryui 镜像与 powerd plist 都不反映 shortcut 设定值）→ active 判定
         // 失去物理意义，冲突/等效分流（26 语义）不再适用——一律 INFO 展示残留。
-        // 校准冲突 FAIL 分支在 27 不可达（daemon 侧编排终态已拒绝校准/fullOnce），
-        // 置于其前即 27 单一语义；冲突横幅 27 不触发（编排即执法者）。
+        // 校准冲突 FAIL 分支在 27 不可达：27 上残留非物理执法（无冲突事实）——
+        // **0.23.2 注释翻新**：原「daemon 侧编排终态已拒绝校准」理由随编排退役 +
+        // 校准 27 守卫绕过（startCalibrationLocked 平台判别臂，M1 同论证——域写 100
+        // 覆写 MCL）双双失效；27 校准充满相由域承载通道执法（残留语义被域写 100
+        // 覆写）。置于其前即 27 单一语义；冲突横幅 27 不触发（26 分支专属）。
         if inputs.osMajorVersion >= 27 {
             // 0.20.2 §1.2 门控：topoff 通道承载中（sub80 capable ∧ sub80State ==
             // .active——仅 27 可达）→ 「现行执法（上限 N%）」（N = daemon 上报
@@ -744,7 +747,7 @@ public enum DoctorReportGenerator {
             }
             return DoctorCheck(
                 name: "原生限充共存", status: .info,
-                detail: "原生限充注册残留 \(nativeLimit)%（非现行上限——macOS 27 执法由编排接管，可忽略；如需彻底清理可在系统设置移除后重启）"
+                detail: "原生限充注册残留 \(nativeLimit)%（非现行上限——macOS 27 执法由 Cellar 域承载通道接管，可忽略；如需彻底清理可在系统设置移除后重启）"
             )
         }
         if inputs.daemonStatus?.isCalibrationAction == true {

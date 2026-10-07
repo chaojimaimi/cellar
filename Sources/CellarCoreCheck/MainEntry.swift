@@ -382,6 +382,12 @@ struct Main {
         // 门-1..6、退役面钉（零消费/observationTick 迁移）落新域
         // OrchestrationRetirementDomain（源文件结构钉面——零消费断言/迁移钉）。
         runOrchestrationRetirementDomainScenarios()
+        // **0.23.2「充满自动恢复与校准 27 适配批」场景域**（方案 §6——①充满检测
+        // 纯函数 ≥6 / ②fullOnce 自动恢复源钉（挂点次序/helper 四件套/清窗点收口/
+        // 26 动作轨零触及）/ ③校准 27 适配源钉（能力矩阵/互斥/守卫绕过+26 逐值/
+        // advance·maintain 27 臂/调度臂挂点/.maintainCalibration 接线）——
+        // FullChargeAutoRestoreDomain；字面量映射回归 = MainEntry 用例 102 既有）。
+        runFullChargeAutoRestoreDomainScenarios()
         // 0.21.0 M1a → **0.23.1 翻新**：set 路径场景域（set 分流与拒绝链（≥80 set/
         // <80 → nil 不写/Code=4 结构化拒绝文案钉死）/fullOnce 27（平台判别原生守卫
         // 绕过——set-5/26 红线锚）/恢复臂 XPC 通道/关断残留期望值（**四行表**）/

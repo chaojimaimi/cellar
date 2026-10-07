@@ -685,7 +685,8 @@ func runDischargeDomainScenarios() throws {
                 modernBackendTerminal: true, isDischargeAction: true, actionActive: true,
                 controlWritable: false, snapshotAvailable: true) == .noteMonitoringLoss,
               "放电-32", "27 ∧ 放电活跃 ∧ 控制面不可写 → noteMonitoringLoss（fail-closed）")
-        // 非放电动作活跃（27 上校准/fullOnce 均不可达——防御计数）。
+        // 非放电动作活跃（防御计数——0.23.2 后 27 校准经独立臂路由，本行保留为
+        // 「其他动作」（fullOnce 等）的防御兜底）。
         check(Discharge.observationRoute(
                 modernBackendTerminal: true, isDischargeAction: false, actionActive: true,
                 controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
@@ -695,6 +696,42 @@ func runDischargeDomainScenarios() throws {
                 modernBackendTerminal: true, isDischargeAction: false, actionActive: false,
                 controlWritable: true, snapshotAvailable: true) == .patrolResidual,
               "放电-32", "27 ∧ 空轨 → patrolResidual（§2.2 #7 残留巡检兜底落位观测段）")
+
+        // ---- 0.23.2 校准 27 适配：.maintainCalibration 真值表补行（方案 §4.3——
+        // 豁免与止损语义照 .maintainDischarge 同构；红队登记②显式钉面）。
+        // 27 + 校准活跃 + 控制面可写 + 快照在位 → 校准维护子分支（豁免 backend 缺席成因）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: true, isDischargeAction: false, isCalibrationAction: true,
+                actionActive: true, controlWritable: true, snapshotAvailable: true) == .maintainCalibration,
+              "放电-32", "27 终态 ∧ 校准活跃 ∧ 控制面可写 ∧ 快照在位 → maintainCalibration（0.23.2 新臂——豁免 backend 缺席成因）")
+        // 快照缺席（采样失败）→ 照常计数（止损保留——不推进完成判定）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: true, isDischargeAction: false, isCalibrationAction: true,
+                actionActive: true, controlWritable: true, snapshotAvailable: false) == .noteMonitoringLoss,
+              "放电-32", "27 ∧ 校准活跃 ∧ 快照缺席（采样失败）→ noteMonitoringLoss（止损语义照放电分支同构）")
+        // 控制面缺席 → 照常计数（fail-closed）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: true, isDischargeAction: false, isCalibrationAction: true,
+                actionActive: true, controlWritable: false, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "27 ∧ 校准活跃 ∧ 控制面不可写 → noteMonitoringLoss（fail-closed——校准 discharge 相无 client 不可保活）")
+        // 26 瞬态窗口 ∧ 校准活跃 → 恒计数（26 红线：平台门不含 26 瞬态；26 上校准
+        // 走执法段维护分支，观测段校准臂不可达）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: false, isDischargeAction: false, isCalibrationAction: true,
+                actionActive: true, controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "26 瞬态 ∧ 校准活跃 → noteMonitoringLoss（26 行为零变化——观测段校准臂仅 27 终态可达）")
+        // isDischargeAction 优先于 isCalibrationAction（两参同真为防御形态——判定
+        // 次序即契约：放电分支先短路）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: true, isDischargeAction: true, isCalibrationAction: true,
+                actionActive: true, controlWritable: true, snapshotAvailable: true) == .maintainDischarge,
+              "放电-32", "放电 ∧ 校准同真（防御形态）→ maintainDischarge（判定次序钉死：放电臂先短路）")
+        // 缺省参（0.23.2 前既有调用形态）→ 既有六行零回归（isCalibrationAction 缺省
+        // false——R-5 既有构造点零改动纪律）。
+        check(Discharge.observationRoute(
+                modernBackendTerminal: true, isDischargeAction: false, actionActive: true,
+                controlWritable: true, snapshotAvailable: true) == .noteMonitoringLoss,
+              "放电-32", "缺省 isCalibrationAction（既有调用形态）→ 非放电动作防御计数（既有语义零回归）")
     }
 
     // ---- ⑫ 0.20 M1a：合盖拒绝闸（§2.2 合盖管道；mini-spike 结论见 ClamshellProbe；

@@ -78,16 +78,19 @@ func runHealthCapabilitiesDomainScenarios() throws {
     }
 
     // 能力-6：平台终态处置决策函数（0.19.10 WP-A 场景②；v0.19.20 编排批扩展；
-    // 0.20 M1a capabilities 三平台矩阵——方案 §2.1 R1-P1/R2-P2 处置）
+    // 0.20 M1a capabilities 三平台矩阵——方案 §2.1 R1-P1/R2-P2 处置；**0.23.2
+    // 校准 27 适配**：CHIE 可写臂追加 calibration——校准三相位在 27 全链可达，
+    // 原生守卫随批平台判别绕过，方案 §4.1）
     // ——常量元组钉语义：client 保留（风扇/LED/Ts 观察面不陪葬）/ capabilities
-    // 上报非 nil（27 终态不报空数组：编排是 27 唯一充电执法路径，该能力即「27
-    // 终态」标记本体）/ 进程内不重试（sticky 终态——**27 含 CHIE 在位仍 sticky**，
-    // 仅 reportedCapabilities 扩展，R1-P1）。矩阵：
-    // - 27 + CHIE 可写 → [orchestration, discharge, autoDischarge, sub80]
-    //   （必含 orchestration——编排链/fullOnce 拒绝判定/App 编排节显隐依赖；含
-    //   autoDischarge 使 daemon 自动触发门与 App 开关门对称；sub80 终态即报
-    //   无条件——域存在性不作上报条件，R2-P2）；
-    // - 27 无 CHIE → [orchestration, sub80]；
+    // 上报非 nil（27 终态不报空数组：该矩阵即「27 终态」标记本体）/ 进程内不重试
+    //（sticky 终态——**27 含 CHIE 在位仍 sticky**，仅 reportedCapabilities 扩展，
+    // R1-P1）。矩阵：
+    // - 27 + CHIE 可写 → [orchestration, discharge, autoDischarge, calibration, sub80]
+    //   （必含 orchestration——fullOnce 平台判别/App 消费依赖；含 autoDischarge 使
+    //   daemon 门与 App 开关门对称；含 calibration——0.23.2 App 校准按钮与调度卡
+    //   数据驱动放行；sub80 终态即报无条件——R2-P2）；
+    // - 27 无 CHIE → [orchestration, sub80]（0.23.2 不变——无 CHIE 无放电面亦无
+    //   校准 discharge 相）；
     // - 26 两平台成功路径不消费本函数（清单 [discharge, autoDischarge, calibration]
     //   不变——由 establishBackendLocked 成功臂承载）。
     do {
@@ -96,15 +99,21 @@ func runHealthCapabilitiesDomainScenarios() throws {
                            reportedCapabilities: [DaemonXPC.capabilityOrchestration,
                                                   DaemonXPC.capabilityDischarge,
                                                   DaemonXPC.capabilityAutoDischarge,
+                                                  DaemonXPC.capabilityCalibration,
                                                   DaemonXPC.capabilitySub80],
                            retryWithinProcess: false),
-              "能力-6", "27+CHIE 可写矩阵：[orchestration, discharge, autoDischarge, sub80] + sticky + client 保留")
+              "能力-6", "27+CHIE 可写矩阵：[orchestration, discharge, autoDischarge, calibration, sub80] + sticky + client 保留（0.23.2 校准能力解禁）")
+        check(withChie.reportedCapabilities.contains(DaemonXPC.capabilityCalibration)
+                  && withChie.reportedCapabilities.contains(DaemonXPC.capabilitySub80),
+              "能力-6", "27+CHIE 可写臂含 calibration ∧ sub80（校准 27 适配——App 校准按钮/调度卡能力门放行）")
         let withoutChie = RuntimeProbe.noBackendTerminalDisposition(chieWritable: false)
         check(withoutChie == (retainClient: true,
                               reportedCapabilities: [DaemonXPC.capabilityOrchestration,
                                                      DaemonXPC.capabilitySub80],
                               retryWithinProcess: false),
-              "能力-6", "27 无 CHIE 矩阵：[orchestration, sub80] + sticky + client 保留")
+              "能力-6", "27 无 CHIE 矩阵：[orchestration, sub80] + sticky + client 保留（0.23.2 不变——无 CHIE 不放开校准）")
+        check(!withoutChie.reportedCapabilities.contains(DaemonXPC.capabilityCalibration),
+              "能力-6", "27 无 CHIE 臂不含 calibration（守卫绕过不越权——无放电面即无校准 discharge 相）")
     }
 
     // ---- ⑦ capabilities decode 双向 ----

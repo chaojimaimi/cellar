@@ -109,15 +109,21 @@ func runOrchestrationRetirementDomainScenarios() {
 
     // ---- ③ fullOnce / cancelAction 置窗-清窗-only 化钉 ----
 
-    // 退役-3：27 置窗臂 = 置窗 + 即时 tick（无 pending 产出）；cancelAction = 清窗 +
+    // 退役-3：27 置窗臂 = 置窗 + 即时 tick（无 pending 产出）；cancelAction = 清窗
+    // （0.23.2 起经共用 helper——窗三件 + 共存 suspected 清零，零 tick 零域写）+
     // 即时 tick（无恢复 pending 产出）。
     check(oneShotExt.contains("fullOnceWindowActive = true")
+              && oneShotExt.contains("fullOnceWindowStartedAt =")
               && !oneShotExt.contains("pendingToken =")
               && !oneShotExt.contains("pendingTarget ="),
-          "退役-3", "fullOnce 27 置窗-only 化钉：置窗 + 即时 tick，pending 产出臂不回填（R4/复核 P3——App 消费链已删除）")
-    check(oneShotExt.contains("fullOnceWindowActive = false")
-              && oneShotExt.contains("modernBackendTerminalLocked"),
-          "退役-3", "cancelAction 27 清窗-only 化钉：清窗 + 即时 tick 域写回 target（恢复臂同款收敛）+ 平台判别门更名")
+          "退役-3", "fullOnce 27 置窗-only 化钉：置窗（含 0.23.2 startedAt 自动恢复窗口态）+ 即时 tick，pending 产出臂不回填（R4/复核 P3——App 消费链已删除）")
+    check(oneShotExt.contains("func clearFullOnceWindowStateLocked(")
+              && oneShotExt.contains("fullOnceWindowActive = false"),
+          "退役-3", "cancelAction 27 清窗-only 化钉：清面走共用 helper（0.23.2——fullOnceWindowActive = false 字面量收敛进 clearFullOnceWindowStateLocked，窗三件 + 共存识别态清零）+ 即时 tick 域写回 target（恢复臂同款收敛）")
+    check(oneShotExt.contains("clearFullOnceWindowStateLocked(")
+              && orchestrationExt.contains("clearFullOnceWindowStateLocked(")
+              && orchestrationExt.contains("func restoreChargeLimit() -> DaemonStatus"),
+          "退役-3", "清窗点走 helper 钉（0.23.2）：cancelAction（oneShotExt）与 restoreChargeLimit（orchestrationExt）清面改走 clearFullOnceWindowStateLocked——五处清窗点收口单 helper")
 
     // ---- ④ restoreChargeLimit 重写钉 + Schedule 断电簿记臂保留钉 ----
 

@@ -292,8 +292,12 @@ extension DaemonCore {
     /// 成功 → lastWritten/lastWriteAt 簿记（幂等重写判定输入）+ 失败连计清零（P3-1
     /// 恢复日志）；失败 → 不簿记（下 tick needsWrite 幂等重写）+ **降频日志**（P3-1：
     /// 首条 error、后续合并计数 warn）。返回写入是否成功（P3-2 清理 off 置位条件）。
+    /// ⚠️ 可见性（0.23.2）：放宽为 internal——校准 27 适配（DaemonCore+Calibration.
+    /// swift）的启动序列进相域写 100 / 恢复与中止臂域写 target 复用本簿记包装
+    ///（方案 §4.2/§4.3——成功回填 lastWrittenLimit 消 10min 盲窗）；executable
+    /// internal 模块外不可达，单一属主/写透纪律不变（照 persistPolicyLocked 放宽先例）。
     @discardableResult
-    private func topoffExecuteWriteLocked(
+    func topoffExecuteWriteLocked(
         limit: Int, now: Date, events: inout [LogEvent]
     ) -> Bool {
         let outcome = TopoffWriter.write(limit: limit, run: Self.runProcessCapture) { name in

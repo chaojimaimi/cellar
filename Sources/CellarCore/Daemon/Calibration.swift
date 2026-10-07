@@ -77,6 +77,10 @@ public enum CalibrationStartRejection: Error, Equatable, Sendable, CustomStringC
     /// → 无 startedAt、无锚点、无残留；调度臂落入既有静默顺延路径（DaemonCore.swift
     /// generic catch，零新增终态语义）。
     case nativeChargeLimit(socLimit: Int?)
+    /// fullOnce 临时放开窗活跃（0.23.2 §1.5 互斥新增——27 窗模式下校准与放开窗
+    /// 互斥：窗内域写 100 充满与校准充满相同向但两动作意图冲突，恢复语义不分）。
+    /// **仅 27 可达**（26 无窗位——fullOnceWindowActive 恒 false，既有构造零变化）。
+    case fullOnceActive
 
     public var message: String {
         switch self {
@@ -85,6 +89,7 @@ public enum CalibrationStartRejection: Error, Equatable, Sendable, CustomStringC
         case .actionOccupied: return "有其他动作进行中，请先完成或取消"
         case .capabilityUnavailable: return "当前机型不支持校准功能"
         case .persistenceFailed: return "「电池校准」启动失败：无法写入动作文件"
+        case .fullOnceActive: return "「充满一次」临时放开充电进行中，无法启动电池校准——请先恢复限充再试"
         case .nativeChargeLimit(let manual):
             if let manual {
                 return "系统充电上限已激活（\(manual)%），校准需充满 100%——请先在系统设置中关闭"

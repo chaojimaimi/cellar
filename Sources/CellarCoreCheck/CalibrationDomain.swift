@@ -480,6 +480,21 @@ func runCalibrationDomainScenarios() throws {
               "校准-34", "取消后空轨 → 可启动")
     }
 
+    // 校准-34a（0.23.2 §1.5 互斥）：fullOnce 临时放开窗活跃 → 校准启动拒绝
+    // .fullOnceActive（拒因原文 + description 透传）；互斥对称面 = fullOnce 侧
+    // .actionOccupiedOn27（OneShotStartRejection——原文钉在 OneShot 域）。
+    check(CalibrationStartRejection.fullOnceActive.message.contains("充满一次")
+              && CalibrationStartRejection.fullOnceActive.message.contains("恢复限充"),
+          "校准-34a", ".fullOnceActive 原文为中文可读文案（含「先恢复限充」引导——XPC errorReply 上屏）")
+    check(String(describing: CalibrationStartRejection.fullOnceActive)
+              == CalibrationStartRejection.fullOnceActive.message,
+          "校准-34a", "description == message（XPC errorReply 原文透传）")
+    check(OneShotStartRejection.actionOccupiedOn27.message.contains("其他动作进行中"),
+          "校准-34a", ".actionOccupiedOn27（fullOnce 侧对称拒因）原文可读——27 窗模式在轨动作显式拒绝")
+    check(String(describing: OneShotStartRejection.actionOccupiedOn27)
+              == OneShotStartRejection.actionOccupiedOn27.message,
+          "校准-34a", "actionOccupiedOn27 description == message（XPC errorReply 原文透传）")
+
     // 校准-35：terminateCalibration 终态锁存（App 轮询必见；M3 判例同 daemon 发起取消）。
     do {
         var track = OneShotTrack()

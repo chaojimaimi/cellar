@@ -94,14 +94,20 @@ public enum RuntimeProbe {
     ///   观察面与充电后端无关，不应陪葬（只读模式收窄为「限充执法停用」）。
     /// - `reportedCapabilities`——能力上报**非 nil**：App 侧三态消费面（nil=未上报
     ///   瞬态/旧 daemon / []/含值=已上报）据此分流。0.20 M1a 矩阵（方案 §2.1，
-    ///   R1-P1 处置）：
-    ///   - CHIE 可写 → `[orchestration, discharge, autoDischarge, sub80]`——必含
+    ///   R1-P1 处置）+ **0.23.2 校准 27 适配**（方案 §4.1——CHIE 可写臂追加
+    ///   `calibration`：27 充电执法经 topoff 域承载通道、CHIE 经 DischargeAdapterControl，
+    ///   校准三相位（chargeFull 域写 100 / hold 浮充 / discharge CHIE 0x8）全链在
+    ///   27 可达，原生守卫随批平台判别绕过（M1 同论证——域写 100 覆写 MCL））：
+    ///   - CHIE 可写 → `[orchestration, discharge, autoDischarge, calibration, sub80]`——必含
     ///     orchestration（编排链/fullOnce 拒绝判定/App 编排节显隐依赖）；含
-    ///     autoDischarge 使 daemon 自动触发门与 App 开关门对称；含 sub80（27 终态
+    ///     autoDischarge 使 daemon 自动触发门与 App 开关门对称；含 calibration
+    ///     （0.23.2——App 校准按钮与调度卡数据驱动放行）；含 sub80（27 终态
     ///     即报无条件——域存在性不作上报条件，防干净机器假阴性隐藏功能，R2-P2）。
-    ///   - 无 CHIE → `[orchestration, sub80]`。
+    ///   - 无 CHIE → `[orchestration, sub80]`（0.23.2 不变——无 CHIE 无放电面亦无
+    ///     校准 discharge 相，校准能力不放开）。
     ///   "sub80" 上报先行于 topoff 通道落地（M1b）——能力表达域存在性，执法由
-    ///   M1b 补齐；26 及更早平台清单不变（两参都不触及成功路径）。
+    ///   M1b 补齐；26 及更早平台清单不变（两参都不触及成功路径——26 成功路径
+    ///   `[discharge, autoDischarge, calibration]` 由 establishBackendLocked 承载）。
     /// - `retryWithinProcess: false`——进程内不再重探（sticky 终态）：消除每 tick
     ///   makeDefault+日志+clientGeneration 换代抖动；键族恢复伴随系统更新/重装
     ///   （必然重启 daemon），进程重启即唯一清除路径。**27（含 CHIE 在位）仍进
@@ -111,10 +117,13 @@ public enum RuntimeProbe {
     ) -> (retainClient: Bool, reportedCapabilities: [String], retryWithinProcess: Bool) {
         let capabilities: [String]
         if chieWritable {
+            // 0.23.2 校准 27 适配：CHIE 可写臂追加 capabilityCalibration（无 CHIE 臂
+            // /26 成功路径不变——红线）。
             capabilities = [
                 DaemonXPC.capabilityOrchestration,
                 DaemonXPC.capabilityDischarge,
                 DaemonXPC.capabilityAutoDischarge,
+                DaemonXPC.capabilityCalibration,
                 DaemonXPC.capabilitySub80,
             ]
         } else {

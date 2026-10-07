@@ -123,6 +123,11 @@ public enum Discharge {
         /// 经 DischargeAdapterControl 执行维护子分支（CHIE 保活/完成判定/合盖检查
         /// ——豁免本拍监控缺失计数；维护链自身账本照常推进 keepAliveFailures）。
         case maintainDischarge
+        /// 校准维护子分支（0.23.2 §4.3——照 .maintainDischarge 形态：27 终态 ∧
+        /// 校准活跃 ∧ 控制面可写 ∧ 快照在位 → 经 client 执行校准相位状态机，豁免
+        /// backend 缺席成因的监控缺失计数；client/快照缺席 → daemon 防御分支照常
+        /// 计数，不静默）。
+        case maintainCalibration
         /// 残留巡检兜底 + 自动触发插桩（§2.2 #7 落位观测段；无动作期）。
         case patrolResidual
         /// 照常推进监控缺失计数（noteDischargeMonitoringLossLocked——内部轨道
@@ -134,11 +139,15 @@ public enum Discharge {
     /// 1. 非 27 终态（26 瞬态/未探测）→ `.noteMonitoringLoss`（既有语义零变化）；
     /// 2. 放电动作活跃：控制面可写 ∧ 快照在位 → `.maintainDischarge`；否则
     ///    `.noteMonitoringLoss`（快照缺席拍不推进完成判定——R2-P3 时序用例锚）；
-    /// 3. 其他动作活跃（27 上校准/fullOnce 均不可达——防御计数）→ `.noteMonitoringLoss`；
-    /// 4. 空轨 → `.patrolResidual`（巡检兜底 + 自动触发）。
+    /// 3. 校准动作活跃（0.23.2——27 校准适配后可达；26 不可达）：控制面可写 ∧
+    ///    快照在位 → `.maintainCalibration`；否则 `.noteMonitoringLoss`
+    ///    （豁免与止损语义与放电分支同构）；
+    /// 4. 其他动作活跃 → `.noteMonitoringLoss`（防御计数）；
+    /// 5. 空轨 → `.patrolResidual`（巡检兜底 + 自动触发）。
     public static func observationRoute(
         modernBackendTerminal: Bool,
         isDischargeAction: Bool,
+        isCalibrationAction: Bool = false,
         actionActive: Bool,
         controlWritable: Bool,
         snapshotAvailable: Bool
@@ -146,6 +155,11 @@ public enum Discharge {
         guard modernBackendTerminal else { return .noteMonitoringLoss }
         if isDischargeAction {
             return controlWritable && snapshotAvailable ? .maintainDischarge : .noteMonitoringLoss
+        }
+        if isCalibrationAction {
+            // 0.23.2 校准 27 适配：豁免与止损语义照放电分支（backend 缺席成因豁免/
+            // 快照缺席与控制面缺席照常计数）。
+            return controlWritable && snapshotAvailable ? .maintainCalibration : .noteMonitoringLoss
         }
         if actionActive { return .noteMonitoringLoss }
         return .patrolResidual

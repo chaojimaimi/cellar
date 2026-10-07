@@ -35,7 +35,10 @@ extension DaemonCore {
     ///    纯时间判定 + policy/state 写 + applied 门控」的自洽状态机，锚点幂等、
     ///    不依赖 snapshot、调用点无关——27 终态下执法段不可达，本处是唯一驱动点；
     ///    额外收益 = setChargeSchedule 即时 tick 语义在 27 保留）；
-    /// ② 汇聚点路由消费（0.20 M1b §3.1——desired 推导链随编排退役删除后，本消费
+    /// ② fullOnce 窗自动恢复（0.23.2 §3——挂点钉死：日程转移后、topoff 路由前）；
+    /// ③ 校准 27 调度臂（0.23.2 §1.1 全量方案 (a)——26 执法段调度臂的观测段镜像：
+    ///    27 执法段不可达，本处是自动校准唯一驱动点；拒因处置照 26 调度臂）；
+    /// ④ 汇聚点路由消费（0.20 M1b §3.1——desired 推导链随编排退役删除后，本消费
     ///    = topoff 域承载副作用（域写/验证/重申/降级/自愈/§3.6 卫生/§3.7 关断清理）
     ///    在 DaemonCore+Topoff.swift 的 topoffConvergenceRouteLocked 完成）。
     /// **0.23.1 删除臂**：③断言签发真值表 → 断言 token 签发（断言链随编排退役
@@ -54,10 +57,83 @@ extension DaemonCore {
         )
         lastStatus?.lastAction = actionName
 
-        // ② 汇聚点路由消费（0.20 M1b §3.1）。chargingDisabled 在窗判定 = state
+        // ② fullOnce 窗自动恢复（0.23.2 ②——挂点钉死：topoff 路由消费之前）。
+        // 窗口活跃拍跑 FullChargeDetection.tick（充满 3 拍去抖）与 4h 超时判定
+        // ——命中即走共用清窗 helper（**零 tick 零域写**，红 R2），窗清后同拍汇聚
+        // 路由自然落写 target（防双写先例——enforceLimitChargingLocked 27 臂同型）。
+        if fullOnceWindowActive {
+            let satisfied = FullChargeDetection.tick(
+                isCharging: snapshot.isCharging, fullyCharged: snapshot.fullyCharged,
+                percent: snapshot.percent, externalConnected: snapshot.externalConnected,
+                consecutive: fullOnceFullTicks
+            )
+            let timedOut = now.timeIntervalSince(fullOnceWindowStartedAt ?? now)
+                >= FullChargeDetection.fullOnceWindowTimeout
+            if satisfied {
+                clearFullOnceWindowStateLocked(reason: .full, events: &events)
+            } else if timedOut {
+                clearFullOnceWindowStateLocked(reason: .timeout, events: &events)
+            } else {
+                // 未命中且未超时：计数推进/清零（与 tick 共用单一谓词源——
+                // FullChargeDetection.predicate → OneShot.isFullOnceComplete 单一
+                // 真相，勿复制判定逻辑）。
+                fullOnceFullTicks = FullChargeDetection.predicate(
+                    isCharging: snapshot.isCharging, fullyCharged: snapshot.fullyCharged,
+                    percent: snapshot.percent, externalConnected: snapshot.externalConnected
+                ) ? fullOnceFullTicks + 1 : 0
+            }
+        } else if fullOnceFullTicks != 0 {
+            // 窗口非活跃拍清计数器（红 R6 单一谓词点——五处清窗点免疫跨窗泄漏）。
+            fullOnceFullTicks = 0
+        }
+
+        // ③ 校准 27 调度臂（0.23.2 §1.1）。动作活跃 → 静默（26 调度臂在空闲臂内
+        // 的同形态）；mode 门照 26 执法段调度臂；拒因处置照 26：persistenceFailed
+        // warn / 其余 info 静默顺延。
+        if actionTrack.isActive {
+            // 在轨动作期调度臂静默（校准/放电维护分支掌权——空轨判定前置）。
+        } else if policy.mode == "active",
+                  let schedule = policy.calibrationSchedule, schedule.enabled,
+                  calibrationAutoStartReady(
+                      now: now,
+                      lastStartedAt: calibrationAnchorDateLocked(),
+                      schedule: schedule
+                  ) {
+            do {
+                if try startCalibrationLocked(
+                    initiator: .auto, snapshot: snapshot, events: &events
+                ) == .started {
+                    // 同拍 maintainCalibrationLocked 接管（26 调度臂同判例——
+                    // R2 P1；27 传 backend: nil + client: smcClient 直挂）。
+                    let calActionName = maintainCalibrationLocked(
+                        now: now, snapshot: snapshot, backend: nil, client: smcClient, events: &events
+                    )
+                    lastStatus?.lastAction = actionTrack.effectiveLastAction(calActionName)
+                }
+            } catch let rejection as CalibrationStartRejection
+                where rejection == .persistenceFailed {
+                // persistenceFailed 提级 warn（P3-1）：action.json 写失败 = 动作未
+                // 落盘的异常态，非静默顺延；下 tick 幂等重试（照 26 调度臂措辞）。
+                events.append(LogEvent(
+                    category: .control, level: .warn,
+                    message: "自动校准启动失败：\(rejection)（持久化是动作存活的前提）"
+                ))
+            } catch {
+                // 前置拒绝静默顺延（info 级，防窗口内每 30s 刷 error）：不写锚点
+                // ——当日窗口内顺延重试，窗口过后自然跨日（UD-4；照 26 调度臂）。
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "自动校准未启动：\(error)（静默顺延，窗口内下 tick 重判）"
+                ))
+            }
+        }
+
+        // ④ 汇聚点路由消费（0.20 M1b §3.1）。chargingDisabled 在窗判定 = state
         // 锚点条目仍是配置成员且 chargingDisabled == true（配置被删/校验丢弃 →
         // 条目查不到 → 汇聚目标回常规映射，恢复路径由日程臂 restoreBase 兜底）。
         // topoff 副作用（域写/验证/重申/降级/自愈/卫生/关断清理）全在此完成。
+        // **0.23.2**：窗自动恢复臂清窗后本拍路由即收敛 target（fullOnceWindow 已
+        // false——同拍回落，零嵌套 tick）。
         topoffConvergenceRouteLocked(now: now, snapshot: snapshot, events: &events)
     }
 
@@ -130,11 +206,12 @@ extension DaemonCore {
         }
         actionTrack.clearUserActionLatch()   // 用户动作清除终态锁存（P0-2 对齐）
         if fullOnceWindowActive {
-            fullOnceWindowActive = false
-            events.append(LogEvent(
-                category: .control, level: .info,
-                message: "fullOnce 临时放开窗已随恢复臂关闭"
-            ))
+            // 0.23.2：清面走共用 helper（窗三件 + 共存 suspected 清零——红 R4 兼修；
+            // 手动 XPC 不落字面量）——外层 performTickLocked 维持（XPC 语境非嵌套）。
+            clearFullOnceWindowStateLocked(
+                reason: .manual, detail: "fullOnce 临时放开窗已随恢复臂关闭",
+                events: &events
+            )
         }
         events.append(LogEvent(
             category: .control, level: .info,

@@ -14,9 +14,69 @@ import CellarCore
 /// 本扩展只做副作用（写 CHTE / 删文件）与日志：daemon 侧逻辑与 CellarCoreCheck
 /// 钉死的轨道转移同源。
 extension DaemonCore {
-    /// fullOnce XPC（前置 + 幂等三分支，规格 §1.1/§2.2）：
+    /// fullOnce 窗清除共用 helper（0.23.2 ②——§1.2/§1.4 裁决落点；全部锁内）：
+    /// **只清状态——零 tick 零域写**（红 R2 钉死）：
+    /// ① 窗标志 + startedAt + 充满去抖计数（窗口态三件）；
+    /// ② `calibrationCoexistenceState` 清零（§1.4 兼修——共存 suspected 惰性保态会
+    ///    吞掉窗毕恢复拍的域写（suppressionPlan 早退先于卫生臂），用户显式/自动完成
+    ///    意图优先于指纹证据；0.23.1 手动恢复同型潜伏缺陷一并修复）；
+    /// ③ 锁存字面量：`.full` → `fullOnce:done` / `.timeout` → `fullOnce:timeout`
+    ///    （notificationEvents 映射与 App done 横幅复用既有字面量——§1.6 零新增）；
+    ///    `.manual`（XPC 手动清窗）不落字面量（用户即时反馈路径，无终态语义）。
+    /// 域写收敛：自动路径交同拍 observationTick 汇聚路由（清窗后 `fullOnceWindowActive`
+    /// =false → route 收敛 target，防嵌套 tick）；手动路径交外层既有 performTickLocked
+    /// （XPC 语境非嵌套）。
+    enum FullOnceWindowClearReason {
+        /// 充满自动恢复（连续 3 拍命中——锁存 fullOnce:done）。
+        case full
+        /// 4h 超时兜底（锁存 fullOnce:timeout）。
+        case timeout
+        /// 手动/XPC 清窗（setLimits/disable/SIGHUP/cancelAction/restoreChargeLimit
+        /// ——不落字面量，消息由 detail 承载）。
+        case manual
+    }
+
+    func clearFullOnceWindowStateLocked(
+        reason: FullOnceWindowClearReason, detail: String? = nil, events: inout [LogEvent]
+    ) {
+        fullOnceWindowActive = false
+        fullOnceWindowStartedAt = nil
+        fullOnceFullTicks = 0
+        // ② 共存 suspected 清零（§1.4）：清零即退出抑制——同拍/外层汇聚路由恢复
+        // 域写不被 suspected 吞（`.empty` = suspected=false ∧ 指纹计数归零）。
+        calibrationCoexistenceState = CalibrationCoexistence.State.empty
+        switch reason {
+        case .full:
+            actionTrack.latchTerminalLiteral(OneShotLiteral.done())
+            // lastStatus 直写照 cancelActionLocked/日程转移先例（仅可见性面——
+            // buildStatusLocked 的锁存生效值同源，App 两条读取路径一致）。
+            let prior = lastStatus?.lastAction
+            lastStatus?.lastAction = actionTrack.effectiveLastAction(prior)
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 自动恢复：充满判据连续 \(FullChargeDetection.debounceTicks) 拍命中——窗关闭、done 字面量锁存、共存识别态清零；域写交同拍汇聚路由收敛（零直写防嵌套 tick）"
+            ))
+        case .timeout:
+            actionTrack.latchTerminalLiteral(OneShotLiteral.timeout())
+            let prior = lastStatus?.lastAction
+            lastStatus?.lastAction = actionTrack.effectiveLastAction(prior)
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: "fullOnce 窗超时（\(Int(FullChargeDetection.fullOnceWindowTimeout / 3600))h 兜底）：自动恢复——窗关闭、timeout 字面量锁存、共存识别态清零；域写交同拍汇聚路由收敛（零直写防嵌套 tick）"
+            ))
+        case .manual:
+            events.append(LogEvent(
+                category: .control, level: .info,
+                message: detail ?? "fullOnce 临时放开窗已清除"
+            ))
+        }
+    }
+
+    /// fullOnce XPC（前置 + 幂等拆分，规格 §1.1/§2.2 + 0.23.2 §1.5）：
     /// - 前置拒绝：mode != active / 未外接 / 外接未知 → 上抛 daemonError 原文；
-    /// - 幂等一：动作已在轨 → **回当前状态**（非错误——App 按钮随状态消失）；
+    /// - 幂等拆分：动作在轨 ∧ 27 → **上抛 .actionOccupiedOn27**（27 窗模式 fullOnce
+    ///   不占轨——轨上活跃的是放电/校准，静默幂等回状态 = App 按钮假成功形态）；
+    ///   动作在轨 ∧ 26 → 静默幂等返回（**原语义不动**——26 红线）；
     /// - 已满电 → 接受，动作启动后首个 tick 即进入完成判定路径（2 tick 去抖照常）。
     func fullOnce() throws -> DaemonStatus {
         var events: [LogEvent] = []
@@ -27,6 +87,14 @@ extension DaemonCore {
         }
 
         if actionTrack.isActive {
+            if modernBackendTerminalLocked {
+                // 0.23.2 §1.5：27 在轨动作（放电/校准）→ 显式拒绝（新拒因）。
+                events.append(LogEvent(
+                    category: .control, level: .info,
+                    message: "fullOnce 拒绝：27 平台在轨动作活跃（\(actionTrack.action?.kind ?? "?")）——actionOccupiedOn27（先完成或取消）"
+                ))
+                throw OneShotStartRejection.actionOccupiedOn27
+            }
             events.append(LogEvent(
                 category: .control, level: .info,
                 message: "fullOnce 重复请求：动作已在进行中，回当前状态（幂等）"
@@ -61,19 +129,23 @@ extension DaemonCore {
         ) {
             throw rejection
         }
-        // 0.21.0 §1.3 → **0.23.1 置窗-only 化**：27 分支——**不启动动作轨**（26
-        // 语义保留），开临时放开窗 + 即时 tick（observationTick → 汇聚点域随写
-        // 100——等价「完全放开」，M1 模型 v2 域写值直接执法）。原 pending(100)
-        // 产出（token/target/lastRequestAt）随断言链退役删除——App 消费链已不存在，
-        // 窗内充电放开完全由域承载。policy.upperLimit < 80 分支同样合法——窗毕
-        // 用户显式恢复臂即时 tick 域写回 target。无超时/自动恢复（用户显式，§0
-        // 裁决 10——走查措辞维持）。
+        // 0.21.0 §1.3 → **0.23.1 置窗-only 化 → 0.23.2 自动恢复批**：27 分支——
+        // **不启动动作轨**（26 语义保留），开临时放开窗 + 即时 tick（observationTick
+        // → 汇聚点域随写 100——等价「完全放开」，M1 模型 v2 域写值直接执法）。原
+        // pending(100) 产出（token/target/lastRequestAt）随断言链退役删除——App 消费
+        // 链已不存在，窗内充电放开完全由域承载。policy.upperLimit < 80 分支同样合法
+        // ——窗毕自动恢复臂/用户显式恢复臂即时 tick 域写回 target。**0.23.2 自动恢复
+        // （§3）**：窗起始时刻与充满去抖计数随窗置位——充满判据连续 3 拍命中 →
+        // ~1.5min 自动回落；4h 超时兜底（FullChargeDetection.fullOnceWindowTimeout，
+        // 与 26 fullOnce 超时同源）；手动恢复臂（restoreChargeLimit）保持即时。
         if modernBackendTerminalLocked {
             actionTrack.clearUserActionLatch()   // 用户动作清除终态锁存（P0-2 对齐）
             fullOnceWindowActive = true
+            fullOnceWindowStartedAt = Date()
+            fullOnceFullTicks = 0
             events.append(LogEvent(
                 category: .control, level: .info,
-                message: "fullOnce 27：临时放开窗开启——域随写 100（免 root 免 set，M1 模型 v2 域写值直接执法）；恢复经恢复臂即时 tick 域写回 target；无超时/自动恢复（用户显式）"
+                message: "fullOnce 27：临时放开窗开启——域随写 100（免 root 免 set，M1 模型 v2 域写值直接执法）；充满判据连续 \(FullChargeDetection.debounceTicks) 拍命中自动恢复（~1.5min 回落，\(Int(FullChargeDetection.fullOnceWindowTimeout / 3600))h 超时兜底），手动恢复臂即时生效"
             ))
             performTickLocked(events: &events)
             return buildStatusLocked()
@@ -113,13 +185,14 @@ extension DaemonCore {
             // 放开态取消——窗关闭 + 即时 tick（observationTick → 汇聚点域写回
             // target：恢复臂同款收敛；M1 模型 v2 域写值直接执法）。原「恢复
             // pending(policy.upperLimit) 产出」随断言链退役删除（无窗 → 下方既有
-            // 幂等成功路径零变化——26 恒走本路径）。
+            // 幂等成功路径零变化——26 恒走本路径）。0.23.2：清面走共用 helper
+            // （窗三件 + 共存 suspected 清零——红 R4 兼修；外层 performTickLocked 维持）。
             if fullOnceWindowActive {
-                fullOnceWindowActive = false
-                events.append(LogEvent(
-                    category: .control, level: .info,
-                    message: "fullOnce 临时放开已取消：窗关闭——即时 tick 域写回 target（\(policy.upperLimit)%，恢复臂同款收敛）"
-                ))
+                clearFullOnceWindowStateLocked(
+                    reason: .manual,
+                    detail: "fullOnce 临时放开已取消：窗关闭——即时 tick 域写回 target（\(policy.upperLimit)%，恢复臂同款收敛）",
+                    events: &events
+                )
                 performTickLocked(events: &events)
                 return buildStatusLocked()
             }
@@ -220,6 +293,17 @@ extension DaemonCore {
                     backend: backend,
                     temperatureC: (try? monitor.snapshot())?.temperatureC,
                     events: &events
+                )
+            } else if modernBackendTerminalLocked {
+                // 0.23.2 §③ code-review P1 补：27 校准取消臂（maintain abort 同款
+                // 收敛）——restoreCalibrationCHIELocked 已 client 化（27 可用，原
+                // 「无控制后端」warn 失实）；限充恢复 = 域直写 target（簿记包装），
+                // 消「取消即安全恢复」FAQ 契约的 30-60s 巡检兜底窗。
+                if calibrationPhase == .discharge {
+                    restoreCalibrationCHIELocked(terminal: "取消", events: &events)
+                }
+                _ = topoffExecuteWriteLocked(
+                    limit: policy.upperLimit, now: Date(), events: &events
                 )
             } else {
                 events.append(LogEvent(

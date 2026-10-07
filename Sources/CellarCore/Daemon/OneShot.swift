@@ -137,12 +137,18 @@ public enum OneShotStartRejection: Error, Equatable, Sendable, CustomStringConve
     // 0.23.1 编排退役：`.orchestrationTerminal`（0.19.20 27 拒绝形态，0.21.0 起生产
     // 链不再产出）与 `.orchestrationSwitchOff`（0.21.0 开关前置拒收）随编排链退役
     // 一并删除——27 臂收敛为平台判别放行（原生守卫绕过），无编排拒因产出面。
+    /// 其他动作在轨（0.23.2 §1.5 幂等拆分新拒因——**仅 27 可达**）：27 窗模式下
+    /// fullOnce 不占动作轨，动作轨活跃（放电/校准）时重复请求不能走 26 的「静默
+    /// 幂等回状态」（App 按钮不随状态消失 = 假成功形态，常规 P2-5）——显式拒绝上屏。
+    /// 26 保持原静默幂等返回（红线：26 行为零变化）。
+    case actionOccupiedOn27
 
     public var message: String {
         switch self {
         case .modeNotActive: return "「充满一次」需要限充处于启用状态（当前已停用）"
         case .noExternalPower: return "「充满一次」需要连接外接电源"
         case .persistenceFailed: return "「充满一次」启动失败：无法写入动作文件"
+        case .actionOccupiedOn27: return "「充满一次」无法启动：有其他动作进行中——请先完成或取消当前动作"
         case .nativeChargeLimit(let manual):
             if let manual {
                 return "系统充电上限已激活（\(manual)%），「充满一次」需充满 100%——请先在系统设置中关闭"
@@ -364,6 +370,14 @@ public struct OneShotTrack: Equatable, Sendable {
     /// 下一次用户动作）。newLatch 是幂等清除——无锁存时无操作。
     public mutating func clearUserActionLatch() {
         latchedLiteral = nil
+    }
+
+    /// 窗终态字面量锁存（0.23.2 ② fullOnce 窗自动恢复专用）：27 窗模式无动作轨
+    /// 锚点（置窗-only 化），自动完成/超时经本方法锁存 `fullOnce:done` / 
+    /// `fullOnce:timeout` 字面量——与动作轨终态锁存同形态（常规 tick 不覆盖，
+    /// 直到下一次用户动作清除），App 轮询必见终态 → 通知/横幅复用既有映射。
+    public mutating func latchTerminalLiteral(_ literal: String) {
+        latchedLiteral = literal
     }
 }
 

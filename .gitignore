@@ -30,3 +30,4 @@ PLAN.md
 .zcode/
 *.profraw
 App/.build-verify/
+.zcodeignore

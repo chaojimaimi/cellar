@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.2-alpha]
+
+> 背景：fullOnce 27 窗模式（0.23.1 置窗-only 化）恢复恒需手动点击——用户不在场即整夜 100% 满充；校准自 0.20 M1a 起 27 结构性不可达（maintain/advance 的 backend 非可选 + 调度臂/守卫三面封死），与 fullOnce 27 原生守卫绕过自相矛盾。本批在同一套窗/域/适配器机制上补齐两个缺口（双轨终判：常规 PASS + 红队「方案完备」，§1 裁决九条全落字）。wire 零 schema 变化（能力串追加为上报值变化非键变化）；App 零 UI 改动（校准按钮与调度卡经能力门数据驱动放行）。
+
+### Added
+
+- **fullOnce 窗自动恢复（27）**：充满判定复用 `OneShot.isFullOnceComplete` 单一真相 + 窗模式专用 3 拍去抖（新 `FullChargeDetection`——26 动作轨 2 拍独立演化）；挂点钉 `observationTickLocked` 头部（日程转移后、topoff 路由前），充到 100 后 ~1.5min 自动回落（域写交同拍汇聚路由收敛——**自动路径零 tick 零域写防嵌套 tick**）、4h 超时兜底（`fullOnceWindowTimeout` 别名同源 `OneShot.fullOnceTimeout`）；共用清窗 helper `clearFullOnceWindowStateLocked`（窗标志 + startedAt + 计数器 + **calibrationCoexistenceState**〔兼修 0.23.1 手动恢复 suspected 吞写潜伏缺陷〕+ 字面量锁存——`.full`→`fullOnce:done`/`.timeout`→`fullOnce:timeout` 复用既有映射零新增；手动五点恢复/setLimits/disable/SIGHUP/cancelAction 全部收口走 helper，计数器复位另钉「窗口非活跃拍」单一谓词点）。
+- **校准 27 适配（手动 + 自动调度全量）**：能力解禁（`noBackendTerminalDisposition` CHIE 可写臂追加 `calibration`——无 CHIE 臂/26 清单不变）；`observationRoute` 增 `.maintainCalibration`（照 `.maintainDischarge` 豁免/止损同构）；27 调度臂（observationTick 内 `calibrationAutoStartReady` → `startCalibrationLocked(.auto)`，拒因照 26：persistenceFailed warn/其余 info 顺延）；`startCalibrationLocked` 平台判别绕过原生守卫（M1 同论证——域写 100 覆写 MCL；**26 守卫逐值不变**）+ 27 启动序列进相域直写 100（经 `topoffExecuteWriteLocked` 簿记包装回填 lastWrittenLimit 消 10min 盲窗；写失败 6h 相位超时兜底）；`maintainCalibrationLocked`/`advanceCalibrationLocked` 双参数化（`backend`/`client` 双可选，**26 分支逐行原样**）——27：chargeFull/hold 零写浮充、advance 撤停充跳过 + CHIE 经 `DischargeAdapterControl`（失败相位不推进下拍幂等重试）、restore/abort 域直写 target；完成判定复用 `calibrationTick` 既有轨道（不另立计数器）。
+- **互斥双向拒因**：fullOnce 在轨 ∧ 27 → `.actionOccupiedOn27`（幂等拆分——26 静默幂等返回不动）；校准启动 ∧ 窗活跃 → `.fullOnceActive`。两拒因 message 硬编码先例文案（XPC errorReply 上屏）。
+
+### Changed
+
+- **doctor 检查 15 翻新**：27 注释理由改写（校准冲突 FAIL 分支不可达的现理由 = 27 残留非物理执法，非已失效的「编排终态拒绝」）；非 sub80-active 臂文案「执法由编排接管」→「执法由 Cellar 域承载通道接管」。
+- **`topoffExecuteWriteLocked` 放宽 internal**：校准启动/恢复/中止臂复用域写簿记包装（persistPolicyLocked 放宽先例；executable 模块外不可达，单一属主不变量不破）。
+
+### 文档与版本
+
+- 四方版本 0.23.2-alpha（CFBundleVersion 2320）；FAQ（Q7 校准 27 首次可用扩写——hold 浮充差异/守卫绕过说明/**过夜行为「早晨电量可能低至 10%」如实声明** + 新 Q22 充满一次自动恢复含 degraded 通道回落 ~1h 注记）；README zh/en 场景数（894）；SMC-NOTES §11.17。
+
+### 固定不变（本批红线核对）
+
+- **26 红线**：全部新行为挂平台门后（`modernBackendTerminalLocked`/能力臂）；26 动作轨完成/超时恢复链、原生守卫逐值、校准执法段维护分支逐行原样；`observationRoute` 既有六行真值表零回归（缺省参兼容）。
+- **golden 426 张零漂移**（本机失败集与 HEAD 基线 diff 实证零差异）；wire 零 schema 变化；l10n 零变化。
+- **既有测试 875 全数零回归**；场景 875 → 894（+19：检测-1..6 / 窗钉-1..4 / 校27-1..8 / 校准-34a）。
+
 ## [0.23.1-alpha]
 
 > 背景：0.19.20 编排链退役后架构收敛「daemon 域承载」单通道（模型 v2 实证——域写值直接流入 MCL 执法，App set 断言链无职责）。本批为年度最大删除手术：**编排退役 ≠ 整文件删除**——待删面里的 27 执法引擎（观测 tick）、26 红线平台门、恢复臂与 wire 兼容面为幸存者，全部函数级拆解处理（双轨三轮评审终版：常规 PASS + 红队「退役面完备」，§0 裁决十条全落字）。wire 零 schema 变化（orchestration 载荷照填 enabled=false、`capabilityOrchestration` 照报作 27 平台判别标记、setOrchestration/reportOrchestration 命令族保留、两窗字段沿更名门恒填）。

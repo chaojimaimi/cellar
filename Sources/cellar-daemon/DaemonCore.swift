@@ -145,6 +145,16 @@ final class DaemonCore: @unchecked Sendable {
     /// 恢复臂 / setLimits / cancelAction / disable / SIGHUP-disabled。
     /// ⚠️ 锁内读写（调用方持主锁）。
     var fullOnceWindowActive = false
+    /// 0.23.2 ② fullOnce 自动恢复：窗口起始时刻（内存态不持久化——照窗位纪律，
+    /// daemon 重启窗亡 → startedAt 丢失 → 窗位亦亡，域随写回落既有收敛语义）。
+    /// 置位点：fullOnce 27 置窗臂；清除点：clearFullOnceWindowStateLocked（共用
+    /// helper——含手动五点与自动恢复/超时两臂）。⚠️ 锁内读写。
+    var fullOnceWindowStartedAt: Date?
+    /// 0.23.2 ② 充满检测去抖计数（连续 `FullChargeDetection.debounceTicks` 拍命中
+    /// → 自动恢复；计数器归 daemon 核心态——方案 §2）。**复位钉两处**：检测挂点
+    /// 「窗口非活跃拍」单一谓词点（红 R6——五处清窗点免疫跨窗泄漏）+ 清窗 helper。
+    /// ⚠️ 锁内读写。
+    var fullOnceFullTicks = 0
     /// 0.20 M1b topoff 通道运行时状态（结构体定义在 CellarCore Topoff.swift；决策
     /// 全在 Topoff 纯函数，副作用在 DaemonCore+Topoff.swift）。0.20.2 §2 起**诚实性
     /// 五字段**（degraded/strikes/off/lastViolationAt/lastHealProbeAt）经
@@ -496,12 +506,12 @@ final class DaemonCore: @unchecked Sendable {
         // 0.21.0 §1.3：滑杆改值覆盖临时放开（R2-P2-4 交互语义）——清窗后
         // 域随写按新值收敛（域值 100 ≠ 新 target，observation tick 卫生臂幂等
         // 重写），MCL 读回回落 → App 横幅/按钮态随读回自然消失。
+        // 0.23.2：清面走共用 helper（窗三件 + 共存 suspected 清零——红 R4 兼修）。
         if fullOnceWindowActive {
-            fullOnceWindowActive = false
-            events.append(LogEvent(
-                category: .control, level: .info,
-                message: "fullOnce 临时放开窗已随 setLimits 清除（新值覆盖临时放开）"
-            ))
+            clearFullOnceWindowStateLocked(
+                reason: .manual, detail: "fullOnce 临时放开窗已随 setLimits 清除（新值覆盖临时放开）",
+                events: &events
+            )
         }
         applyPolicyLocked(
             DaemonPolicy(
@@ -562,13 +572,13 @@ final class DaemonCore: @unchecked Sendable {
             ))
         }
         // 0.21.0 §1.3/§1.5：mode 关 → 临时放开窗清除（关断补偿期望恒 100——R3-P1
-        // 第一行；窗位残留会破坏「关断态驱动对账」期望派生）。
+        // 第一行；窗位残留会破坏「关断态驱动对账」期望派生）。0.23.2：清面走共用
+        // helper（窗三件 + 共存 suspected 清零——红 R4 兼修）。
         if fullOnceWindowActive {
-            fullOnceWindowActive = false
-            events.append(LogEvent(
-                category: .control, level: .info,
-                message: "fullOnce 临时放开窗已随 disable 清除"
-            ))
+            clearFullOnceWindowStateLocked(
+                reason: .manual, detail: "fullOnce 临时放开窗已随 disable 清除",
+                events: &events
+            )
         }
 
         applyPolicyLocked(
@@ -709,13 +719,12 @@ final class DaemonCore: @unchecked Sendable {
         ))
 
         // 0.21.0 §1.3：SIGHUP 切停用 → 临时放开窗清除（同 disable——R3-P1 期望
-        // 派生；置于动作轨门控之前，原链路结构零变化）。
+        // 派生；置于动作轨门控之前，原链路结构零变化）。0.23.2：清面走共用 helper。
         if loaded.mode == "disabled" && fullOnceWindowActive {
-            fullOnceWindowActive = false
-            events.append(LogEvent(
-                category: .lifecycle, level: .info,
-                message: "fullOnce 临时放开窗已随 SIGHUP 切停用清除"
-            ))
+            clearFullOnceWindowStateLocked(
+                reason: .manual, detail: "fullOnce 临时放开窗已随 SIGHUP 切停用清除",
+                events: &events
+            )
         }
         // WP2 门控（规格 §1.1 SIGHUP 行；P1-1）：重载后 mode == "disabled" → 取消动作；
         // 否则动作存活——deadline（start 时绝对 Date）与完成判定不重算（轨道未触碰）。
@@ -803,11 +812,14 @@ final class DaemonCore: @unchecked Sendable {
             // - 27 终态 ∧ 放电活跃 ∧ 控制面可写 ∧ 快照在位 → 维护子分支（豁免
             //   backend 缺席成因的监控缺失计数——R2-P1；快照缺席/控制面缺席 →
             //   照常计数，90s 盲态止损保留）；
+            // - **0.23.2 校准 27 适配**：27 终态 ∧ 校准活跃 ∧ 控制面可写 ∧ 快照在位
+            //   → 校准维护子分支（豁免与止损语义照放电分支同构——§4.3）；
             // - 27 终态 ∧ 空轨 → 残留巡检兜底；
             // - 26 瞬态窗口 → 既有监控缺失计数（26 行为零变化）。
             switch Discharge.observationRoute(
                 modernBackendTerminal: modernBackendTerminalLocked,
                 isDischargeAction: actionTrack.action?.kind == Discharge.dischargeToLimitKind,
+                isCalibrationAction: actionTrack.action?.kind == Calibration.kind,
                 actionActive: actionTrack.isActive,
                 controlWritable: dischargeControlWritableLocked,
                 snapshotAvailable: snapshot != nil
@@ -823,6 +835,18 @@ final class DaemonCore: @unchecked Sendable {
                     // 置值拍 smcClient 同拍保留）——仅传输故障重建窗可达，照防御
                     // 纪律落监控缺失计数，不静默。
                     noteDischargeMonitoringLossLocked(events: &events, reason: "观测段防御分支：控制面 client 或快照缺席")
+                }
+            case .maintainCalibration:
+                // 0.23.2 §4.3：27 校准维护子分支（backend 恒 nil——CHTE/CH0B 键族
+                // 27 缺席；CHIE 经 client 直挂）。防御分支纪律照 .maintainDischarge
+                // 同款（路由已判可写，client 理论恒在位——不静默）。
+                if let client = smcClient, let snapshot {
+                    let actionName = maintainCalibrationLocked(
+                        now: Date(), snapshot: snapshot, backend: nil, client: client, events: &events
+                    )
+                    lastStatus?.lastAction = actionTrack.effectiveLastAction(actionName)
+                } else {
+                    noteDischargeMonitoringLossLocked(events: &events, reason: "观测段防御分支：控制面 client 或快照缺席（校准）")
                 }
             case .patrolResidual:
                 // §2.2 #7：27 残留巡检兜底（防崩溃/恢复失败泄漏 CHIE=0x8 致电池
@@ -922,8 +946,10 @@ final class DaemonCore: @unchecked Sendable {
                 )
             } else if actionTrack.action?.kind == Calibration.kind {
                 // WP3：校准 → 相位状态机维护分支（转移纯函数 + 副作用，方案 §2.2）。
+                // 0.23.2：backend/client 双参数化——26 传 backend（语义零变化），
+                // client 为 27 维护分支的 CHIE 控制面（26 分支不消费）。
                 actionName = maintainCalibrationLocked(
-                    now: Date(), snapshot: snapshot, backend: backend, events: &events
+                    now: Date(), snapshot: snapshot, backend: backend, client: client, events: &events
                 )
             } else {
                 actionName = maintainActionLocked(
@@ -963,10 +989,10 @@ final class DaemonCore: @unchecked Sendable {
                         ) == .started {
                             // 同拍 maintainCalibrationLocked 接管（R2 P1——使 enforce
                             // 块跳过，防 enforce 按 idle 语境对着 chargeFull 相写
-                            // 停充，30s 后才被保活纠正）。
+                            // 停充，30s 后才被保活纠正）。0.23.2：双参数化随迁。
                             calibrationStarted = true
                             actionName = maintainCalibrationLocked(
-                                now: tickNow, snapshot: snapshot, backend: backend, events: &events
+                                now: tickNow, snapshot: snapshot, backend: backend, client: client, events: &events
                             )
                         }
                     } catch let rejection as CalibrationStartRejection

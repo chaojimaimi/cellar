@@ -149,7 +149,7 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 875 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
+swift run CellarCoreCheck   # 894 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
                             # 放电安全门控、校准调度、热保护配置、原生限充检测、MagSafe LED、
                             # topoff <80% 通道、本地化完整性
