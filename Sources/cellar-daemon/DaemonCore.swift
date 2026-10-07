@@ -155,6 +155,12 @@ final class DaemonCore: @unchecked Sendable {
     /// 「窗口非活跃拍」单一谓词点（红 R6——五处清窗点免疫跨窗泄漏）+ 清窗 helper。
     /// ⚠️ 锁内读写。
     var fullOnceFullTicks = 0
+    /// 0.23.3 §4 校准 chargeFull stay 拍域读回保活节流计数（**27 专属**——26 走
+    /// CHTE 保活既有路径零触及）。chargeFull stay 拍递增，每
+    /// `Calibration.chargeFullReadbackStride` 拍触发一次域读回（失配才重写）；
+    /// **内存态不持久化**（照 fullOnceFullTicks 先例），置零点 = startCalibrationLocked
+    /// 启动序列。⚠️ 锁内读写。
+    var calibrationChargeFullReadbackTicks = 0
     /// 0.20 M1b topoff 通道运行时状态（结构体定义在 CellarCore Topoff.swift；决策
     /// 全在 Topoff 纯函数，副作用在 DaemonCore+Topoff.swift）。0.20.2 §2 起**诚实性
     /// 五字段**（degraded/strikes/off/lastViolationAt/lastHealProbeAt）经

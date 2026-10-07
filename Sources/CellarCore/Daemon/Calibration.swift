@@ -25,6 +25,24 @@ public enum Calibration {
     /// CHIE 保活失败上限（复用轨道 keepAliveFailures，判例同 dischargeToLimit）。
     public static let keepAliveFailureLimit = 3
 
+    // MARK: 0.23.3 §4 chargeFull stay 拍域读回保活（27；回读门）
+
+    /// chargeFull stay 拍域读回节流步长（每 N=10 拍读一次域——tick 30s → 读回
+    /// 节奏 5 min；chargeFull 相 ≤6h → 全相 ≤72 次读回，子进程开销有界）。§4.2
+    /// 启动序列域写 100 一次性 + stay 拍零写，此读回是在途写硬化（W3 残窗闭合）
+    /// 的唯一保活面。源钉常量（CellarCoreCheck 钉值 + 钉位双保险）。
+    public static let chargeFullReadbackStride = 10
+
+    /// chargeFull stay 域读回失配判定（纯函数——读回 vs 期望 {100, 1}）：
+    /// 域值 ≠ 100 ∨ featureState ≠ 1 → true（重写 {100,1}）；键缺席（nil）按
+    /// 失配（域文件被删/键被清本身即外部覆写形态，TopoffWriter.read 语义同款）。
+    /// 读失败（外层 nil）不进本判定——调用方 fail-open 不重写。
+    public static func chargeFullReadbackMismatch(
+        limit: Int?, featureState: Int?
+    ) -> Bool {
+        limit != Topoff.shutdownLimit || featureState != 1
+    }
+
     /// 相位（持久化原始值；App 侧同源映射展示词）。
     public enum Phase: String, Sendable {
         case chargeFull, hold, discharge

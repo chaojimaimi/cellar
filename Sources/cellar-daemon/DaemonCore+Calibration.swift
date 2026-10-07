@@ -144,6 +144,9 @@ extension DaemonCore {
         // 相位字段注入（startIfIdle 经 OneShot.onshotStart 构造，无相位概念；
         // deadline = now+24h 整体兜底——hold 相 24h 兜底判据，相位决策不用）。
         actionTrack.setCalibrationPhase(.chargeFull, startedAt: now)
+        // 0.23.3 §4：chargeFull 域读回保活节流计数置零（每轮校准独立计拍——
+        // 内存态，照 fullOnceFullTicks 复位纪律）。
+        calibrationChargeFullReadbackTicks = 0
         // idle→active 原子持久化：写失败 → 动作不启动（上抛，App 原文上屏）。
         do {
             try actionStore.save(actionTrack.action!)
@@ -334,6 +337,10 @@ extension DaemonCore {
                 // 温度穿透，三分支判定与 fullOnce 保活同源）。
                 if let backend {
                     keepAliveChargingLocked(backend: backend, temperatureC: snapshot.temperatureC, events: &events)
+                } else {
+                    // 0.23.3 §4 27 chargeFull stay 拍域读回保活（回读门）——
+                    // 节流读域 + 失配重写，见 calibrationChargeFullReadbackKeepAliveLocked。
+                    calibrationChargeFullReadbackKeepAliveLocked(now: now, events: &events)
                 }
             case .hold:
                 if let backend {
@@ -395,6 +402,43 @@ extension DaemonCore {
             deleteActionFileLocked(events: &events)
             return latched
         }
+    }
+
+    /// 0.23.3 §4 27 校准 chargeFull stay 拍域读回保活（**回读门，非簿记门**——
+    /// 终判 P1 修正，方案 §4 钉死）。
+    ///
+    /// **为何簿记门不行（坏序论证，照方案 §4 入注释）**：簿记门比对
+    /// `topoffState.lastWrittenLimit`（daemon 自己的写入簿记）——坏序 = 启动序列
+    /// 写 100（簿记置 100）→ W3 对账臂在途写 80 派发先于校准启动、落地晚于启动
+    /// 写（App 直写 MCL 域，**不动 daemon 簿记**）→ 实际 MCL=80 ∧ 簿记=100 →
+    /// 簿记比对恒等、门永不触发 → MCL 钉 80 无重写臂，chargeFull 相 6h 超时
+    /// 止损前校准全程失效。回读门读**域实际态**（TopoffWriter.read），两序皆
+    /// 闭合：无论在途写先落还是后落，只要域被外部改写，下一节流拍读回即失配
+    /// 即重写；顺带覆盖 chargeFull 期间一切外部覆写（含机制关闭态的自愈重开）。
+    ///
+    /// 节流：每 `Calibration.chargeFullReadbackStride`（N=10）拍读一次域
+    /// （tick 30s → 读回节奏 5 min，chargeFull ≤6h → ≤72 次，子进程开销有界；
+    /// 失配才重写 {100,1}——`topoffExecuteWriteLocked` 簿记包装，回填
+    /// lastWrittenLimit）。读失败（外层 nil）fail-open 不重写（照 topoff 读回
+    /// 纪律——防持久读故障下的重写风暴）；hold 相维持零写（浮充语义不变）。
+    /// 26 零触及（本 helper 仅 backend == nil 的 27 分支可达——26 走 CHTE 保活）。
+    func calibrationChargeFullReadbackKeepAliveLocked(now: Date, events: inout [LogEvent]) {
+        calibrationChargeFullReadbackTicks += 1
+        guard calibrationChargeFullReadbackTicks % Calibration.chargeFullReadbackStride == 0 else {
+            return
+        }
+        guard let readback = TopoffWriter.read(run: Self.runProcessCapture) else {
+            Self.persistLog("校准 chargeFull 域读回失败（fail-open——不重写，下个节流拍再试）")
+            return
+        }
+        guard Calibration.chargeFullReadbackMismatch(
+            limit: readback.limit, featureState: readback.featureState
+        ) else {
+            Self.persistLog("校准 chargeFull 域读回（节流拍 #\(calibrationChargeFullReadbackTicks)）：签名一致（域 100 在位）→ 零写")
+            return
+        }
+        Self.persistLog("校准 chargeFull 域读回：失配（limit=\(readback.limit.map(String.init) ?? "缺席") featureState=\(readback.featureState.map(String.init) ?? "缺席") ≠ (100, 1)）→ 重写 {100,1}（回读门闭合——在途 W3 写晚落/外部覆写两序皆覆盖）")
+        _ = topoffExecuteWriteLocked(limit: Topoff.shutdownLimit, now: now, events: &events)
     }
 
     /// 相位推进副作用（方案 §2.2 次序钉死，失败臂按臂注记）：

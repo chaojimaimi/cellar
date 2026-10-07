@@ -18,6 +18,23 @@
         }
       }
     },
+    "about.checkForUpdates": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新"
+          }
+        }
+      },
+      "comment": "0.23.3：关于页「检查更新」按钮（Sparkle 标准更新窗——EdDSA 验包；自研 about.update.* 全族随 0.23.3 批退役）"
+    },
     "about.connectionLine": {
       "extractionState": "manual",
       "localizations": {
@@ -170,91 +187,6 @@
           }
         }
       }
-    },
-    "about.update.available": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New version %@ available"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "有新版本 %@"
-          }
-        }
-      },
-      "comment": "0.23.0 §⑥：关于页新版本行（动作按钮同行走 URL 白名单校验后开放）"
-    },
-    "about.update.available.body": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New version %@ is available — open the download page from About"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "有新版本 %@ 可用——可在 Cellar 关于页前往下载"
-          }
-        }
-      },
-      "comment": "0.23.0 §⑥：更新通知正文（identifier 版本限定）"
-    },
-    "about.update.check": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check for Updates"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "检查更新"
-          }
-        }
-      },
-      "comment": "0.23.0 §⑥：关于页手动检查按钮（绕 24h 节流不绕同版本去重）"
-    },
-    "about.update.failed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check failed — please try again later"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "检查失败，请稍后重试"
-          }
-        }
-      }
-    },
-    "about.update.latest": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "You’re up to date"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已是最新版本"
-          }
-        }
-      },
-      "comment": "0.23.0 §⑥：手动检查无更新反馈"
     },
     "calibration.cancel": {
       "extractionState": "manual",
@@ -8075,23 +8007,6 @@
           }
         }
       }
-    },
-    "about.update.download": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前往下载"
-          }
-        }
-      },
-      "comment": "0.23.0 §⑥：新版本行动作按钮（NSWorkspace.open 前白名单 https ∧ github.com fail-closed）"
     },
     "settings.domain.overrideNotice": {
       "localizations": {

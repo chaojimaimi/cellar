@@ -7,7 +7,9 @@
 // 成功门退役——其防护的补偿互搏面已随补偿臂静默门 NativeLimitSet.
 // compensationSilenced 结构性消失，单一口径 = 冷却节奏）+ 边沿臂加冷却（F5
 // 拍动亚态防护——边沿不再旁路 retryCooldown）+ 新增 fullOpenWindow 输入（两窗
-// 任一在位不派发——锁存跨窗时恢复写 80 对抗窗语义 100，常规 P1-4）。
+// 任一在位不派发——锁存跨窗时恢复写 80 对抗窗语义 100，常规 P1-4）；
+// **0.23.3 §4 增补**：calibrationActive 输入（校准守卫——校准期恢复写 80 钉住
+// 充满相，守卫门与 fullOpenWindow 同位先于首包破例；新增恢复-C1..C3 三 case）。
 
 import CellarCore
 import Foundation
@@ -45,7 +47,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 冷却判定对 nil lastAttemptAt 放行——边沿与持续锁存共用该臂）。
     check(SuppressionRecovery.shouldAttempt(
         previous: false, current: true, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-1", "边沿 false→true ∧ 未尝试过 → 尝试恢复")
 
     // 恢复-1b（0.22.4 F5 翻新钉面）：边沿 ∧ 冷却内 → skip（边沿不再旁路冷却——
@@ -53,14 +55,14 @@ func runSuppressionRecoveryDomainScenarios() {
     // 边沿由统一冷却限速，写节奏 ≥10 min）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: false, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false, now: tick(2)),
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false, now: tick(2)),
         "恢复-1b", "边沿 ∧ 距上次尝试 < 10 min → 冷却内跳过（F5——边沿不再旁路冷却）")
 
     // 恢复-1c：边沿 ∧ 冷却已过 → attempt（合法再恢复——冷却到期即放行，边沿与
     // 持续锁存同判据）。
     check(SuppressionRecovery.shouldAttempt(
         previous: false, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false,
         now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown + 30)),
         "恢复-1c", "边沿 ∧ 冷却已过 → 尝试恢复（统一冷却口径）")
 
@@ -68,7 +70,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 首包即恢复，不等第二包；对齐 0.22.0 通知边沿首包破例语义）。
     check(SuppressionRecovery.shouldAttempt(
         previous: nil, current: true, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-2", "首样本 nil→true → 首包破例尝试恢复")
 
     // 恢复-2b：首包 ∧ 近期有派发记录（重启前遗留 lastAttemptAt 语义同拍构造）
@@ -76,7 +78,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 0.22.4 唯一旁路冷却的臂）。
     check(SuppressionRecovery.shouldAttempt(
         previous: nil, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false, now: tick(2)),
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false, now: tick(2)),
         "恢复-2b", "首包 ∧ 冷却内 → 仍尝试（首包臂保留立即——重启无在途风险）")
 
     // ---- ③ 26 红线（nil 全拒）+ current false ----
@@ -85,17 +87,17 @@ func runSuppressionRecoveryDomainScenarios() {
     // 执行层仅由判定函数 true 触发，nil 输入不可达执行层）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: true, current: nil, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-3", "current nil（26/旧 daemon）→ 零触及")
     check(!SuppressionRecovery.shouldAttempt(
         previous: false, current: false, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-3", "current false（锁存未置位）→ 零触及")
     // 双 nil（26 首包）同拒——首包破例不越过 current nil 拒绝门（门序：current
     // 最先判）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: nil, current: nil, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-3", "current nil 首包（26 首包）→ 零触及")
 
     // ---- ④ mode 门（尊重停用意图；陈旧锁存兜住）----
@@ -104,15 +106,15 @@ func runSuppressionRecoveryDomainScenarios() {
     // 冷却到期重试三输入同验）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: false, current: true, modeActive: false,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-4", "mode 非 active ∧ 边沿 → 尊重停用意图不恢复")
     check(!SuppressionRecovery.shouldAttempt(
         previous: nil, current: true, modeActive: false,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(1)),
         "恢复-4", "mode 非 active ∧ 首包破例 → 同拒（mode 门先于破例臂）")
     check(!SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: false,
-        lastAttemptAt: tick(0), fullOpenWindow: false,
+        lastAttemptAt: tick(0), fullOpenWindow: false, calibrationActive: false,
         now: tick(0).addingTimeInterval(Topoff.reassertionCooldown * 2)),
         "恢复-4", "mode 非 active ∧ 冷却早已过 → 同拒（陈旧锁存靠 mode 门兜住）")
 
@@ -122,13 +124,13 @@ func runSuppressionRecoveryDomainScenarios() {
     // 防重复派发；边界 -30s 内）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false,
         now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown - 30)),
         "恢复-5", "锁存持续 ∧ 距上次尝试 < 10 min → 冷却内跳过")
     // 恰好到冷却边界 → attempt（≥ 判定语义钉面）。
     check(SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false,
         now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown)),
         "恢复-5", "锁存持续 ∧ 距上次尝试 == 10 min → 冷却到期重试（瞬时失败自愈）")
 
@@ -137,7 +139,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 随成功门删除，锁存释放前每 10 min 稳定重试）。
     check(SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: false,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false,
         now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown + 30)),
         "恢复-6", "锁存持续 ∧ 冷却已过 → 重试臂尝试恢复（单一口径——不再区分上次结果）")
 
@@ -145,7 +147,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 例如 App 在锁存态启动后首包之后的后续包）。
     check(SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: false, now: tick(5)),
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: false, now: tick(5)),
         "恢复-7", "锁存持续 ∧ lastAttemptAt nil → 立即尝试（尚未尝试过）")
 
     // ---- 0.22.4 两窗门（fullOpenWindow——常规 P1-4）----
@@ -154,7 +156,7 @@ func runSuppressionRecoveryDomainScenarios() {
     // 恢复写 80 对抗窗语义——窗内不派发；窗出后下一拍冷却判定自然放行）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: true, current: true, modeActive: true,
-        lastAttemptAt: tick(1), fullOpenWindow: true,
+        lastAttemptAt: tick(1), fullOpenWindow: true, calibrationActive: false,
         now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown * 2)),
         "恢复-W1", "fullOpenWindow ∧ 持续锁存 → 窗内不派发（窗语义 100 优先）")
 
@@ -162,13 +164,38 @@ func runSuppressionRecoveryDomainScenarios() {
     // 锁存边沿让位）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: false, current: true, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: true, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: true, calibrationActive: false, now: tick(1)),
         "恢复-W2", "fullOpenWindow ∧ 边沿 → 窗内不派发（窗门先于边沿臂）")
 
     // 恢复-W3：两窗在位 ∧ 首包 → skip（code-review P3 补钉：窗门先于**首包臂**
     // ——防未来重构把首包臂提至窗门前时场景域不红；首包立即语义只在窗外成立）。
     check(!SuppressionRecovery.shouldAttempt(
         previous: nil, current: true, modeActive: true,
-        lastAttemptAt: nil, fullOpenWindow: true, now: tick(1)),
+        lastAttemptAt: nil, fullOpenWindow: true, calibrationActive: false, now: tick(1)),
         "恢复-W3", "fullOpenWindow ∧ 首包 → 窗内不派发（窗门先于首包臂）")
+
+    // ---- 0.23.3 §4 校准守卫（calibrationActive——与 fullOpenWindow 门同位）----
+
+    // 恢复-C1：校准在轨 ∧ 持续锁存 ∧ 冷却已过 → skip（恢复写 80 钉住充满相——
+    // 校准需要 MCL=100 完全放开；守卫门先于冷却判定）。
+    check(!SuppressionRecovery.shouldAttempt(
+        previous: true, current: true, modeActive: true,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: true,
+        now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown * 2)),
+        "恢复-C1", "calibrationActive ∧ 持续锁存 → 校准期不派发（恢复写 80 对抗充满相 100）")
+
+    // 恢复-C2：校准在轨 ∧ 首包破例 → skip（守卫门先于首包臂——破例不越守卫；
+    // 防未来重构把首包臂提至校准门前时场景域不红，W3 同型补钉）。
+    check(!SuppressionRecovery.shouldAttempt(
+        previous: nil, current: true, modeActive: true,
+        lastAttemptAt: nil, fullOpenWindow: false, calibrationActive: true, now: tick(1)),
+        "恢复-C2", "calibrationActive ∧ 首包 → 校准期不派发（守卫门先于首包破例臂）")
+
+    // 恢复-C3：校准终态（action 清空 → isCalibrationAction=false）∧ 锁存持续 ∧
+    // 冷却已过 → attempt（守卫恰在终态拍解除——恢复链接管，方案 §4 自愈链闭合）。
+    check(SuppressionRecovery.shouldAttempt(
+        previous: true, current: true, modeActive: true,
+        lastAttemptAt: tick(1), fullOpenWindow: false, calibrationActive: false,
+        now: tick(1).addingTimeInterval(SuppressionRecovery.retryCooldown + 30)),
+        "恢复-C3", "校准毕（calibrationActive=false）∧ 冷却已过 → 恢复链重新接管")
 }

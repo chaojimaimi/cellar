@@ -365,6 +365,9 @@ final class StatusController: ObservableObject {
             // 钉死；26/旧 daemon current nil 与 mode 非 active 全拒）。0.22.4：
             // lastOutcomeSucceeded 输入删除（0.22.2 成功门退役——补偿互搏面已随
             // 补偿臂静默门消失），新增 fullOpenWindow（两窗任一在位不派发）。
+            // 0.23.3 §4：新增 calibrationActive（校准在轨不派发——恢复写 80 钉住
+            // 充满相；输入 = status.isCalibrationAction 结构化 action.kind 派生，
+            // 非 lastAction 字面量匹配）。
             // 旧 0.22.0 边沿直投通知退役（评审 P1-4）——通知一律由恢复写完成
             // 回调驱动，防「先手动指引后已恢复」双通知。
             // 回合清理（0.22.2 code-review P2 → 0.22.4 简化）：锁存释放拍清横幅
@@ -381,6 +384,7 @@ final class StatusController: ObservableObject {
                 lastAttemptAt: lastSuppressionRecoveryAt,
                 fullOpenWindow: status.fullOnceWindowActive == true
                     || status.chargingDisabledWindowActive == true,
+                calibrationActive: status.isCalibrationAction,
                 now: Date()
             ) {
                 dispatchSuppressionRecovery(status)

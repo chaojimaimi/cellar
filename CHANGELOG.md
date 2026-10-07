@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.3-alpha]
+
+> 背景：0.23.0 自研更新检查器（URL 白名单 + SHA-256 手动核对）升级为 Sparkle 2 的 EdDSA 验签通道（项目**首个第三方运行时依赖**——MIT）；四轨评审通过（常规三轮 REVISE→PASS + 红队两轮「方案完备」——终签轮抓出回读门必要性与 appcast 三处文本级漏网）。903 场景（894 − AppVersionDomain 退役 + 守卫/回读保活新增）；golden 零漂移；wire 零 schema 变化。
+
+### Added
+
+- **应用内更新（Sparkle 2，0.23.3 首装 / 0.23.4 起闭环）**：每日至多一次 appcast 只读检查 + 关于页「检查更新」手动触发；发现新版弹 Sparkle 标准更新窗（安装 / 跳过此版本 / 稍后提醒——提示可关闭三态），**点「安装更新」才开始下载**；更新包经 **EdDSA 签名验证**（公钥钉 App 内 / 私钥仅发布机钥匙串）验证不过拒绝安装；无遥测（`SUSendSystemProfile=false`）。首版自举：0.23.3 本身无前版消费方，自动更新提示从 0.23.4 发布起生效。
+- **发布链机制化（防静默停更三断言）**：打包脚本头部 tag 精确匹配断言（`--tags` 匹配 lightweight tag——忘 bump VERSION 必红）；appcast 生成步（sign_update 签 zip → edSignature/length 双验 → 字段四件套自检 xmllint+grep）；发布后 `curl -sIL` 断言 200 + enclosure sparkle:version 核对（发布纪律见 SMC-NOTES §11.18）。
+- **suppression 恢复臂×校准守卫**（0.23.2 深查窄竞态闭合）：校准动作在轨期间 App 侧恢复臂静默（`calibrationActive` 门——此前冻结锁存会驱动恢复臂每 10 min 写 MCL=80 压住充满相）；daemon 侧 chargeFull stay 拍增**域读回保活**（回读门——读实际态失配才重写 {100,1}，非簿记门：在途 API 写不回填簿记、簿记门恒假不闭合——坏序论证入代码注释），顺带覆盖校准期间一切外部覆写含机制关闭自愈重开。
+
+### Removed
+
+- 自研更新面退役（0.23.0 完成 Oasis 使命）：`UpdateChecker` / `AppVersion` / about.update.* 六键 / 应用内自研呈现行——EdDSA 验签为更强原语整体替代 URL 白名单/同版本去重/失败不写戳逻辑（安全资产交接记录见 SMC-NOTES §11.18）。
+
+### Changed
+
+- 依赖声明：README「零第三方依赖」表述退役——Sparkle 2（MIT）为首个运行时依赖（EdDSA 验签 + 成熟安装器 + 本地钥匙串签名，无 CI secret）；SECURITY.md 网络面改写（每日 appcast GET ≠ 自动下载；EdDSA 仅覆盖 zip 自动通道，dmg 手动路径靠 GitHub TLS + SHA-256）；Sparkle 钉 2.10.0（Package.resolved originHash 随批入库）。
+
 ## [0.23.2-alpha]
 
 > 背景：fullOnce 27 窗模式（0.23.1 置窗-only 化）恢复恒需手动点击——用户不在场即整夜 100% 满充；校准自 0.20 M1a 起 27 结构性不可达（maintain/advance 的 backend 非可选 + 调度臂/守卫三面封死），与 fullOnce 27 原生守卫绕过自相矛盾。本批在同一套窗/域/适配器机制上补齐两个缺口（双轨终判：常规 PASS + 红队「方案完备」，§1 裁决九条全落字）。wire 零 schema 变化（能力串追加为上报值变化非键变化）；App 零 UI 改动（校准按钮与调度卡经能力门数据驱动放行）。

@@ -1,5 +1,6 @@
 import CellarCore
 import CellarUI
+import Sparkle
 import SwiftUI
 
 @main
@@ -30,15 +31,29 @@ struct CellarApp: App {
     @StateObject private var cpuFanMonitor = CpuFanMonitor()
     /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
     private let notifications = NotificationService()
-    // 0.23.0 §⑥ 更新检查器：启动检查不在 init 自启——挂 MenuBarExtra label
-    // .task（幸存实例语境，防 @StateObject 临时实例预写节流戳——CellarApp.init
-    // 不触碰）。
-    @StateObject private var updateChecker = UpdateChecker()
+    /// 0.23.3 §1.4 Sparkle 更新控制器（自研 UpdateChecker 0.23.3 退役）：**普通
+    /// 存储属性，非 ObservableObject**（常规 P2——Sparkle 标准更新窗为独立 UI 面，
+    /// App 视图树零观察需求；普通属性在 App.init 可安全访问，@StateObject 临时
+    /// 实例陷阱不适用）。startingUpdater: true = 启动即调度（每日自动检查在
+    /// Sparkle 内部 scheduler）；About 页经 EnvironmentKey 消费 `.updater`
+    ///（statsSampler 先例）。
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     /// Phase 5 v1.3 统计采样器：非可观察（视图不直接读），60s 常驻采样循环——
     /// 自标定在自身 init（@StateObject 早期访问陷阱：App.init 不触碰）。
     private let statsSampler = StatsSampler()
 
     init() {
+        // 0.23.3 §1.4 Sparkle 启动语义：每日自动检查（automaticallyChecksForUpdates
+        // = true）+ **不自动下载安装**（automaticallyDownloadsUpdates = false——
+        // 「提示、由我决定」用户钉死语义；Info.plist SUAllowsAutomaticUpdates=false
+        // 双保险，更新窗不出现自动下载复选框）。
+        updaterController.updater.automaticallyChecksForUpdates = true
+        updaterController.updater.automaticallyDownloadsUpdates = false
+        // 0.23.3 §1.4：自研 UpdateChecker 遗留 UserDefaults 键一次性清理（节流戳
+        // + 同版本去重戳——退役后成死键，启动即清）。
+        UserDefaults.standard.removeObject(forKey: "com.cellar.update.lastCheckAt")
+        UserDefaults.standard.removeObject(forKey: "com.cellar.update.lastNotifiedVersion")
         // WP5 硬事实 4：通知 delegate 必须在启动早期赋值——迟设错过首条
         // willPresent（前台呈现策略失效）。
         notifications.installDelegate()
@@ -64,15 +79,8 @@ struct CellarApp: App {
                 notifications.deliverSuppressionNotice()
             }
         }
-        // 0.23.0 §⑥：更新检查发现新版直投（不走事件枚举——红队裁决，防污染
-        // notificationEvents 纯函数域；同版本只通知一次的去重在 UpdateChecker 侧
-        // lastNotifiedVersion 承担）。⚠️ 与下方 onInstallSucceeded 同款临时实例
-        // 残留（登记不扩 scope）：UpdateChecker 启动检查不在 init 自启（临时实例
-        // 会预写节流戳挤掉幸存实例通知面）——挂在 MenuBarExtra scene 的 .task
-        //（幸存实例语境，菜单栏 scene 启动即执行）。
-        updateChecker.onUpdateAvailable = { [notifications] version in
-            notifications.deliverUpdateAvailable(version: version)
-        }
+        // 0.23.3 §2：updateChecker.onUpdateAvailable 接线随自研更新链退役删除
+        //（新版发现改由 Sparkle 更新窗承载——不再走系统通知）。
         // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
         onboarding.onInstallSucceeded = { [notifications] in
             notifications.requestAuthorization()
@@ -111,10 +119,9 @@ struct CellarApp: App {
         } label: {
             // v1.10 M2：双观察源直注（StatusController 图标态 + DisplaySettingsController
             // 百分比显隐——更新传播见 MenuBarIconLabel 注记）。
-            // 0.23.0 §⑥：启动更新检查挂 label 视图 .task（菜单栏图标启动即渲染——
-            // 唯一常驻求值面；幸存 UpdateChecker 实例语境，24h 节流门在检查器内）。
+            // 0.23.3 §2：label .task 启动更新检查挂点随 UpdateChecker 退役删除
+            //（每日自动检查改由 Sparkle 内部 scheduler 承担）。
             MenuBarIconLabel(controller: statusController, settings: displaySettings)
-                .task { updateChecker.checkIfDue() }
         }
         .menuBarExtraStyle(.window)
         // Phase 5 v1.2 §2.1 主窗口（macOS 13+ Window scene）：ThemeProvider 全树
@@ -141,9 +148,10 @@ struct CellarApp: App {
                     // v1.11 T2：显示设置控制器注入主窗口链（通用页电池图标 Toggle
                     // 的唯一数据源——缺注入运行时 crash，照五对象既有纪律）。
                     .environmentObject(displaySettings)
-                    // 0.23.0 §⑥：更新检查器注入主窗口链（关于页新版本行/检查按钮
-                    // 的唯一数据源——同上纪律；面板不消费，MenuBarExtra 链不注入）。
-                    .environmentObject(updateChecker)
+                    // 0.23.3 §1.4：Sparkle 更新器注入主窗口链（关于页「检查更新」
+                    // 唯一入口——EnvironmentKey 可选缺省 nil，statsSampler 先例；
+                    // 面板不消费，MenuBarExtra 链不注入）。
+                    .environment(\.cellarUpdater, updaterController.updater)
                     // 0.22.0 §4.3：CPU/风扇采样器注入主窗口链（通用页风扇节 Tp00
                     // 参考温度行消费源——@EnvironmentObject 缺注入运行时 crash，
                     // 照 displaySettings 既有纪律；幸存实例 = 组合根同一 @StateObject）。

@@ -13,6 +13,13 @@ import Foundation
 /// - `fullOpenWindow == true` → false（0.22.4 常规 P1-4：fullOnce /
 ///   chargingDisabled 两窗语义 = 完全放开 100——锁存跨入两窗时恢复写 80 与窗
 ///   语义对抗，窗内不派发；窗位 wire 既有字段，窗出后下一拍自然重评）；
+/// - **`calibrationActive == true` → false（0.23.3 §4 校准守卫）**：校准充满相
+///   需要 MCL=100 完全放开，恢复写 80 会钉住充电对抗校准（6h 相位超时止损的
+///   同款伤害面）；输入 = `DaemonStatus.isCalibrationAction`（**结构化
+///   action.kind 派生**——AppSide.swift 派生助手，非 lastAction 字面量匹配：
+///   setCalibrationPhase 只改 phase 不动 kind，全程恒真；终态 terminate/cancel
+///   清 action → 守卫恰在终态拍解除；daemon 崩溃恢复一律取消校准〔OneShot〕
+///   无伪阴性窗）。与 fullOpenWindow 门同位（先于首样本破例——守卫门不越破例臂）。
 /// - **首样本破例**：previous == nil ∧ current == true → true（对齐 0.22.0
 ///   通知边沿首包破例——菜单栏独占场景 App 重启后首包即恢复，不等第二包；
 ///   App 重启无在途恢复写，立即派发无风险——0.22.4 保留立即语义）；
@@ -52,10 +59,12 @@ public enum SuppressionRecovery {
     /// 应否尝试恢复（true = 派发恢复写 `MCLClient.setLimit(openValue(for:))`）。
     /// 输入：previous/现值 wire 态（nil = 26/旧 daemon 或首包）、daemon mode
     /// 是否 active、两窗是否任一在位（fullOnce ∨ chargingDisabled——窗内不派发）、
+    /// 校准是否在轨（isCalibrationAction 结构化派生——校准期不派发，0.23.3 §4）、
     /// 上次恢复写派发时刻、now。0.22.4 起无「上次结果」输入（单一口径，头注）。
     public static func shouldAttempt(
         previous: Bool?, current: Bool?, modeActive: Bool,
-        lastAttemptAt: Date?, fullOpenWindow: Bool, now: Date
+        lastAttemptAt: Date?, fullOpenWindow: Bool,
+        calibrationActive: Bool, now: Date
     ) -> Bool {
         // 26 红线门（首判）：current nil（26/旧 daemon）与 false（锁存未置位）
         // 全拒——nil 不可达执行层。
@@ -65,6 +74,11 @@ public enum SuppressionRecovery {
         // 两窗门（0.22.4 P1-4）：窗语义 = 完全放开 100，恢复写 80 对抗窗语义——
         // 窗内不派发（先于首包破例：窗是 daemon 权威态，破例不越窗）。
         guard !fullOpenWindow else { return false }
+        // 校准守卫（0.23.3 §4）：校准在轨 → 恢复写 80 钉住充满相（校准需要
+        // MCL=100 完全放开）——不派发；与 fullOpenWindow 门同位，先于首包破例
+        //（守卫门是 daemon 权威在轨态，破例不越守卫；校准终态拍 action 清空，
+        // 恢复链下一拍自然重评接管）。
+        guard !calibrationActive else { return false }
         // 首样本破例：previous == nil ∧ current == true → true（旁路冷却——
         // App 重启无在途恢复写，首包即恢复语义保持；0.22.4 唯一立即臂）。
         if previous == nil { return true }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Cellar is an open-source battery charge-limiting tool for Apple Silicon Macs: a menu-bar app plus a CLI, backed by a root LaunchDaemon. It is free, open source (GPL-3.0), ships with **no telemetry**, and its **only outbound network traffic is one read-only GitHub update check** (details below).
+Cellar is an open-source battery charge-limiting tool for Apple Silicon Macs: a menu-bar app plus a CLI, backed by a root LaunchDaemon. It is free, open source (GPL-3.0), ships with **no telemetry**, and its only outbound network traffic is the **Sparkle update channel** (a daily appcast check plus, only after your explicit confirmation, the update package download — details below). The daemon has no networking code at all.
 
 ## Why root / permissions model
 
@@ -26,25 +26,26 @@ All other monitoring reads use `AppleSmartBattery` via IOKit and need no privile
 - Provide a manual "Discharge to Limit" action (adapter power-cut until the battery drains to the limit) and an opt-in CHIE hysteresis fallback channel
 - Apply a thermal pause: charging pauses at battery ≥ 40 °C and resumes below 37 °C
 - Detect competing charging tools and refuse or warn on coexistence
-- Check GitHub Releases for a newer version (read-only; see "Network surface" below)
+- Check GitHub Releases daily for a newer version via **Sparkle 2** with **EdDSA signature verification** (see "Network surface" below); offer to install it only after the user confirms in the update window
 
 **Does not:**
 
-- Collect telemetry
-- Access any network endpoint other than the single update-check request below
-- Automatically download or install updates
+- Collect telemetry (`SUSendSystemProfile` is explicitly `false`; no profile data is sent with update checks)
+- Access any network endpoint other than the update-channel requests below
+- Automatically download or install updates (`SUAllowsAutomaticUpdates` is explicitly `false` — the update window offers no "automatically download" option; every install is a user-confirmed action)
 - Read user data
 - Persist anything outside `/Library/Application Support/Cellar/` (`policy.json`, `action.json` — an atomic-write design) and standard log streams
 
 ## Network surface
 
-The only outbound network request is the update check, performed by the App (never the daemon, which has no networking code at all):
+All update traffic is performed by the App (never the daemon, which has no networking code at all) through **Sparkle 2** with the standard user driver. Two distinct outbound flows, stated separately for honesty — **"no automatic download/install" is not the same as "no automatic network checking"**:
 
-- **Endpoint**: `GET https://api.github.com/repos/chaojimaimi/cellar/releases/latest` — read-only, unauthenticated, no query parameters, no request body, no telemetry identifiers.
-- **Trigger**: at App launch, at most once every 24 hours (a throttle stamp is written only after a successful check — a failed check stays silent and retries on the next launch); plus an explicit "Check for Updates" button on the About page.
-- **Timeout**: 10 seconds. Any failure is silent (os_log only).
-- **Rendering**: if a newer version is detected, the About page shows the version and a "Download" link. The link is validated against a strict allowlist before `NSWorkspace.open` (scheme must be `https` and host must be `github.com`; anything else is refused, fail-closed). A one-line local notification may fire once per new version.
-- **No auto-download / auto-install**: updating is always a manual user action.
+1. **Appcast check (automatic, daily)**: Sparkle fetches `https://github.com/chaojimaimi/cellar/releases/latest/download/appcast.xml` at most once every 24 hours (plus on demand via the About page's "Check for Updates" button). This is a small read-only XML GET. GitHub answers `latest/download` with an HTTP redirect to its release-asset download hosts (`release-assets.githubusercontent.com` / `objects.githubusercontent.com`); Sparkle's URLSession follows that 302 — these domains are part of the update channel by design.
+2. **Update package download (user-triggered only)**: if the appcast advertises a newer version, Sparkle shows an update window. **Nothing is downloaded until you press "Install Update"** in that window; the package is then fetched from the redirect chain of the same GitHub download hosts and installed after EdDSA verification (below).
+
+- **No telemetry**: `SUSendSystemProfile = false` is hard-coded in Info.plist — Sparkle sends no system-profile payload with any request. The appcast request carries no identifiers beyond what TLS and GitHub's CDN see for any download.
+- **EdDSA verification boundary (zip only)**: every appcast entry carries an EdDSA (`sparkle:edSignature`) signature over the release **zip**; Sparkle refuses to install a package whose signature does not verify against the public key pinned in the App's Info.plist. **The .dmg attached to each release is a manual-install convenience and is NOT covered by EdDSA verification** — if you install manually from the dmg, you are relying on GitHub TLS transport and repository integrity (plus the published SHA-256 checksums), not on signature verification.
+- **What this replaces**: before 0.23.3 the app used a hand-rolled update checker (single `api.github.com` read-only GET + URL allowlist). That mechanism was retired in favor of the EdDSA-verified Sparkle channel, which is the stronger primitive.
 
 ## Threat model & mitigations
 

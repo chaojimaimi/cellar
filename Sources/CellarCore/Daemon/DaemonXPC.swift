@@ -388,7 +388,11 @@ public enum DaemonXPC {
     // 恢复（充到 100 ~1.5min 自动回落 + 4h 超时兜底）+ 校准 27 能力解禁（CHIE 可写
     // 臂追加 calibration——守卫随批平台判别绕过）；wire 零 schema 变化（能力串追加
     // 为上报值变化非键变化）。
-    public static let daemonVersion = "0.23.2-alpha"
+    // 0.23.3-alpha（2026-10-07）：Sparkle 更新批——App 更新链迁 Sparkle 2（EdDSA
+    // 验包）+ suppression 恢复臂校准守卫（shouldAttempt 增 calibrationActive）+
+    // 校准 chargeFull stay 域读回保活（回读门）；wire 零 schema 变化（daemon 侧
+    // 仅回读保活硬化，协议键组零增删）。
+    public static let daemonVersion = "0.23.3-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

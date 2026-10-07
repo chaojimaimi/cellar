@@ -6,9 +6,9 @@
 
 [![CI](https://github.com/chaojimaimi/cellar/actions/workflows/ci.yml/badge.svg)](https://github.com/chaojimaimi/cellar/actions/workflows/ci.yml)
 
-**开源的 Apple Silicon Mac 电池管理工具**：把电量维持在你设定的区间，避免长期满电插电存放损耗电池。菜单栏常驻 + CLI 控制，免费、开源、无遥测；唯一网络请求 = GitHub 更新检查（`api.github.com` 只读，可在关于页手动触发/关闭忽略，见 [SECURITY.md](SECURITY.md)）。
+**开源的 Apple Silicon Mac 电池管理工具**：把电量维持在你设定的区间，避免长期满电插电存放损耗电池。菜单栏常驻 + CLI 控制，免费、开源、无遥测；网络请求 = Sparkle 更新通道（每日一次 appcast 检查 + 用户确认后的更新包下载，EdDSA 验包，见 [SECURITY.md](SECURITY.md)）。
 
-> 状态：**0.23.0-alpha**（简化批）——Phase 5 全量能力在列：任意上限限充（60–100%）与滞回保持、充电侧温度暂停（阈值可配置）、风扇智能降温（双风扇机型左右同步接管）、一键电池校准与自动校准调度、充电日程、「充满一次」/「放电到上限」、原生限充协调（macOS 26.4+）、MagSafe 指示灯控制、GitHub 新版本提示，以及三套界面风格、统计仪表板、菜单栏电池图标（电量形态 / 百分比 / 低电量红）、中英双语。本批为简化批：**自动放电自动机退役**（手动「放电到上限」按钮 + CHIE 迟滞兜底保留）、**Shortcuts 备用通道退役**（App 内嵌 set 为唯一执行通道）、sub80 <80% 执法摘掉「实验性」帽子、degraded 降级写值统一（`max(目标, 80)`）。核心限充与菜单栏图形界面已在 macOS 26 / Apple Silicon 真机完成端到端验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）；macOS 27 能力经 GA 真机实测（见 CHANGELOG 与 docs/SMC-NOTES.md §11）。欢迎试用与反馈，接口与行为可能调整。
+> 状态：**0.23.0-alpha**（简化批）——Phase 5 全量能力在列：任意上限限充（60–100%）与滞回保持、充电侧温度暂停（阈值可配置）、风扇智能降温（双风扇机型左右同步接管）、一键电池校准与自动校准调度、充电日程、「充满一次」/「放电到上限」、原生限充协调（macOS 26.4+）、MagSafe 指示灯控制、应用内更新提示（Sparkle/EdDSA），以及三套界面风格、统计仪表板、菜单栏电池图标（电量形态 / 百分比 / 低电量红）、中英双语。本批为简化批：**自动放电自动机退役**（手动「放电到上限」按钮 + CHIE 迟滞兜底保留）、**Shortcuts 备用通道退役**（App 内嵌 set 为唯一执行通道）、sub80 <80% 执法摘掉「实验性」帽子、degraded 降级写值统一（`max(目标, 80)`）。核心限充与菜单栏图形界面已在 macOS 26 / Apple Silicon 真机完成端到端验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）；macOS 27 能力经 GA 真机实测（见 CHANGELOG 与 docs/SMC-NOTES.md §11）。欢迎试用与反馈，接口与行为可能调整。
 
 ## 功能
 
@@ -16,7 +16,7 @@
 - **滞回保持**：充到上限即停，自放电至恢复阈值（默认上限 −2%）才重新充电，避免频繁启停
 - **充电侧温度暂停**：默认 ≥ 40 °C 暂停充电、< 37 °C 恢复（滞回防抖），阈值可在通用页配置；放电热终止后不热态回充
 - **风扇智能降温**（v1.1 新增，默认关闭）：温度超阈值时自动提速风扇降温（阈值/转速/策略可设，恒速/两级分段/全速应急；v1.12 起双风扇机型左右两扇同步接管，单风扇机型零变化），退出或异常自动恢复系统自动控制，写后回读校验 + 运行时能力验证（本机不支持时自动停用）
-- **新版本提示**（0.23.0 新增）：启动时（每 24 小时至多一次）只读查询 GitHub Releases，有新版在关于页提示并可一键前往下载；不自动下载安装，手动「检查更新」随时可用
+- **应用内更新**（0.23.3 起，Sparkle 2）：每日自动检查新版本，关于页「检查更新」随时手动触发；发现新版弹出 Sparkle 标准更新窗（安装 / 跳过此版本 / 稍后提醒），**更新包经 EdDSA 签名验证**才会安装，不自动下载安装
 - **充电日程**（v1.6 新增，默认关闭）：按星期与时段自动切换限充上限或完全放开充电（最多 8 条，30 分钟粒度）；边沿触发——进窗快照当前策略、出窗自动恢复，时段内手动修改仅临时生效
 - **原生限充协调**（v1.7 新增）：检测 macOS 26.4+ 系统设置的「充电上限」并在仪表板展示/提示冲突（附系统设置深链）；原生限充激活时自动守卫校准与充满一次（否则无法充满 100%）；doctor 共存检查；执法路径零改动，与 Cellar 限充自然共存
 - **充满一次**：临时充电到 100%（出行前满电等），完成后自动恢复限充；完整电池校准请用一键校准（见下）
@@ -45,6 +45,7 @@
 
 ### 更新 App（重要）
 
+- **应用内更新（0.23.4 起）**：关于页「检查更新」→ Sparkle 标准更新窗 → 确认后自动完成下载、EdDSA 验包与安装（**不自动下载**——每次安装都需用户确认）。首版自举说明：更新通道在 0.23.3 发布时还没有存量用户可服务，**从 0.23.4 开始**旧版本才会经 appcast 收到新版提示；此前升级请按下方手动路线。注意：daemon 更新仍需「卸载守护进程 → 更新 App → 重新安装守护进程」或 CLI 重装（应用内更新替换 App 后，daemon 注册的仍是旧 bundle——升级后请打开面板确认 daemon 版本行）。
 - **托管路线（面板安装）**：先在面板「卸载守护进程」→ 替换 Cellar.app → 打开 → 面板「安装守护进程」。**直接用 rm/cp 覆盖 App 可能导致守护进程无法启动**（系统注册缓存失效，表现为守护进程反复启动失败）；若已发生：重启 Mac 后重新安装，或按下方矩阵切换手工路线恢复限充（面板 pending 态另有「移除残留注册」出口）。
 - **手工路线（CLI 安装）**：替换 Cellar.app 不影响守护进程；但 daemon 升级需重跑 `sudo .build/release/cellar install`。
 - **手工路线 daemon 反复被顶掉 / install 报 Input/output error（0.20.1 新增检测）**：ad-hoc 签名 App 的托管注册记录可能生成即损坏，系统会周期性（10 分钟～1 小时）以同名 label 重新提交它——顶掉手工 daemon、并让手工 install 的 bootstrap 反复失败。`cellar install` 已能识别此形态并给出指引；手动恢复序列：App 面板「卸载守护进程」→ `sudo sfltool resetbtm`（一次性代价：全系统登录项批准记录清空，其他 App 需要时会重新弹批准）→ 重跑 `sudo cellar install`。
@@ -119,6 +120,8 @@ sudo .build/release/cellar install
 
 图形界面路线：用 Xcode 打开 `App/CellarApp.xcodeproj` 构建，将产物 **Cellar.app 放入 /Applications** 后运行（安装要求见「图形界面（App）」）。
 
+**发布维护者注记（Sparkle 更新签名私钥，0.23.3 起）**：应用内更新的 EdDSA 签名私钥存于发布机的**登录钥匙串**（`sparkle-project/Sparkle` 的 `generate_keys` 生成）。**私钥丢失 = 更新链断**——旧客户端只认原公钥，换钥需多发一版过渡发布。请妥善备份：钥匙串访问 App → 登录钥匙串 → 搜「Sparkle_EDSA（ed25519）」→ 右键导出并离线保存；发布脚本 `Tools/package-release.sh` 第 8 步用同钥匙串的 `sign_update` 签 zip 并生成 appcast.xml（发布三断言纪律见 `docs/SMC-NOTES.md` §11.18）。
+
 ## 使用
 
 ```bash
@@ -143,21 +146,19 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 - **可恢复性**：SIGTERM、disable、uninstall 均自动恢复系统默认充电；daemon 崩溃由 launchd 重拉并立即校对状态
 - **最小权限**：读取无需特权；写入收敛到单一 root daemon；XPC 变更命令仅接受 root 或 admin 组（gid 80）成员调用，带类型白名单与限流
 - **不静默失败**：写入后回读校验，校验失败（含外部写者冲突）类型化上报
-- **无遥测**；唯一出站网络请求 = GitHub 更新检查（`api.github.com` 只读 GET，10 秒超时、失败静默、成功后 24 小时节流；下载页跳转经 URL 白名单校验）——除包解析外零第三方依赖
+- **无遥测**；出站网络 = Sparkle 更新通道（每日一次 appcast 只读 GET + 用户确认安装后的更新包下载；`SUSendSystemProfile=false` 不随请求发送任何系统信息）——首个第三方运行时依赖为 [Sparkle 2](https://sparkle-project.org)（MIT 许可，仅 App 用于更新检查/EdDSA 验包；CLI 与 daemon 仍零第三方依赖）
 - **系统设置充电上限与 Cellar 的关系（macOS 27，三分支模型）**：系统设置设具体值 → 系统原生限充主导（只用系统限充请停用 Cellar）；Cellar 执法中 → 系统上限被让到 100%、Cellar 目标值接管停充点（正常前提形态）；**手动在系统设置拖到 100% ≠ 关闭限充——那是机制关闭位**（整体关闭原生限充机制，电池自由充到 100%）。停用限充请用 Cellar 的停用按钮；Cellar 滑杆是唯一意图源，任何系统设置侧覆盖都会在读回行显性化，机制被关时 30 秒内自动恢复并提示（详见 [FAQ Q16](docs/FAQ.md)）
 
 ## 验证
 
 ```bash
-swift run CellarCoreCheck   # 894 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
+swift run CellarCoreCheck   # 903 个场景、数百项检查：决策矩阵穷举（800+ 边界组合）、
                             # 封包/解析、XPC 校验、策略持久化、动作状态机、通知分类、
                             # 放电安全门控、校准调度、热保护配置、原生限充检测、MagSafe LED、
                             # topoff <80% 通道、本地化完整性
 bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 91.97%）
-swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 456 张权威〔0.23.0 入库值；
-                            # 0.23.1 退役 Orchestration_* 5 组 30 张——CI snapshot-regen 后
-                            # 按 426 核对〕）
-                            # + 本地化完整性门（477 key × en/zh-Hans）
+swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 426 张权威）
+                            # + 本地化完整性门（472 key × en/zh-Hans）
 ```
 
 硬件在环验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）随版本发布执行，记录于 CHANGELOG。
@@ -196,7 +197,7 @@ swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 456 
 - ✅ **健壮性热修（0.20.1-alpha）**：子进程收尾纪律根治主线程 RunLoop 重入死锁（真机 wedge 事件，sample 栈定谳）+ 心跳停摆自杀自愈（watchdog）+ 放电事件持久落盘 + install/doctor BTM 损坏记录检测指引（已发布）
 - ✅ **观测一致性与恢复体验（0.20.2-alpha）**：topoff 状态诚实性持久化（degraded/strikes/off 跨重启）+ 超限轻量重申（5 min 冷却通知）+ doctor/status 现行执法语义统一 + package-release 迁移内建挂载布局门禁（已发布）
 - ✅ **免 root 执行与备用后端批（0.21.0-alpha）**：限充执行全面转向 App 侧免 root set 路径（80–100% 区间免建快捷指令，快捷指令降为 fallback；fullOnce 复活 + 关断残留对账）+ CHIE 迟滞备用后端（topoff 失效第二生命线，实验性 opt-in 默认关）+ 校准共存（模式指纹识别「≥95% ∧ 外接 ∧ 充电 ∧ target ≤90 持续 5 min」→ 三臂抑制——strike/轻量重申/App set 断言/域随写卫生全静默，校准结束自动恢复）+ 温度 Pack 层解析（macOS 27 GA Temperature 仅 Pack 层可见——解析链「顶层 → Pack → SMC」纵深回退）+ GUI sub80 状态明细（概览页四态 + 自愈进度）
-- ✅ **简化批（0.23.0-alpha）**：自动放电自动机退役（保留手动「放电到上限」+ CHIE 迟滞 opt-in 兜底）、Shortcuts 备用通道退役（App 内嵌 set 唯一执行通道）、sub80 <80% 摘「实验性」帽、degraded 降级写值统一 max(目标, 80)、GitHub 新版本提示（只读 api.github.com）——wire 零变化
+- ✅ **简化批（0.23.0-alpha）**：自动放电自动机退役（保留手动「放电到上限」+ CHIE 迟滞 opt-in 兜底）、Shortcuts 备用通道退役（App 内嵌 set 唯一执行通道）、sub80 <80% 摘「实验性」帽、degraded 降级写值统一 max(目标, 80)、应用内更新提示（0.23.0 时为只读 api.github.com，0.23.3 起 Sparkle/EdDSA）——wire 零变化
 - 🎯 **v1.0（毕业标准，未到期）**：CLI / daemon / App（GUI）三大件真机走查全过 + 30 天观察期无回归——达标即冻结功能面，转稳定发布节奏
 
 完整路线图与设计文档见发布说明。

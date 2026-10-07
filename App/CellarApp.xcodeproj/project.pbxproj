@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000012 /* CellarCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* CellarCore */; };
 		A10000000000000000000016 /* CellarUI in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000015 /* CellarUI */; };
+		A10000000000000000000019 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000018 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +48,7 @@
 			files = (
 				A10000000000000000000012 /* CellarCore in Frameworks */,
 				A10000000000000000000016 /* CellarUI in Frameworks */,
+				A10000000000000000000019 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,6 +94,7 @@
 			packageProductDependencies = (
 				A10000000000000000000011 /* CellarCore */,
 				A10000000000000000000015 /* CellarUI */,
+				A10000000000000000000018 /* Sparkle */,
 			);
 			productName = CellarApp;
 			productReference = A10000000000000000000002 /* Cellar.app */;
@@ -124,6 +127,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000010 /* XCLocalSwiftPackageReference "Cellar" */,
+				A10000000000000000000017 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 70;
 			productRefGroup = A10000000000000000000004 /* Products */;
@@ -289,6 +293,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000017 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A10000000000000000000011 /* CellarCore */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -297,6 +312,11 @@
 		A10000000000000000000015 /* CellarUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CellarUI;
+		};
+		A10000000000000000000018 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000017 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
