@@ -392,7 +392,8 @@ public enum DaemonXPC {
     // 验包）+ suppression 恢复臂校准守卫（shouldAttempt 增 calibrationActive）+
     // 校准 chargeFull stay 域读回保活（回读门）；wire 零 schema 变化（daemon 侧
     // 仅回读保活硬化，协议键组零增删）。
-    public static let daemonVersion = "0.23.3-alpha"
+    // 0.23.4-alpha（2026-10-09）：容量卡横轴分档步长（0.18.1 写死 1 天步长随数据积累标签溢出致重叠；Charts 显式 stride 无自动取舍——实证 docs/plans/phase7-0.23.4 §0）。
+    public static let daemonVersion = "0.23.4-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

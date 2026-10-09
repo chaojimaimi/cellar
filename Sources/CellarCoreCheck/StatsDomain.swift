@@ -17,6 +17,7 @@
 // 统计13 健康度聚合（nominal/design×100 均值——完整样本入均值，与 maxCap 口径独立）
 // 统计14 健康度混合缺席（缺 nominal / 缺 design / design≤0 跳过，只均完整样本）
 // 统计15 健康度全缺席桶 nil（纯函数 + DB 往返贯通——缺席机型不造数，R-6）
+// 统计39 ChartAxisStride 分档（0.23.4 容量卡横轴步长：三档内值/档界/防御端点九向量）
 //
 // ⚠️ DB 一律临时目录注入（不碰真实用户域 ~/Library/Application Support/Cellar）；
 // ⚠️ 场景采样时刻取「当前时刻取整秒」附近——insert 自带的滚动窗口 prune
@@ -876,6 +877,22 @@ func runStatsDomainScenarios() async {
         }
         expectEqual(bucket.systemMWh, 3_600_000.0 * EnergyScale.systemK / 3600,
                     "统计38", "DB 往返能耗贯通（3.6e6 mW·s → 1101 mWh）")
+    }
+
+    // 统计39：ChartAxisStride 分档（0.23.4 容量卡横轴步长）——三档内值 / 档界 /
+    // 防御端点九向量钉面（步长单元恒 .day，count 随档 1/2/5；tuple 无 Equatable
+    // 一致性，component ∧ count 合取单断言）。
+    do {
+        let strideCases: [(days: Int, strideCount: Int)] = [
+            (5, 1), (18, 2), (30, 5),           // 三档各自内值
+            (12, 1), (13, 2), (24, 2), (25, 5), // 档界（<13 / 13...24 / ≥25）
+            (0, 1), (35, 5),                    // 防御端点（空数据口径 / 保留窗满）
+        ]
+        for strideCase in strideCases {
+            let stride = ChartAxisStride.capacity(dataSpanDays: strideCase.days)
+            check(stride.component == .day && stride.count == strideCase.strideCount,
+                  "统计39", "\(strideCase.days) 天跨度 → (.day, \(strideCase.strideCount))")
+        }
     }
 }
 

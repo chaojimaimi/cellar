@@ -305,11 +305,11 @@ extension StatsPageView {
                 }
             }
             .foregroundStyle(theme.accent)
-            // X 轴恒全保留窗 1 天固定步长（0.18.1 T6：0.18 配的 7 天步长在 35d
-            // 保留窗过度收缩致 label 消失——改 1 天 stride 写死机制不用 .automatic，
-            // 全保留窗自适应适量（Charts 空间不足自动取舍 label，R-5），
-            // label「M/d」短格式由下方 AxisValueLabel 统一格式承担）。
-            .chartAxisTheme(theme, xStride: .day, xStrideCount: 1)
+            // X 轴步长随数据跨度分档（0.23.4 方案 A；0.18.1 T6 写死 1 天步长在数据
+            // 积累后标签溢出绘图区容量致重叠——Charts 对显式 stride 不做自动取舍，
+            // 实证见 docs/plans/phase7-0.23.4 §0）。
+            .chartAxisTheme(theme, xStride: capacityAxisStride.component,
+                            xStrideCount: capacityAxisStride.count)
             .chartYAxisLabel {
                 Text(CellarL10n.s("stats.unit.percent"))
                     .font(.system(size: 10))
@@ -322,6 +322,16 @@ extension StatsPageView {
             )
             .frame(height: 180)
         }
+    }
+
+    /// 轴域 = capacityPoints 首尾跨度（Charts domain = 数据极值；ceil 保守——
+    /// 跨度偏大方向分档 → 标签更稀，安全向）。卡显门控 = ≥2 点（StatsPageView
+    /// :132），空/单点本属性不参与渲染，仍防御返回 1 天档。
+    private var capacityAxisStride: (component: Calendar.Component, count: Int) {
+        guard let first = capacityPoints.first?.date,
+              let last = capacityPoints.last?.date else { return (.day, 1) }
+        let days = Int(ceil(last.timeIntervalSince(first) / 86_400))
+        return ChartAxisStride.capacity(dataSpanDays: days)
     }
 
     // MARK: - 数据投影（StatsBucket → Charts 点/段；断档分段 UD-5）
@@ -487,8 +497,8 @@ private func formatWh(_ mWh: Double) -> String {
 /// 形态：chartXAxis/chartYAxis 必须修饰 Chart 本体，不能收进页面实例方法。
 ///
 /// X 轴固定步长（0.18 T2 D-2b/D-2c）：从 `.automatic(desiredCount: 5)` 改日历
-/// 步长整点对齐（24h=6h / 7d=2d / 30d=7d；容量卡恒全保留窗 1 天步长——0.18.1 T6
-/// 自 7 天步长改写，见 capacityCard）——
+/// 步长整点对齐（24h=6h / 7d=2d / 30d=7d；容量卡步长 0.23.4 起随数据跨度分档
+/// 1/2/5 天——0.18.1 T6 写死 1 天在数据积累后标签溢出绘图区容量，见 capacityCard）——
 /// 刻度收敛于日历单元边界、每窗 ~4-5 刻度，末刻度不再贴绘图区右缘（「S...」
 /// 截断随固定刻度消除）；label 格式随窗统一（小时步长「HH:mm」/ 日步长「M/d」）。
 private struct StatsChartAxisTheme: ViewModifier {
@@ -530,7 +540,7 @@ private extension View {
 
 extension StatsPageView.RangeWindow {
     /// X 轴日历步长（24h=6h / 7d=2d / 30d=7d——~4 刻度整点对齐；容量卡不走
-    /// 本表，恒全保留窗 1 天步长见 capacityCard——0.18.1 T6）。
+    /// 本表，步长随数据跨度分档见 capacityCard/ChartAxisStride——0.23.4）。
     var xAxisStride: (component: Calendar.Component, count: Int) {
         switch self {
         case .hours24: return (.hour, 6)

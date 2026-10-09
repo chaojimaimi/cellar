@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.4-alpha]
+
+> 背景：统计页「最大容量趋势」卡横轴标签重叠走查实证（2026-10-09）——UI 修复顺手批 + Sparkle 自动更新链首次实战载体（本机 0.23.3 将于发布后 ≤24h 自动发现本版）。wire 零 schema 变化；golden 零变更。
+
+### Fixed
+
+- **统计页最大容量趋势卡横轴标签随数据积累重叠成糊**：35 天保留窗 × 固定 1 天步长（0.18.1 T6 写死），33 个日标签全数挤入绘图区——Charts 对显式 stride 自定义轴标签不做空间取舍（0.18.1「自动取舍」假设被实测证伪）。X 轴步长改随数据跨度分档（≤12 天 = 1 天 / 13-24 天 = 2 天 / ≥25 天 = 5 天——CellarCore 新增 `ChartAxisStride.capacity` 纯函数），标签数钉 ≤14（绘图区容量 ~15 内）；显式 stride 机制保持（不用 `.automatic`——0.18 短域 label 消失教训，翻案需重新实证）。
+- **容量卡副标题补「恒显全保留窗」时间口径**：容量是慢变量、恒走全保留窗概览查询与所选范围无关（既有设计显性化，语义不动）。
+
+### 文档与版本
+
+- 四方版本 0.23.4-alpha（CFBundleVersion 2304）；测试统计39（ChartAxisStride 分档九向量：三档内值 / 档界 / 防御端点）。
+
 ## [0.23.3-alpha]
 
 > 背景：0.23.0 自研更新检查器（URL 白名单 + SHA-256 手动核对）升级为 Sparkle 2 的 EdDSA 验签通道（项目**首个第三方运行时依赖**——MIT）；四轨评审通过（常规三轮 REVISE→PASS + 红队两轮「方案完备」——终签轮抓出回读门必要性与 appcast 三处文本级漏网）。903 场景（894 − AppVersionDomain 退役 + 守卫/回读保活新增）；golden 零漂移；wire 零 schema 变化。
@@ -55,7 +68,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **编排链全链退役（daemon 域承载单通道收敛）**：`NativeOrchestration.swift` 整删（nativeTarget/assertionRequest 决策族/OrchestrationState 五字段；wire 三类型先迁 `DaemonXPC.swift`）；`Topoff.convergenceRoute` desired 推导链删除（域承载全区间即新常态——domainBackstop 的编排开关前置项显式删）；daemon 观测 tick ③断言签发臂删（①日程转移 + ②汇聚点路由消费迁移为独立 `observationTickLocked`，挂点保留）；`discardStaleOrchestrationPendingLocked` 删；fullOnce 27 分支/cancelAction 27 臂置窗-清窗-only 化（pending 产出臂删）；`restoreChargeLimit` 重写（清窗 + 清锁存 + 即时 tick 域写 target——pending 产出与编排开关前置拒收删）。
 - **App 侧编排执行链八项删**：consumeOrchestrationPending / orchestrationTask / processedOrchestrationTokens / 编排状态·开关·生效中三计算属性 / setOrchestration 发送端 / ingest pending 消费挂点 / ControlAttempt.setOrchestration / embeddedExecutorAvailable（唯一消费面 = 编排节）；`OrchestrationSectionView` 整删 + 通用页编排节删 + 面板/自动化页「原生最低 80」标注删（<80 全区间域承载后失实——R4/常规 P1-6）。
 - **doctor 检查 19 退役**：fullOnce 临时放开残留检测删除（新常态下 MCL 读回 100 即域承载稳态，触发面 = 常态必误报）；连带 `NativeLimitSet.fullOnceRestoreAvailable` 退役（唯一双消费面随批消失）；检查 19 位号留空（编号空洞如实登记，17/18/20 位次不重排）。
-- **测试/golden/l10n 清账**：OrchestrationDomain 整域删除（78 check——F-1 透传钉迁政策镜像面、wire 编解码往返钉迁 NativeLimitWireDomain）；Topoff/TopoffReadback/CHHysteresis/CalibrationCoexistence/DischargeOscillation/NativeLimitSet 六域 desired/开关参断言翻新；新增 OrchestrationRetirementDomain 结构钉面（冻结偏好零消费断言/observationTick 迁移钉/置窗-清窗-only 化钉/恢复臂重写钉 + Schedule 断电簿记臂保留钉/wire 恒填钉）；892 → 875 场景；Orchestration_* golden 5 组 30 张删（456 → 426）；l10n 死键 26 删（settings.orchestration.*/settings.execution.*/fallback 四键/schedule.nativeFloor）。
+- **测试/golden/l10n 清账**：OrchestrationDomain 整域删除（78 check——F-1 透传钉迁政策镜像面、wire 编解码往返钉迁 NativeLimitWireDomain）；Topoff/TopoffReadback/CHHysteresis/CalibrationCoexistence/DischargeOscillation/NativeLimitSet 六域 desired/开关参断言翻新；新增 OrchestrationRetirementDomain 结构钉面（冻结偏好零消费断言/observationTick 迁移钉/置窗-清窗-only 化钉/恢复臂重写钉 + Schedule 断电簿记臂保留钉/wire 恒填钉）；892 → 875 场景；Orchestration_* golden 5 组 30 张删（456 → 426）；l10n 死键 26 删（settings.orchestration._/settings.execution._/fallback 四键/schedule.nativeFloor）。
 
 ### Changed
 

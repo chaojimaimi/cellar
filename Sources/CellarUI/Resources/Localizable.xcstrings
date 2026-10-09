@@ -5362,13 +5362,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Caliber: nominal charge capacity / design capacity (same as dashboard Health)"
+            "value": "Caliber: nominal charge capacity / design capacity (same as dashboard Health) · full retention window"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "口径：标称满充容量 / 设计容量（与仪表板「健康」一致）"
+            "value": "口径：标称满充容量 / 设计容量（与仪表板「健康」一致）· 恒显全保留窗"
           }
         }
       }
