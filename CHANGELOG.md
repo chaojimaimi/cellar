@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.5-alpha]
+
+> 背景：真机实证（2026-10-13/14）——macOS 27 机型 CHIE 残留巡检命中的 `dischargeToLimit:safety` 一次性字面量被观测路由臂直写进 `lastStatus`，而 27 早退通道（后端永久缺席分支）尾部无每拍重构，透传把字面量冻结为「永久最近动作」；用户动作 `clearUserActionLatch` 因字面量未进锁存器而空操作 →「放电已安全终止，已恢复充电」红色横幅永久驻留且不可清除。三件套（P1 通道 + P2 语义分级 + P3 生命周期）同版发布、分 commit 落地；wire 零 schema 变化（lastAction 新字面量 = 上报值变化非键变化）；方案经 plan-reviewer 两轮评审（REVISE→PASS）；golden 失败集合改前/改后 384=384 逐条零差异。
+
+### Fixed
+
+- **27 通道「放电已安全终止，已恢复充电」横幅永久驻留**：巡检命中不再直写 `lastStatus`（观测路由臂 `_ =` 消费）；27 观测段 lastAction 改每拍重构（`sampleAndPublishLocked` → `effectiveLastAction(nil)`）拆掉透传冻结土壤——存量冻结值升级首拍自动清除（**升级即自愈**）；用户动作清除契约恢复（锁存经 `buildStatusLocked` 锁存生效值消费，26/27 行为一致）。
+- **巡检命中可溯源**：`patrolCHIEResidualLocked` persistLog 双臂落盘（0.20.1 P0 纪律——命中原只进内存事件环，daemon.log 零痕迹不可事后排查）。
+
+### Changed
+
+- **巡检自愈语义分级（事件与状态分流）**：巡检恢复成功产 `dischargeToLimit:selfheal` 新字面量（终态锁存通道），**不入失败横幅**——macOS 通知一次性知情（新事件 `residualSelfHealed`，epoch identifier 豁免冷却）+ 面板绿色轻提示 5s 自动消退；恢复失败臂返回 nil 不产字面量不锁存（实况未恢复不得告「已愈」——persistLog error + 下拍巡检重试 + 自愈计数链承接）；`dischargeToLimit:safety` 保留给真动作安全终止（温度/地板/监护缺失）。
+- **26 行为登记**：巡检命中呈现从 ≤30s 自清变为锁存驻留至用户动作（P0-2「下一次用户动作自然清除」契约文字级对齐，绿色轻提示感知差异小）；后端重建瞬态窗内 lastAction 从透传变锁存??nil（陈旧横幅提前消失，方向良性）；恢复失败臂返回 nil 后同拍照常 enforce（写 CHTE/CH0B 键族不触碰 CHIE，无乒乓面）。
+
+### 文档与版本
+
+- 四方版本 0.23.5-alpha（CFBundleVersion 2305）；方案文档 docs/plans/phase7-0.23.5-patrol-banner-lifecycle.md（本地私有化）；CellarCoreCheck 断言 2136→2146（+10 钉面：selfheal 字面量契约/通知映射族五钉/横幅-6 语义分级主钉 + 空串回归钉/用例100·101 锁存与清除两钉），904 场景全绿。
+
 ## [0.23.4-alpha]
 
 > 背景：统计页「最大容量趋势」卡横轴标签重叠走查实证（2026-10-09）——UI 修复顺手批 + Sparkle 自动更新链首次实战载体（本机 0.23.3 将于发布后 ≤24h 自动发现本版）。wire 零 schema 变化；golden 零变更。
