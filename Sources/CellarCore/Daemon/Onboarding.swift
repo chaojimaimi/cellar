@@ -90,8 +90,12 @@ public enum CellarNotificationEvent: Hashable, Sendable {
     /// dischargeToLimit:cancel(crash-recovery)）。
     case actionInterrupted(kind: String)
     /// WP2' discharge 安全终止（lastAction 转移 dischargeToLimit:safety——温度/
-    /// 地板/监护缺失/CHIE 残留巡检；App 文案含当前电量组装）。
+    /// 地板/监护缺失；App 文案含当前电量组装）。
     case actionSafetyTerminated(kind: String)
+    /// 0.23.5 CHIE 残留巡检自愈（lastAction 转移 dischargeToLimit:selfheal——
+    /// 无动作期安全网自愈，非当前异常，与 safety 语义分级）。无关联值：电量经
+    /// App 投递层从 status.lastPercent 组装，不进事件线格式（P2-6 惯例）。
+    case residualSelfHealed
     /// WP2' discharge 取消（lastAction 转移 dischargeToLimit:cancel——用户取消/
     /// disable/SIGTERM/睡眠/setLimits/ext 异常/保活失败。与 fullOnce 的用户取消
     /// 静默不同：放电取消具安全显著性——适配器供电状态被变更，需用户知情，§2.3
@@ -187,6 +191,11 @@ public func notificationEvents(
         return [.actionTimeout(kind: dischargeKind)]
     case OneShotLiteral.safety(kind: dischargeKind):
         return [.actionSafetyTerminated(kind: dischargeKind)]
+    case OneShotLiteral.selfheal(kind: dischargeKind):
+        // 0.23.5 巡检自愈（一次性知情事件）：转移守卫自动收敛锁存期同字面量
+        // 不重发；P1-4 前缀豁免自动覆盖（selfheal 后恢复停充不误报 limitReached）；
+        // 首样本臂（previous == nil）default → 空（陈旧值抑制语义一致）。
+        return [.residualSelfHealed]
     case OneShotLiteral.cancelCrashRecovery(kind: dischargeKind):
         return [.actionInterrupted(kind: dischargeKind)]
     case OneShotLiteral.cancel(kind: dischargeKind):

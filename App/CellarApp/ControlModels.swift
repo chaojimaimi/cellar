@@ -5,7 +5,8 @@ import CellarUI
 
 extension StatusFailureKind {
     /// 横幅文案（与通知文案同源，§2.3 定版常量集中 NotificationService）。
-    /// WP2'：safety 终态（温度/地板/监护缺失/CHIE 残留巡检）同通道呈现。
+    /// WP2'：safety 终态（温度/地板/监护缺失）同通道呈现。0.23.5：巡检自愈
+    /// selfheal 不入本通道（通知 + 绿色轻提示）。
     var message: String {
         switch self {
         case .writeFailed: return CellarL10n.s("notification.writeFailed")

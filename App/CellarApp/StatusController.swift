@@ -415,6 +415,14 @@ final class StatusController: ObservableObject {
                         ? CellarL10n.s("status.doneFullOnce")
                         : CellarL10n.s("status.doneDischarge"))
             }
+            // 0.23.5 巡检自愈上升沿（done 边沿同款形态、同序——在 lastActionLiteral
+            // 赋值前判定）：selfheal 非当前异常不入失败横幅通道（StatusFailureKind
+            // 显式排除），锁存期上升沿以绿色轻提示一次性知情（.success 5s 自动消退）。
+            let isSelfHeal = status.lastAction == OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind)
+            let wasSelfHeal = lastActionLiteral == OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind)
+            if isSelfHeal && !wasSelfHeal {
+                setSuccessFeedback(CellarL10n.s("panel.residualSelfHealed"))
+            }
             lastActionLiteral = status.lastAction
         }
         daemonStatus = status

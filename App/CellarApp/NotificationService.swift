@@ -150,6 +150,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             return kind == dischargeKind
                 ? CellarL10n.s("notification.dischargeSafety", lastPercent ?? 0)
                 : CellarL10n.s("notification.actionSafetyTerminated")
+        case .residualSelfHealed:
+            // 0.23.5 巡检自愈：一次性知情事件（非失败告警），文案含当前电量组装。
+            return CellarL10n.s("notification.residualSelfHealed", lastPercent ?? 0)
         case .actionCancelled:
             // 仅 discharge 系产生 actionCancelled（fullOnce 用户取消不通知，§2.3
             // 对照）——kind 无分流，单一文案（审查 L3：收敛恒等三元）。
@@ -190,6 +193,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         case .actionTimeout(let kind): return "action.\(kind).timeout.\(Int(now.timeIntervalSince1970))"
         case .actionInterrupted(let kind): return "action.\(kind).interrupted.\(Int(now.timeIntervalSince1970))"
         case .actionSafetyTerminated(let kind): return "action.\(kind).safety.\(Int(now.timeIntervalSince1970))"
+        case .residualSelfHealed: return "action.dischargeToLimit.selfheal.\(Int(now.timeIntervalSince1970))"
         case .actionCancelled(let kind): return "action.\(kind).cancelled.\(Int(now.timeIntervalSince1970))"
         case .autoDischargeStarted: return "action.\(Discharge.dischargeToLimitKind).autostart.\(Int(now.timeIntervalSince1970))"
         case .calibrationPhaseChanged: return "calibration.phase.\(Int(now.timeIntervalSince1970))"

@@ -3095,6 +3095,23 @@
         }
       }
     },
+    "notification.residualSelfHealed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discharge-path residual detected and auto-corrected (battery at %lld%%)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到放电通道残留，已自动恢复（当前电量 %lld%%）"
+          }
+        }
+      }
+    },
     "notification.sub80Recovered": {
       "extractionState": "manual",
       "localizations": {
@@ -4315,6 +4332,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "切换开机启动失败：%@"
+          }
+        }
+      }
+    },
+    "panel.residualSelfHealed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residual auto-corrected — charge management healthy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放电通道残留已自愈，充电管理正常"
           }
         }
       }

@@ -567,6 +567,19 @@ func runDischargeDomainScenarios() throws {
               "放电-25", "start→cancel(crash-recovery) 转移 → actionInterrupted")
         check(notificationEvents(previous: dStatus("dischargeToLimit:safety"), current: dStatus("dischargeToLimit:safety")) == [],
               "放电-25", "锁存期重复样本（safety→safety）→ 无重复事件")
+        // 0.23.5 selfheal 通知映射族（P2 语义分级——自愈走 .residualSelfHealed 一次性
+        // 知情，不入 actionSafetyTerminated 失败告警）。
+        check(notificationEvents(previous: dStatus("dischargeToLimit:start"), current: dStatus("dischargeToLimit:selfheal"))
+                == [.residualSelfHealed],
+              "放电-25", "start→selfheal 转移 → residualSelfHealed（巡检自愈通知新 case）")
+        check(notificationEvents(previous: dStatus("dischargeToLimit:selfheal"), current: dStatus("dischargeToLimit:selfheal")) == [],
+              "放电-25", "selfheal→selfheal 锁存重复 → 无重复事件（转移守卫自动收敛）")
+        check(notificationEvents(previous: dStatus("dischargeToLimit:selfheal"), current: dStatus("enforce:disableCharging")) == [],
+              "放电-25", "selfheal→enforce:disableCharging → 不产 limitReached（P1-4 前缀豁免自动覆盖——回归确认）")
+        check(notificationEvents(previous: dStatus("dischargeToLimit:selfheal"), current: dStatus("enforce:error")) == [.writeFailed],
+              "放电-25", "selfheal→enforce:error → writeFailed（失败类不受前缀豁免抑制——回归确认）")
+        check(notificationEvents(previous: nil, current: dStatus("dischargeToLimit:selfheal")) == [],
+              "放电-25", "首样本 selfheal → 无事件（previous==nil 陈旧值抑制语义一致）")
         check(notificationEvents(previous: dStatus("dischargeToLimit:done"), current: dStatus("enforce:disableCharging")) == [],
               "放电-25", "P1-4 扩展：done 终态后恢复停充 → 不产 limitReached（dischargeToLimit: 前缀纳入抑制）")
         check(notificationEvents(previous: dStatus("dischargeToLimit:done"), current: dStatus("enforce:error")) == [.writeFailed],
