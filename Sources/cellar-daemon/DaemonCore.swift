@@ -1147,15 +1147,18 @@ final class DaemonCore: @unchecked Sendable {
             lastPercent = snapshot.percent
         }
         // lastStatus 供给（lastPercent 注入**新采样**）。lastChargingEnabled 透传
-        // ——无后端即无执法态读数，诚实（App 消费面 `== true` 判定不受 nil 影响）；
-        // lastAction 透传——观测 tick 无控制动作，最近动作描述保持既有值（wire
-        // 组装时 buildStatusLocked 仍按终态锁存生效值覆写，锁存语义不丢）。
+        // ——无后端即无执法态读数，诚实（App 消费面 `== true` 判定不受 nil 影响）。
+        // 0.23.5 P3：lastAction 每拍重构（effectiveLastAction(nil) = 锁存 ?? nil）
+        // ——拆掉「透传冻结」土壤：一次性字面量不再永续，稳态回归中性空态（27 稳态
+        // 由 observationTickLocked 种子 ?? "" 写回折叠为空串——既有形态非本批新增）；
+        // 锁存终态经本点继续对 App 可见（P0-2 语义不丢）。直写冻结教训见
+        // docs/plans/phase7-0.23.5-patrol-banner-lifecycle §0.2。
         lastStatus = DaemonStatus(
             version: DaemonXPC.daemonVersion,
             mode: policy.mode,
             upperLimit: policy.upperLimit,
             hysteresis: policy.hysteresis,
-            lastAction: lastStatus?.lastAction,
+            lastAction: actionTrack.effectiveLastAction(nil),
             lastPercent: snapshot.percent,
             lastExternalConnected: snapshot.externalConnected,
             lastChargingEnabled: lastStatus?.lastChargingEnabled,
