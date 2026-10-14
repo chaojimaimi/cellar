@@ -554,9 +554,11 @@ func runDischargeDomainScenarios() throws {
         check(notificationEvents(previous: dStatus("dischargeToLimit:start"), current: dStatus("dischargeToLimit:timeout"))
                 == [.actionTimeout(kind: kind)],
               "放电-25", "start→timeout 转移 → actionTimeout")
+        check(OneShotLiteral.selfheal(kind: kind) == "dischargeToLimit:selfheal",
+              "放电-25", "0.23.5 契约钉：selfheal 字面量精确值（daemon 产出与 App 呈现/StatusFailureKind 排除臂同源钉死）")
         check(notificationEvents(previous: dStatus("dischargeToLimit:start"), current: dStatus("dischargeToLimit:safety"))
                 == [.actionSafetyTerminated(kind: kind)],
-              "放电-25", "start→safety 转移 → actionSafetyTerminated（温度/地板/监护缺失/残留巡检告警通道）")
+              "放电-25", "start→safety 转移 → actionSafetyTerminated——动作安全终止通道（温度/地板/监护缺失）")
         check(notificationEvents(previous: dStatus("dischargeToLimit:start"), current: dStatus("dischargeToLimit:cancel"))
                 == [.actionCancelled(kind: kind)],
               "放电-25", "start→cancel 转移 → actionCancelled（放电取消具安全显著性，§2.3 统一 cancel → 通知；与 fullOnce 用户取消静默对照）")

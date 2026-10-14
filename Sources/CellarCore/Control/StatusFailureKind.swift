@@ -25,8 +25,9 @@ public enum StatusFailureKind: Equatable {
     /// StatusController.ingest 上升沿检测）。
     case actionTimedOut
     case actionInterrupted
-    /// WP2' discharge 安全终止（dischargeToLimit:safety——温度/地板/监护缺失/
-    /// CHIE 残留巡检；横幅 + 通知同源，App 侧文案含当前电量组装）。
+    /// WP2' discharge 安全终止（dischargeToLimit:safety——温度/地板/监护缺失；
+    /// 横幅 + 通知同源，App 侧文案含当前电量组装。0.23.5：CHIE 残留巡检自愈走
+    /// selfheal 字面量，不入本通道）。
     case actionSafetyTerminated
 
     /// 从 daemonStatus 派生（⚠️ lastAction 字面量与 CellarCore 通知分类同契约——
@@ -46,6 +47,9 @@ public enum StatusFailureKind: Equatable {
         case "fullOnce:cancel(crash-recovery)", "dischargeToLimit:cancel(crash-recovery)": self = .actionInterrupted
         case "calibration:safety", "calibration:timeout", "calibration:cancel(crash-recovery)": self = .actionInterrupted
         case "dischargeToLimit:safety": self = .actionSafetyTerminated
+        // 0.23.5 显式不映射臂（契约显式钉面——防后续维护者误并）：巡检自愈语义
+        // 分级，非当前异常不进失败横幅，走通知 + 面板绿色轻提示通道。
+        case "dischargeToLimit:selfheal": return nil
         default: return nil
         }
     }

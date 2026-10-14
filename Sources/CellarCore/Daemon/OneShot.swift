@@ -108,8 +108,12 @@ public enum OneShotLiteral {
     public static func cancel(kind: String = OneShot.fullOnceKind) -> String { "\(kind):cancel" }
     public static func timeout(kind: String = OneShot.fullOnceKind) -> String { "\(kind):timeout" }
     public static func cancelCrashRecovery(kind: String = OneShot.fullOnceKind) -> String { "\(kind):cancel(crash-recovery)" }
-    /// WP2' 安全终止字面量（温度/地板/监护缺失/CHIE 残留巡检共用；§2.5 定版族）。
+    /// WP2' 安全终止字面量（温度/地板/监护缺失；§2.5 定版族）。
     public static func safety(kind: String = OneShot.fullOnceKind) -> String { "\(kind):safety" }
+    /// WP2' CHIE 残留巡检自愈字面量（0.23.5）：巡检命中并成功恢复 0x00 后锁存——
+    /// 与 safety 语义分级（safety = 动作被终止的异常终态；selfheal = 无动作期的
+    /// 安全网自愈，非当前异常）。App 侧：通知新 case + 绿色轻提示，不入失败横幅。
+    public static func selfheal(kind: String = OneShot.fullOnceKind) -> String { "\(kind):selfheal" }
     /// WP2' 自动放电启动字面量（daemon 自动触发专用）。**无默认参数**（R1 P3：
     /// 防 fullOnce:autostart 误用——调用点必须显式传放电 kind）。
     /// **0.23.0 自动放电自动机退役（红队 F5 兼容保留面）**：新 daemon 恒不产

@@ -858,9 +858,14 @@ final class DaemonCore: @unchecked Sendable {
                 // §2.2 #7：27 残留巡检兜底（防崩溃/恢复失败泄漏 CHIE=0x8 致电池
                 // 持续耗电）。命中 tick 到此为止（观测 tick 对在轨动作本就静默——
                 // 无「恢复 0x00 后同拍又写 0x8」乒乓）。
-                if let client = smcClient,
-                   let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
-                    lastStatus?.lastAction = patrolLiteral
+                // 0.23.5：返回值 `_ =` 消费——persistLog + selfheal 锁存副作用已在
+                // 巡检函数内完成。**禁止直写 lastStatus**：直写冻结教训（0.23.5
+                // §0.2）——本早退通道尾部无每拍重构，直写一次性字面量被
+                // sampleAndPublishLocked 透传冻结为「永久最近动作」，横幅永久驻留
+                // 且用户动作不可清除。App 可见性经 buildStatusLocked 的
+                // effectiveLastAction 消费锁存达成。
+                if let client = smcClient {
+                    _ = patrolCHIEResidualLocked(client: client, events: &events)
                 }
             case .noteMonitoringLoss:
                 noteDischargeMonitoringLossLocked(
@@ -969,8 +974,10 @@ final class DaemonCore: @unchecked Sendable {
                 )
             }
         } else if policy.mode == "active" {
-            // §2.4 CHIE 残留不变量巡检（无动作期，安全红线）：命中 → 本 tick 转
-            // 安全告警（lastAction=safety），enforce 延后至下 tick（巡检优先级最高）。
+            // §2.4 CHIE 残留不变量巡检（无动作期，安全红线）。0.23.5：恢复成功臂
+            // 返回 selfheal 字面量（锁存在巡检函数内）→ 命中拍 enforce 延后至下
+            // tick（巡检优先级最高）；恢复失败臂返回 nil → 落入 else 同拍照常
+            // enforce（enforce 写 CHTE/CH0B 键族不触碰 CHIE，无乒乓面——§8-R6）。
             if let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                 actionName = patrolLiteral
             } else {
@@ -1077,6 +1084,9 @@ final class DaemonCore: @unchecked Sendable {
             }
         } else {
             // disabled 档同样巡检（不变式无条件：CHIE=0x8 仅允许在动作活跃期存在）。
+            // 0.23.5：命中返回 selfheal 字面量（锁存在巡检函数内）——尾部重构经
+            // effectiveLastAction 消费锁存，selfheal 驻留至下一次用户动作（行为
+            // 变化登记 §8-R1）；else 臂 disabled:idle 不变。
             if let patrolLiteral = patrolCHIEResidualLocked(client: client, events: &events) {
                 actionName = patrolLiteral
             } else {

@@ -2465,6 +2465,14 @@ struct Main {
             check(track.effectiveLastAction("enforce:noop") == OneShotLiteral.done(),
                   "用例100", "锁存生效：构造值 enforce:noop 被 done 覆盖")
 
+            // 0.23.5 巡检自愈锁存（latchTerminalLiteral 通道——P1 巡检成功臂写入点）：
+            // 锁存优先于本拍构造值，27 观测段每拍重构 effectiveLastAction(nil) 呈现。
+            var selfHeal = OneShotTrack()
+            let healLiteral = OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind)
+            selfHeal.latchTerminalLiteral(healLiteral)
+            check(selfHeal.effectiveLastAction(nil) == healLiteral,
+                  "用例100", "0.23.5：latchTerminalLiteral(selfheal) → effectiveLastAction(nil) 呈现锁存（锁存语义在 selfheal 字面量上与 done/timeout 同形态）")
+
             var timed = OneShotTrack()
             _ = timed.startIfIdle(now: t0)
             let out = timed.tick(now: t0.addingTimeInterval(4 * 3600 + 60), fullyCharged: false, isCharging: true, percent: 50)
@@ -2535,6 +2543,14 @@ struct Main {
             check(emptyTrack.cancelForCrashRecovery() == nil, "用例101", "崩溃恢复（无动作文件语义）→ nil（无动作启动）")
             check(track.effectiveLastAction("enforce:noop") == "enforce:noop",
                   "用例101", "无锁存时生效值 = 构造值（常规 tick 原样）")
+
+            // 0.23.5：用户动作清除 selfheal 锁存（P0-2 契约在巡检自愈字面量上的直接钉面
+            // ——setLimits/enable/disable 后 wire 回归稳态，横幅/轻提示随之消退）。
+            var healClear = OneShotTrack()
+            healClear.latchTerminalLiteral(OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind))
+            healClear.clearUserActionLatch()
+            check(healClear.latchedLiteral == nil && healClear.effectiveLastAction(nil) == nil,
+                  "用例101", "0.23.5：clearUserActionLatch → selfheal 锁存清除、effectiveLastAction(nil) 回归 nil（用户动作清除契约成立）")
         }
 
         // 用例 102：fullOnce 字面量与通知分类（P1-3/P1-4）——start 首样本无事件、

@@ -491,10 +491,21 @@ extension DaemonCore {
     }
 
     /// §2.4 CHIE 残留不变量巡检（**安全红线**）：无动作活跃期的常规 tick 巡检——
-    /// 回读 ≠ 0x00 → 写 0x00 + 回读校验 + 告警（lastAction = `dischargeToLimit:safety`，
-    /// App 通知通道）+ 走既有自愈计数。不变式：**CHIE=0x8 仅允许在放电动作活跃期
-    /// 存在**——本巡检覆盖全部「动作已终态但恢复写失败/重试耗尽」的泄漏路径。
-    /// 返回命中时的 safety 字面量（调用方覆写本 tick lastAction）；未命中 → nil。
+    /// 回读 ≠ 0x00 → 写 0x00 + 回读校验。0.23.5：恢复成功臂返回
+    /// `dischargeToLimit:selfheal` 自愈字面量并在函数内
+    /// `actionTrack.latchTerminalLiteral` 锁存（无动作期安全网自愈，非当前异常——
+    /// 与 safety 语义分级，App 侧通知 + 绿色轻提示，不入失败横幅）；恢复失败臂
+    /// 返回 nil（实况未恢复不得告「已愈」——不产字面量、不锁存，persistLog error
+    /// 落盘，既有「继续巡检」下拍重试 + noteControlFailure 自愈计数链承接）；
+    /// 未命中 → nil。
+    /// 三个调用点（锁存单写点在本函数内，调用点零分散写）：
+    /// ① 27 观测路由 `.patrolResidual` 臂（DaemonCore.swift）——返回值仅消费
+    ///    不直写 lastStatus（0.23.5 直写冻结教训：27 早退通道尾部无每拍重构，
+    ///    直写一次性字面量被透传冻结为永久横幅）；
+    /// ② 26 执法段 active 臂（DaemonCore.swift）——命中拍 actionName 承载字面量，
+    ///    尾部重构经 effectiveLastAction 消费锁存；
+    /// ③ 26 执法段 disabled 臂（DaemonCore.swift）——同②。
+    /// persistLog 双臂落盘（0.20.1 P0 可溯源纪律——巡检命中原只进内存事件环）。
     ///
     /// 门控（审查 M1）：**必须用探测结果 capabilities**（tahoe ∧ CHIE 在位），
     /// 不得用 `adapterControlSupported`（TahoeBackend 硬编码 true）——CHTE 在位但
@@ -531,23 +542,30 @@ extension DaemonCore {
                 category: .control, level: .error,
                 message: "CHIE 残留巡检：恢复写失败（\(restoreError)）——残留禁用未清除，继续巡检"
             ))
-        } else {
-            // 0.21.0 §2 code-review 复核·遗漏 B：巡检恢复的 0x00 为外部写者——
-            // **!mounted 可达仍需失效**：退出恢复写一次失败（SMC 瞬态）→ unmounted ∧
-            // lastWritten=false ∧ 实况 0x8 → 巡检成功恢复 → 退出条件消退（如热退出
-            // 分钟级滞留窗恰为巡检窗）→ 重挂 → 禁用臂被陈旧簿记幂等吞掉 → 执法永久
-            // 死亡。失效钩闭合（挂点全集见 CHHysteresis.noteExternalAdapterWrite ⑤；
-            // 恢复失败臂不失效——实况仍 0x8，簿记 false 仍准确）。
-            if hysteresisState.lastWrittenAdapterEnabled != nil {
-                hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
-                Self.persistLog("CHIE 残留巡检：迟滞簿记已失效（巡检恢复 0x00 为外部写——下拍按实况重估）")
-            }
-            events.append(LogEvent(
-                category: .control, level: .warn,
-                message: "CHIE 残留巡检：检测到非使能状态，已清零并回读确认（放电残留恢复）"
-            ))
+            // 0.23.5：恢复失败臂不产字面量、不锁存（实况未恢复不得呈「已自愈」）
+            // ——persistLog error 落盘保可溯源，下拍巡检重试 + 自愈计数链承接。
+            Self.persistLog("CHIE 残留巡检：恢复写失败（\(restoreError)）——残留禁用未清除，继续巡检")
+            return nil
         }
-        return OneShotLiteral.safety(kind: Discharge.dischargeToLimitKind)
+        // 0.21.0 §2 code-review 复核·遗漏 B：巡检恢复的 0x00 为外部写者——
+        // **!mounted 可达仍需失效**：退出恢复写一次失败（SMC 瞬态）→ unmounted ∧
+        // lastWritten=false ∧ 实况 0x8 → 巡检成功恢复 → 退出条件消退（如热退出
+        // 分钟级滞留窗恰为巡检窗）→ 重挂 → 禁用臂被陈旧簿记幂等吞掉 → 执法永久
+        // 死亡。失效钩闭合（挂点全集见 CHHysteresis.noteExternalAdapterWrite ⑤；
+        // 恢复失败臂不失效——实况仍 0x8，簿记 false 仍准确）。
+        if hysteresisState.lastWrittenAdapterEnabled != nil {
+            hysteresisState = CHHysteresis.noteExternalAdapterWrite(state: hysteresisState)
+            Self.persistLog("CHIE 残留巡检：迟滞簿记已失效（巡检恢复 0x00 为外部写——下拍按实况重估）")
+        }
+        events.append(LogEvent(
+            category: .control, level: .warn,
+            message: "CHIE 残留巡检：检测到非使能状态，已清零并回读确认（放电残留恢复）"
+        ))
+        // 0.23.5：恢复成功臂 selfheal 锁存 + persistLog 落盘（三调用点一次覆盖）。
+        Self.persistLog("CHIE 残留巡检：检测到非使能状态，已清零并回读确认（放电残留自愈，selfheal 锁存）")
+        let healed = OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind)
+        actionTrack.latchTerminalLiteral(healed)
+        return healed
     }
 
     /// 监护缺失计数（评审 P1-5；WP3 门控扩展 R1 P1-1 + R2 P1-1 三道闸之一——**链条

@@ -237,6 +237,10 @@ func scenarioStatusFailureKindMapping() {
           "横幅-5", "fullOnce:cancel(crash-recovery) → actionInterrupted")
     check(StatusFailureKind(status: status("dischargeToLimit:safety")) == .actionSafetyTerminated,
           "横幅-6", "dischargeToLimit:safety → actionSafetyTerminated")
+    check(StatusFailureKind(status: status("dischargeToLimit:selfheal")) == nil,
+          "横幅-6", "0.23.5 P2 语义分级主钉：dischargeToLimit:selfheal → nil（巡检自愈非当前异常，不入失败横幅——通知+绿色轻提示通道）")
+    check(StatusFailureKind(status: status("")) == nil,
+          "横幅-6", "0.23.5 P3 回归钉：lastAction 空串（27 稳态形态）→ nil（防未来 default 臂收紧误伤稳态）")
     check(StatusFailureKind(status: status("fullOnce:done")) == nil,
           "横幅-7", "fullOnce:done → nil（成功走 success 反馈 + 自动消退）")
     check(StatusFailureKind(status: status("dischargeToLimit:done")) == nil,
