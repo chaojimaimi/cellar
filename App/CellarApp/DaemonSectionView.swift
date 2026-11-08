@@ -15,6 +15,10 @@ struct DaemonSectionView: View {
     /// 安装复检进行中（统一 wrapper「检查中」态，§2.2 P2-3）。
     @State private var installChecking = false
 
+    /// 卸载确认臂（0.23.7 B2-1）：enabled 态主按钮点击先展开内嵌确认块，确认才
+    /// 真正卸载。页面级 @State——页面重建即清（残留态无跨页滞留面）。
+    @State private var showUninstallConfirm = false
+
     var body: some View {
         VStack(spacing: 8) {
             Text(CellarL10n.s("panel.daemon.title", statusText, routeText))
@@ -54,24 +58,52 @@ struct DaemonSectionView: View {
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
 
-            Button(buttonTitle) {
-                if installer.registration == .enabled {
-                    installer.uninstall()
-                } else {
-                    installViaGate()   // 统一安装 wrapper（§2.2 P2-3）
+            // 0.23.7 B2-1：enabled 态卸载两步确认——主按钮原直呼 installer.uninstall()
+            // （单步破坏性操作，误触即停止限充管理并恢复系统默认充电行为）。照放电
+            // 确认块先例（PanelSections dischargeSection：confirmationDialog 弹出会
+            // 收起 MenuBarExtra，确认后面板已关——内嵌展开保持窗口常驻，警告信息
+            // 同等显著）臂切换：确认块替代原按钮位置展开。
+            if installer.registration == .enabled, showUninstallConfirm {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(CellarL10n.s("panel.daemon.uninstallWarning"))
+                        .font(.caption)
+                        .foregroundStyle(theme.warning)
+                    HStack(spacing: 8) {
+                        Button(CellarL10n.s("common.confirm")) {
+                            showUninstallConfirm = false
+                            installer.uninstall()
+                        }
+                        .controlSize(.small)
+                        .disabled(installer.busy)
+                        Button(CellarL10n.s("common.back")) {
+                            showUninstallConfirm = false
+                        }
+                        .controlSize(.small)
+                    }
                 }
+            } else {
+                Button(buttonTitle) {
+                    if installer.registration == .enabled {
+                        showUninstallConfirm = true
+                    } else {
+                        installViaGate()   // 统一安装 wrapper（§2.2 P2-3）
+                    }
+                }
+                // 迁移象限禁用安装：防用户绕过引导直接安装，制造手工+托管混合态（评审 P2-6）。
+                .disabled(
+                    installer.busy
+                        || installChecking
+                        || installer.registration == .pending
+                        || installer.guidance == .migrateFromLegacy
+                )
             }
-            // 迁移象限禁用安装：防用户绕过引导直接安装，制造手工+托管混合态（评审 P2-6）。
-            .disabled(
-                installer.busy
-                    || installChecking
-                    || installer.registration == .pending
-                    || installer.guidance == .migrateFromLegacy
-            )
 
             // pending 态残留注册出口（0.3.2，BTM 事故缺口）：待授权记录损坏时
             // （反复授权后仍 spawn 失败），用户此前无任何出口——本按钮注销 SMAppService
             // 记录回到 notRegistered，可重装。正常授权流程不受影响（按钮独立于主按钮）。
+            // 0.23.7 B2-1 设计决策：本按钮**不加确认**（plan §0 非目标）——故障态
+            // 恢复出口（授权流程已损坏），加摩擦适得其反，与 enabled 态主按钮的
+            // 两步确认分立。
             if installer.registration == .pending {
                 Button(CellarL10n.s("panel.daemon.removeResidual"), role: .destructive) {
                     installer.uninstall()

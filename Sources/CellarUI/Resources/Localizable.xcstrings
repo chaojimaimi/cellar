@@ -715,6 +715,23 @@
         }
       }
     },
+    "common.back": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回"
+          }
+        }
+      }
+    },
     "common.cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -745,6 +762,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "检查中…"
+          }
+        }
+      }
+    },
+    "common.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认"
           }
         }
       }
@@ -4077,6 +4111,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "卸载守护进程"
+          }
+        }
+      }
+    },
+    "panel.daemon.uninstallWarning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After uninstalling, Cellar will stop charge-limit management and restore macOS default charging behavior. Uninstall the daemon now?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "卸载后 Cellar 将停止限充管理并恢复系统默认充电行为，确定要卸载守护进程吗？"
           }
         }
       }
