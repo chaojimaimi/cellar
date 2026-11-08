@@ -96,12 +96,12 @@ Cellar must be used exclusively with other charge-management tools/daemons: both
 
 ## System requirements
 
-| Component   | Requirement                                                                                                                                   |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Machine     | Apple Silicon MacBook                                                                                                                         |
+| Component   | Requirement                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Machine     | Apple Silicon MacBook                                                                                                                                                                                                                                    |
 | OS          | macOS 26+ (26 validated on real hardware; 27 GA validated on real hardware — discharge via CHIE, sub-80% via the native charge-limit channel, power-telemetry fields honestly absent); earlier systems use the experimental Legacy backend (unvalidated) |
-| GUI (App)   | macOS 26+ (hard requirement)                                                                                                                  |
-| Permissions | Reads need no privileges; writes go through the root daemon (CLI needs `sudo`; App is authorized via System Settings, admin account required) |
+| GUI (App)   | macOS 26+ (hard requirement)                                                                                                                                                                                                                             |
+| Permissions | Reads need no privileges; writes go through the root daemon (CLI needs `sudo`; App is authorized via System Settings, admin account required)                                                                                                            |
 
 ## Build & install
 
