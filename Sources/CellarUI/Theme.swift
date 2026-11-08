@@ -15,7 +15,7 @@ import os
 /// （Color/LinearGradient/AccentGlow/词典），Swift 6 全并发检查下 static let
 /// 主题常量（native/amberLight/amberDark/industrialLight/industrialDark）与
 /// EnvironmentKey 默认值要求之。
-public struct CellarTheme: Sendable {
+public struct CellarTheme: Sendable, Equatable {
     /// 电量弧 / 充电徽标。
     public var accent: Color
     /// 限充区间弧（band 弧）。
@@ -64,6 +64,25 @@ public struct CellarTheme: Sendable {
     /// 面板细线网格底纹色（v1.9 D-B2：nil = 不画——A/B 哑值；C = 工业面板语汇；
     /// token 透明度 ≤0.08，网格只铺背景层，保证其上文本可读性（R-2））。
     public var panelGrid: Color?
+
+    /// 手写相等（0.23.8 B3-1；成员合成被 accentGradient 阻断——LinearGradient 在
+    /// 当前 SDK 不遵循 Equatable）：18 个可比较字段逐一比对；accentGradient **排除
+    /// 比较**——其值由 (style, scheme) 唯一决定（resolve 缓存键同源），同键必同值，
+    /// 排除比较在「经 resolve 构造的 theme」域内语义自洽。
+    /// ⚠️ 若未来出现「手工构造仅差 accentGradient 的两个 theme 再 == 比对」的消费
+    /// 面，本 == 将误判相等——引入此类消费面前须先补渐变端点比较或改存可比较
+    /// 端点色对（登记 R4）。
+    public static func == (lhs: CellarTheme, rhs: CellarTheme) -> Bool {
+        lhs.accent == rhs.accent && lhs.band == rhs.band && lhs.holding == rhs.holding
+            && lhs.alert == rhs.alert && lhs.bannerBackground == rhs.bannerBackground
+            && lhs.track == rhs.track && lhs.secondaryText == rhs.secondaryText
+            && lhs.tertiaryText == rhs.tertiaryText && lhs.success == rhs.success
+            && lhs.warning == rhs.warning && lhs.panelBackground == rhs.panelBackground
+            && lhs.panelBorder == rhs.panelBorder && lhs.accentGlow == rhs.accentGlow
+            && lhs.vocabulary == rhs.vocabulary && lhs.displayFont == rhs.displayFont
+            && lhs.numericFontDesign == rhs.numericFontDesign
+            && lhs.gaugeTick == rhs.gaugeTick && lhs.panelGrid == rhs.panelGrid
+    }
 
     /// 默认主题：系统语义色（原生极简基线）。vocabulary 留空——word(_:) 以内置
     /// 常量兜底（与现 UI 中文原文一字不差），environment 默认值路径永不落空。
@@ -227,10 +246,41 @@ public struct CellarTheme: Sendable {
             : (Color(hex: 0x128A66), Color(hex: 0x0E7C5C))
     }
 
+    /// resolve 进程级缓存（0.23.8 B3-1）：对固定 locale，resolve(style:scheme:)
+    /// 为纯函数——词表构建（25 词条 × CellarL10n.s 解析，含回退链）每次
+    /// ThemeProvider body 求值重复执行（面板 + 主窗双宿主）；键 (style, scheme)
+    /// 封闭（3 风格 × 2 深浅 ≤ 6 条目）。语言切换走系统重启语义，进程生存期缓存
+    /// 无失效需求（应用内语言切换若未来引入，须先补缓存失效——登记 R1）。
+    private struct ResolveCacheKey: Hashable {
+        let style: PanelStyle
+        let scheme: ColorScheme
+    }
+
+    // Swift 6 非 isolated 可变全局须 nonisolated(unsafe)（cellar-daemon 先例）；
+    // 全部访问点持 cacheLock（lock→读/写→unlock，无持锁跨 await——本函数同步）。
+    nonisolated(unsafe) private static var resolveCache: [ResolveCacheKey: CellarTheme] = [:]
+    nonisolated(unsafe) private static let cacheLock = NSLock()   // let 引用不可变；unsafe 限于声明面
+
+    public static func resolve(style: PanelStyle, scheme: ColorScheme) -> CellarTheme {
+        let key = ResolveCacheKey(style: style, scheme: scheme)
+        cacheLock.lock()
+        if let hit = resolveCache[key] {
+            cacheLock.unlock()
+            return hit
+        }
+        cacheLock.unlock()
+        let built = resolveUncached(style: style, scheme: scheme)
+        cacheLock.lock()
+        resolveCache[key] = built
+        cacheLock.unlock()
+        return built
+    }
+
     /// 组合根唯一解析入口：native 与系统色深浅无关（语汇仍按词条表解析）；amber
     /// 与 industrial 按 scheme 二选一。switch 穷举三 case、无 default——新增风格
-    /// 漏实现 = 编译错。
-    public static func resolve(style: PanelStyle, scheme: ColorScheme) -> CellarTheme {
+    /// 漏实现 = 编译错。（0.23.8 B3-1：原 resolve 体原样更名——零逻辑改写，
+    /// 缓存入口见上 resolve。）
+    private static func resolveUncached(style: PanelStyle, scheme: ColorScheme) -> CellarTheme {
         switch style {
         case .native:
             var theme = CellarTheme.native
@@ -243,7 +293,7 @@ public struct CellarTheme: Sendable {
         case .industrial:
             // 语汇复用 native 词条（UD-3：工业语言取向 = 直白技术措辞，与 native
             // 现词「外接 · 充电中」「退出 Cellar」同族，零新增 l10n 键）——不走
-            // resolvedWord 查 vocabulary.industrial.*，避免 16 词条全量 miss 的
+            // resolvedWord 查 vocabulary.industrial.*，避免 25 词条全量 miss 的
             // error 日志噪音。工业专属语汇如有，Tier 2 登记后在此切独立表。
             var theme = scheme == .dark ? industrialDark : industrialLight
             theme.vocabulary = vocabularyTable(style: .native)
