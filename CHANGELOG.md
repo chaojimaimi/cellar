@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.8-alpha]
+
+> 背景：修复路标 B3「性能批」——统计页 hover 逐帧整页重投影消除（四卡状态下沉）+ CellarTheme 手写 Equatable 与 resolve 词表缓存 + 面板小屏滚动 + NumberFormatter 静态缓存 + R6 日程宿主 busy 门钉注释收口（B2 必办登记）；wire 零 schema 变化（**零 daemon 逻辑改动**——升级 App 无需重装守护进程）；方案经 plan-reviewer 两轮审核（REVISE→修订→PASS：LinearGradient 在当前 SDK 无 Equatable 改手写 ==、Swift 6 模式 static var 须 nonisolated(unsafe)、R6 实为四处门非三处）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：== 18 字段逐一核对无遗漏、锁纪律无持锁跨 await、投影空白归一后逐字相同、golden 384=384 经独立基线重建证实）；907 场景全绿、golden 失败集合 384=384 逐条零差异、l10n 477 key 零变化、coverage 92.11%、CellarApp BUILD SUCCEEDED。
+
+### Changed
+
+- **统计页四曲线卡 hover 状态下沉**（本批最高确定性收益）：原四 hover 态停留页级 `@State`——鼠标 hover 一次触发整页 body 重求值 + 五卡 O(n) 投影（电量分段/连续 run 分组等 ≤720 点 × 多投影）全量重算，拖动 60Hz 每帧如此；下沉为四卡 struct（StatsBatteryCard / StatsTemperatureCard / StatsPowerCard / StatsCapacityCard）后 hover 一次仅重求值单卡。投影随卡迁移；页级 `panel` 容器退役为 fileprivate `statsPanel` helper（DashboardView / AutomationPageView / CalibrationPageView 三处独立实现零触及）；**容量卡 hover 恒带日期逐字节保真**（B2「不改+不该改」裁决随迁为卡内钉注释）。行为登记：数据空↔非空分支翻转时卡级 hover 随卡重置（无害——手势 `.ended` 本就清游标，原页级存续反而渲染过期游标）。
+- **CellarTheme 手写 Equatable（排除 accentGradient）+ resolve 进程级缓存**：成员合成被 `LinearGradient` 阻断（当前 SDK 不遵循 Equatable）→ 18 个可比较字段手写 `==`、accentGradient 排除比较（其值由 (style, scheme) 唯一决定——「经 resolve 构造」域内语义自洽，边界钉注释）；resolve 缓存键 (style, scheme) ≤6 条目，消除每次 ThemeProvider body 求值的 25 词条 × CellarL10n.s 词表重建（面板 + 主窗双宿主）；Swift 6 语言模式下 `nonisolated(unsafe)` + NSLock（cellar-daemon 先例）。行为登记：词表缺失回退的 error 日志从每次求值一次降为每 key 每进程一次（缓存固有副作用，噪音减少）。
+- **面板小屏滚动**：regularPanel 包 `ScrollView(.vertical)` + `frame(maxHeight:)`（NSScreen.visibleFrame.height − 24，兜底 640、下限 360）——小屏或分区全展开时页脚（含退出入口）不再不可达；内容矮于上限时视觉零变化（maxHeight 是上限非地板）；自绘背景/边框移至 ScrollView 外层（网格底纹不随内容滚动，滚动中唯一可见差异）。
+- **NumberFormatter 静态缓存**：`grouped()` 原每次调用新建 formatter（电池规格卡两消费点 1Hz 重渲染）→ `@MainActor static let` 缓存（全库唯一实例化点）。
+- **R6 四门钉注释**（B2 必办登记收口）：runControl 单槽队列补发期间，日程宿主 busy 门结构性关闭「过期 config 快照重放复活窗」——列表三处（总开关 / 行内删除 / 添加）+ 编辑器取消/保存（列表行 onTapGesture 不受 busy 门控，busy 期编辑器仍可展开，编辑器两钮是编辑路径唯一防线）各落防误删钉注释；第五门（B2-2 删除确认钮）随发版 commit 并入 R6 库存登记（code-reviewer P3-2，fb7cdf6 发版顺带修正先例）。
+
+### 文档与版本
+
+- 四方版本 0.23.8-alpha（CFBundleVersion 2308）；方案 docs/plans/phase8-0.23.8-b3-performance.md（本地私有化）；code-reviewer P3 登记：手写 `==` 暂无可执行断言（与仓库无 CellarUI 测试栈约定一致，若未来引入 CellarUI 场景检查，「同 key 相等 / 异 scheme amber 不等 / native 深浅相等」为首批场景）。
+
 ## [0.23.7-alpha]
 
 > 背景：修复路标 B2「UX 反馈闭环批」——两处破坏性操作确认 + runControl busy 期提交排队 + staleDaemon 文案指位修正 + 数字显示一致性 + 横幅挂点扩挂与位置统一；wire 零 schema 变化（**零 daemon 改动**——0.23.6 用户升级 App 无需重装守护进程）；方案经 plan-reviewer 两轮审核（REVISE→修订→PASS）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：队列无卡死/丢笔形态、pendingDelete 无滞留遗漏、13 入口无旁路三问均获代码级推演证实）；907 场景全绿、golden 384=384 逐条零差异、l10n 477 key 全查过、coverage 92.11%、CellarApp BUILD SUCCEEDED。

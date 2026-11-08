@@ -143,6 +143,11 @@ struct AutomationPageView: View {
                             .controlSize(.small)
                             // 确认钮照放电确认块先例禁 busy（plan-reviewer P3：
                             // 暂存到确认之间 busy 可被他处置位，批次内一致语汇）。
+                            // B2-3 R6 钉注释（0.23.8 发版顺带并入，code-reviewer
+                            // P3-2）：本门是 R6 库存第五门——删除路径「busy 前点
+                            // 删除→busy 中确认」经此钮提交，与列表/编辑器四门同
+                            // 属「过期 config 快照重放复活窗」关闭面，勿从四门
+                            // 清单误推本门可删。
                             .disabled(statusController.busy)
                             Button(CellarL10n.s("common.back")) {
                                 pendingDeleteEntry = nil
