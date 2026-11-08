@@ -26,6 +26,12 @@ struct AutomationPageView: View {
 
     @State private var editing: Editing?
 
+    /// 待删条目暂存（0.23.7 B2-2 删除两步确认）：组件行内 minus.circle → onDelete
+    /// 改暂存本槽（不再直删），列表与编辑器之间内嵌确认块展开，确认才走 delete
+    /// 全量下发。宿主层拦截——组件 ChargeScheduleListView 在 golden 矩阵内零触及。
+    /// 页面级 @State——页面重建即清（残留态无跨页滞留面）。
+    @State private var pendingDeleteEntry: ChargeScheduleEntry?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -72,9 +78,11 @@ struct AutomationPageView: View {
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.secondaryText.opacity(0.25)))
     }
 
-    /// 日程卡：列表（门控二态在组件内——scheduleJson 缺席 = legacy 态）+ 编辑器
-    /// 内嵌展开槽（固定位于列表之后——结构身份稳定，外部回灌不重播种草稿，
-    /// R1 P2-2 规则③）。
+    /// 日程卡：列表（门控二态在组件内——scheduleJson 缺席 = legacy 态）+ 删除
+    /// 确认条件槽（0.23.7 B2-2：pendingDeleteEntry 非 nil 时展开）+ 编辑器内嵌
+    /// 展开槽。结构身份由条件槽 + 编辑器显式 .id 双重保障（外部回灌不重播种
+    /// 草稿，R1 P2-2 规则③）——原「固定位于列表之后」口径过期（plan-reviewer
+    /// P3：单靠位置的说法会误导后来者）。
     private var scheduleCard: some View {
         panel(title: CellarL10n.s("chargeSchedule.title")) {
             VStack(alignment: .leading, spacing: 8) {
@@ -86,15 +94,57 @@ struct AutomationPageView: View {
                     // **0.23.1 编排退役**：原「编排生效中 → <80 条目『原生最低 80%』
                     // 行内标注」随批删除（R4/常规 P1-6——<80 全区间域承载后标注失实）。
                     onToggleEnabled: { toggleEnabled($0) },
-                    onAdd: { editing = .new },
-                    onEdit: { editing = .entry($0) },
-                    onDelete: { delete($0) }
+                    // 0.23.7 B2-2：编辑态切换 → 清删除确认暂存（暂存随编辑目标变动
+                    // 失效，防跨目标滞留；不给 editing 加互斥守卫——共存无害见下）。
+                    onAdd: {
+                        pendingDeleteEntry = nil
+                        editing = .new
+                    },
+                    onEdit: {
+                        pendingDeleteEntry = nil
+                        editing = .entry($0)
+                    },
+                    onDelete: { pendingDeleteEntry = $0 }
                 )
+                // 删除两步确认块（0.23.7 B2-2，照放电确认块形态：内嵌展开——
+                // 删除原为 minus.circle 直删 + 全量下发，无任何确认面）。仅
+                // pendingDeleteEntry 非 nil 时渲染；编辑器展开时共存无害（二者
+                // 互斥性弱；delete(_:) 自带「被删条目正被编辑 → 收起编辑器」
+                // 互斥处理，不给 editing 加互斥守卫）。
+                if let entry = pendingDeleteEntry {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(CellarL10n.s("chargeSchedule.deleteConfirm"))
+                            .font(.caption)
+                            .foregroundStyle(theme.warning)
+                        // 摘要行复用组件既有摘要形态（星期 · 时段 · 动作）。
+                        Text(ChargeScheduleSummary.line(entry))
+                            .font(.caption)
+                            .multilineTextAlignment(.leading)
+                            .foregroundStyle(theme.secondaryText)
+                        HStack(spacing: 8) {
+                            Button(CellarL10n.s("common.confirm")) {
+                                pendingDeleteEntry = nil
+                                delete(entry)
+                            }
+                            .controlSize(.small)
+                            // 确认钮照放电确认块先例禁 busy（plan-reviewer P3：
+                            // 暂存到确认之间 busy 可被他处置位，批次内一致语汇）。
+                            .disabled(statusController.busy)
+                            Button(CellarL10n.s("common.back")) {
+                                pendingDeleteEntry = nil
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
                 if let editing {
                     ChargeScheduleEntryEditor(
                         seed: editingSeed(editing),
                         busy: statusController.busy,
-                        onCancel: { self.editing = nil },
+                        onCancel: {
+                            pendingDeleteEntry = nil   // 编辑态切换 → 清删除确认暂存（0.23.7 B2-2）
+                            self.editing = nil
+                        },
                         onSave: { save($0) }
                     )
                     // 身份键（审查 P1）：@State 草稿仅首次入树播种——换编辑目标
@@ -156,6 +206,7 @@ struct AutomationPageView: View {
             config.entries.append(entry)
         }
         editing = nil
+        pendingDeleteEntry = nil   // 编辑态切换 → 清删除确认暂存（0.23.7 B2-2）
         apply(config)
     }
 

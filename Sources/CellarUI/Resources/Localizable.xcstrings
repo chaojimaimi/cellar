@@ -7243,6 +7243,23 @@
         }
       }
     },
+    "chargeSchedule.deleteConfirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this schedule entry? The change takes effect immediately as a full config update."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认删除该日程条目？删除后立即全量下发生效。"
+          }
+        }
+      }
+    },
     "chargeSchedule.desc": {
       "extractionState": "manual",
       "localizations": {
