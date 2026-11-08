@@ -5,7 +5,7 @@
 // 修改任一侧必须同步另一侧（与 Tests/CellarCoreTests 的 XCTest 用例一一对应）。
 //
 // 用法：
-//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）+ v0.19.8 macOS 27 温度回退域（113–118 于本文件 + 119 于 DoctorExtendedDomain.swift）+ 0.20 M1b CHIE 迟滞域（CHHysteresisDomain.swift）+ 0.21.0 M2 校准共存域（CalibrationCoexistenceDomain.swift）/ 温度 Pack 层域（PackTemperatureDomain.swift）；总数见运行结尾统计）
+//   swift run CellarCoreCheck          # 跑全部 mock 场景（WP1 1–16 + WP2 17–35 + WP3 36–46 + WP4 47–59 + 审计回归 60–62 + WP5 63–68 + WP6 69–76 + WP2 daemon 托管 77–83 + WP3 App↔daemon 84–89 + WP4 面板 90–92 + WP5 引导/通知 93–95 + WP2 一次性动作 96–104 + WP3 风格系统 105–107 + WP2' 放电域/健康能力域（DischargeDomain.swift / HealthCapabilitiesDomain.swift）+ WP1 热守卫域（ThermalGuardDomain.swift）+ Phase 5 v1.1 风扇域（FanDomain.swift）+ Phase 5 v1.2 时间估算域（TimeEstimatorDomain.swift）+ Phase 5 v1.3 统计域（StatsDomain.swift）+ Phase 5 v1.7 原生限充检测域（NativeLimitDomain.swift）+ Phase 5 v1.7 原生限充接线域（NativeLimitWireDomain.swift）+ Phase 5 v1.8 MagSafe LED 模型域（MagSafeLEDDomain.swift）+ v0.19.8 macOS 27 温度回退域（113–118 于本文件 + 119 于 DoctorExtendedDomain.swift）+ 0.20 M1b CHIE 迟滞域（CHHysteresisDomain.swift）+ 0.21.0 M2 校准共存域（CalibrationCoexistenceDomain.swift）/ 温度 Pack 层域（PackTemperatureDomain.swift）+ 0.23.11 B5 安全纵深域（SecurityHardeningDomain.swift）；总数见运行结尾统计）
 //   swift run CellarCoreCheck --probe  # 真机探测：makeDefault() + RuntimeProbe.probe（要求 root，探测可靠性实测结论）
 //   swift run CellarCoreCheck --smoke  # 真机冒烟：makeDefault() + keyInfo("#KEY")（元数据非 root 可读）
 //   swift run CellarCoreCheck --battery  # 真机电池快照：AppleSmartBattery 只读（无需 root），与 ioreg -rc AppleSmartBattery 对照
@@ -469,6 +469,10 @@ struct Main {
         // 0.23.3 §4：校准 chargeFull stay 域读回保活（回读门）场景域（失配判定
         // 纯函数 + 回读门在位/失配重写路径/节流常数源钉 ≥3，CalibrationReadbackDomain）。
         runCalibrationReadbackDomainScenarios()
+        // 0.23.11 B5 安全纵深批场景域（方案 §2 各场景段：B5-1 O_EXCL 直测+源钉/
+        // B5-2/3 全局拒绝计数与 nativeLimit TTL 源钉/B5-4 persistLog 与双 plist
+        // 源钉/B5-5 推导核心直测与模板一致性——SecurityHardeningDomain，随批递增）。
+        try runSecurityHardeningDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

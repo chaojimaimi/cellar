@@ -147,7 +147,31 @@ public struct TopoffStateStore: Sendable {
         // 清理：任何失败路径都尽力移除临时文件（不覆盖原错误）。
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
 
-        try data.write(to: temporaryURL, options: [])
+        // 0.23.11 B5-1：O_EXCL 写（CWE-59/61 写操作级纵深——目录权限防线
+        // verifyRootOwnedDirectory 为启动/安装时刻一次性判定，此后目录被变更时
+        // 本防线独立成立）。O_EXCL|O_CREAT 对已存在路径（含指向不存在目标的
+        // symlink）恒 EEXIST——预置符号链接不可跟随；EEXIST = 疑似竞态残留或
+        // 上次崩溃残留（普通崩溃残留由 lstat 守卫清除；symlink 残留本次拒写、
+        // defer removeItem 清除后下次重写），fail-closed 拒写不跟随。
+        // 既有 tmp 仅普通文件（上次崩溃残留）可清——symlink/其他形态不消费，
+        // 交给 O_EXCL open 拒写（方案场景：预置 symlink → save throw 且目标
+        // 文件未跟随；removeItem 无条件消费 symlink 会洗白竞态现场）。
+        var tmpStatus = stat()
+        if lstat(temporaryURL.path, &tmpStatus) == 0,
+           (tmpStatus.st_mode & S_IFMT) == S_IFREG {
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+        let fd = open(temporaryURL.path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+        guard fd >= 0 else {
+            throw CocoaError(.fileWriteNoPermission)   // EEXIST/其他——不区分，统一拒写
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+        } catch {
+            throw error   // closeOnDealloc 兜底关闭；defer removeItem 清理
+        }
+        // 显式 chmod（open mode 受 umask 影响——保既有 0644 语义）
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o644],
             ofItemAtPath: temporaryURL.path
