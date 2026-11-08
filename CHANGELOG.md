@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.6-alpha]
+
+> 背景：2026-11-07 全维度深审（0 P0 / 3 P1 / ~10 P2）B1 收口批——收口三条 P1（27 校准终态漏记 / 主窗控制失败反馈无渲染面 / App.init 回调接线时序依赖）+ SECURITY.md 写面三处改如实 + 文档数字漂移修正；wire 零 schema 变化（lastCal 三键既有可选字段恒填，无新键无新字面量）；方案经 plan-reviewer PASS 评审（P2/P3 意见折入）；code-reviewer 落地前评审 APPROVE（P0–P2 零：③b 26 不可达双门证明、单例迁移无静默失效形态）；907 场景全绿、golden 失败集合 384=384 逐条零差异、CellarApp BUILD SUCCEEDED、coverage 92.11%。
+
+### Fixed
+
+- **macOS 27 校准自然终态（done/timeout/safety）永不写入「上次校准」**：27 观测段补校准终态观察空闲臂 ③b（26 执法段空闲臂的观测段对偶——根因：空闲臂挂在 `performTickLocked` 的 backend guard 之后，27 平台 backend 恒 nil 全部 tick 走观测段早退致其永不可达）；判定经新纯函数 `calibrationIdleOutcomeObservation` 单一谓词源（两臂共用防判定漂移）；锁存为全部终态路径汇合点（`terminateCalibration` / `terminateMonitoringLoss` 均写 `latchedLiteral`），`startedAt` 去重防锁存存活期重写；26 行为零变化（③b 经 `modernBackendTerminalLocked` 双门确认不可达，两臂每 tick 互斥无双记录）。
+- **主窗口控制失败反馈无渲染面**：`ControlPageView` / `GeneralSections` 各挂一处 `AlertBanner`（与面板同源反馈——`runControl` 失败 / daemon 拒绝 / statusFailure / XPC 失联在主窗两控制宿主页可见可重试，参数与 `PanelView` 逐字同构）；无失败态零渲染零布局占用；文案沿用 `panel.banner.*`（stale 文案分宿主改写归 B2；校准页/自动化页扩挂点登记后续批）。
+- **App.init 回调接线时序依赖**：通知四接线整体迁出组合根 `App.init` 进各控制器 init 自标定（`StatusController.init` 三接线 + `OnboardingController.init` 授权请求——幸存实例诞生即自带接线，把 0.4.1 批开始的迁移做完整，时序依赖归零）；`NotificationService` 单例化（`static let shared` + `private init`，迁移前全库唯一构造点实证）；WP5 delegate 早期赋值锚点保留 App.init 首段；outlet 本体保留（解耦与可覆写面不变）；「两处接线」注释计数漂移修正为迁移前实数 4 处。
+
+### Changed
+
+- **实例态 600s 通知冷却表随单例获进程级生存期**（现状 App 结构体重建即重置——附带改进登记非回归；suppression 两个 1h 冷却本为 static 不受影响）。
+- **SECURITY.md 写面三处改如实**：SMC 键表补风扇 `F0Md/F0Tg/F1Md/F1Tg` 与 MagSafe LED `ACLC`（条件功能键层，接管开启/用户显式配置时写）；持久化清单补全（5 JSON + `/var/root` defaults 域 + flock 锁 + daemon.log）；getStatus 未鉴权回包范围如实（`scheduleJson` 作息元数据 / lastCal 三键 / thermal policy——超出公开 IOKit 电源信息的行为元数据，无凭据无用户标识，裁剪评估登记后续项）。
+- **文档数字漂移修正**：doctor 十九项（`DoctorCommand` 注释「十八项」过期）、l10n 474 key（README 双语言「472」过期）、CI golden 计数注释 426 张（「84 张」「156」过期）、覆盖率 92.11%（README「91.97%」过期）。
+
+### 文档与版本
+
+- 四方版本 0.23.6-alpha（CFBundleVersion 2306）；方案 docs/plans/phase8-0.23.6-b1-p1-closure.md（本地私有化）；CellarCoreCheck 904→907 场景全绿（+3 钉面：校准-37 空闲臂双挡门 / 校准-38 五终态字面量全映射 / 校准-39 非校准字面量 nil）。
+
 ## [0.23.5-alpha]
 
 > 背景：真机实证（2026-10-13/14）——macOS 27 机型 CHIE 残留巡检命中的 `dischargeToLimit:safety` 一次性字面量被观测路由臂直写进 `lastStatus`，而 27 早退通道（后端永久缺席分支）尾部无每拍重构，透传把字面量冻结为「永久最近动作」；用户动作 `clearUserActionLatch` 因字面量未进锁存器而空操作 →「放电已安全终止，已恢复充电」红色横幅永久驻留且不可清除。三件套（P1 通道 + P2 语义分级 + P3 生命周期）同版发布、分 commit 落地；wire 零 schema 变化（lastAction 新字面量 = 上报值变化非键变化）；方案经 plan-reviewer 两轮评审（REVISE→PASS）；golden 失败集合改前/改后 384=384 逐条零差异。

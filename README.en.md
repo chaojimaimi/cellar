@@ -150,13 +150,13 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 903 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 907 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (800+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
                             # topoff sub-80% channel, localization completeness
 bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Control/Daemon
-                            # pure logic, ≥80% · currently 91.97%)
+                            # pure logic, ≥80% · currently 92.11%)
 swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 426
                             # authoritative cases)
                             # + localization gate (474 keys × en/zh-Hans)
