@@ -158,7 +158,7 @@ swift run CellarCoreCheck   # 903 个场景、数百项检查：决策矩阵穷�
                             # topoff <80% 通道、本地化完整性
 bash Tools/coverage.sh      # 状态机行覆盖率门禁（圈定 Control/Daemon 纯逻辑，≥80%·当前 91.97%）
 swift run CellarUICheck     # 界面快照对比（三风格矩阵；当前 426 张权威）
-                            # + 本地化完整性门（472 key × en/zh-Hans）
+                            # + 本地化完整性门（474 key × en/zh-Hans）
 ```
 
 硬件在环验收（安装 → 限充 → 放电恢复 → 睡眠唤醒 → 卸载）随版本发布执行，记录于 CHANGELOG。

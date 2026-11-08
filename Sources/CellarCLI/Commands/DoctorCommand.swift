@@ -2,8 +2,9 @@ import ArgumentParser
 import CellarCore
 import Foundation
 
-/// cellar doctor —— 十八项只读诊断（不写任何 SMC 键；第 17 项编排通道在用户
+/// cellar doctor —— 十九项只读诊断（不写任何 SMC 键；第 17 项编排通道在用户
 /// 会话探测，v0.19.20；第 18 项 topoff 域状态 root 只读展示，0.20 M1a）。
+/// 0.23.6 B1-4：「十八项」系过期计数，按实际渲染项数（19）与 README 口径对齐。
 ///
 /// 无 sudo 亦可给出可信结论（LE 字节序定版后读路径普通用户稳定，2026-08-31 实测）；
 /// 退出码：0 健康 / 1 警告 / 2 失败。
@@ -13,7 +14,7 @@ import Foundation
 struct DoctorCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "诊断报告：十八项只读检查（退出码 0 健康 / 1 警告 / 2 失败）。全只读契约：不写任何 SMC 键——CHIE 可写性写探针仅在 daemon 侧执行"
+        abstract: "诊断报告：十九项只读检查（退出码 0 健康 / 1 警告 / 2 失败）。全只读契约：不写任何 SMC 键——CHIE 可写性写探针仅在 daemon 侧执行"
     )
 
     /// 设备信息单行（--devices；字段白名单与字段序见 CellarCore DeviceInfo）。

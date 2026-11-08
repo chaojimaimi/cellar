@@ -8,12 +8,22 @@ Cellar is an open-source battery charge-limiting tool for Apple Silicon Macs: a 
 
 On Apple Silicon Macs, charging control is executed by the SMC coprocessor. Third-party control therefore requires writing SMC keys through the IOKit `AppleSMC` user client, and **writes are root-only**.
 
-Cellar's daemon writes exactly two SMC keys:
+The daemon writes a small, fixed set of SMC keys in two tiers:
+
+**Core charging keys** (the always-on control surface):
 
 | Key | Type / size | Meaning |
 |---|---|---|
 | `CHTE` | `ui32` / 4B | Charging enable/disable (the core control key) |
 | `CHIE` | `hex_` / 1B | Adapter enable/disable — used **only** during explicit discharge actions |
+
+**Conditional feature keys** (written only while the corresponding opt-in feature is active):
+
+| Key | Type / size | Meaning |
+|---|---|---|
+| `F0Md` / `F0Tg` | `ui8` 1B / `flt` 4B | Fan 0 manual-mode flag / target RPM — written only while fan takeover is enabled; the target RPM is clamped into the fan's read-only `[Mn, Mx]` bounds and every write is verified by write-after-read; original values are restored when takeover ends, and crash/sleep residues are recovered at startup |
+| `F1Md` / `F1Tg` | `ui8` 1B / `flt` 4B | Same as above for fan 1 (dual-fan machines only) |
+| `ACLC` | `ui8` / 1B | MagSafe LED mode byte — written only when the user explicitly configures the LED mode (`0x00` hands control back to the system) |
 
 All other monitoring reads use `AppleSmartBattery` via IOKit and need no privileges.
 
@@ -34,7 +44,7 @@ All other monitoring reads use `AppleSmartBattery` via IOKit and need no privile
 - Access any network endpoint other than the update-channel requests below
 - Automatically download or install updates (`SUAllowsAutomaticUpdates` is explicitly `false` — the update window offers no "automatically download" option; every install is a user-confirmed action)
 - Read user data
-- Persist anything outside `/Library/Application Support/Cellar/` (`policy.json`, `action.json` — an atomic-write design) and standard log streams
+- Persist anything outside the following fixed list: `/Library/Application Support/Cellar/` (five JSON files — `policy.json`, `action.json`, `calibration-state.json`, `schedule-state.json`, `topoff-state.json`, all atomic-write), the `/var/root/Library/Preferences/com.apple.smartcharging.topoffprotection` defaults domain (written through the `/usr/bin/defaults` subprocess for the topoff-protection channel), the `/var/run/com.cellar.daemon.lock` flock file (single-instance guarantee), and `/Library/Logs/Cellar/daemon.log` (launchd `StandardErrorPath`)
 
 ## Network surface
 
@@ -49,7 +59,7 @@ All update traffic is performed by the App (never the daemon, which has no netwo
 
 ## Threat model & mitigations
 
-- **XPC surface**: the daemon exposes the `com.cellar.daemon` mach service. Mutating commands require root or admin-group membership (gid 80); read-only status queries are unauthenticated **by design** — they expose only information equivalent to public IOKit power info.
+- **XPC surface**: the daemon exposes the `com.cellar.daemon` mach service. Mutating commands require root or admin-group membership (gid 80); read-only status queries are unauthenticated **by design**. Stated honestly, the status payload goes beyond public IOKit power info: it also includes the charging schedule JSON (weekly/time-of-day charging metadata), last-calibration timestamps, and the thermal policy — behavioral metadata with no credentials and no user identity. On a multi-user machine this is a mild privacy surface; trimming the payload is registered as a follow-up item.
 - **Parameter validation**: all parameters are whitelisted with type checks.
 - **Policy floor**: a 60% minimum charge limit is enforced at three layers, including a validated reload of the persisted policy, so tampered files cannot bypass it.
 - **Write integrity**: every SMC write is followed by a write-after-read verification; verification failures (including external-writer conflicts) are reported as typed errors instead of failing silently.
@@ -59,7 +69,7 @@ All update traffic is performed by the App (never the daemon, which has no netwo
 
 **Known design decisions** (documented trade-offs, not vulnerabilities):
 
-- Status queries are unauthenticated (information-equivalent to public IOKit power info; no mutation possible).
+- Status queries are unauthenticated (behavioral metadata beyond public IOKit power info as noted above — schedule, last-calibration and thermal-policy fields; no credentials, no user identity, and no mutation is possible through this path).
 - There is no peer code-signing requirement for XPC clients; this was relaxed to admin-group membership in an earlier phase after review. The attack surface is limited to charging-policy manipulation — no privilege escalation or data exposure is possible through this path.
 - `os_log` entries are public-privacy by convention; they reference only fixed, documented file paths.
 
