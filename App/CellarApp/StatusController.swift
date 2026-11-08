@@ -81,17 +81,19 @@ final class StatusController: ObservableObject {
     /// （deinit 尸体链实锤），环境注入的真身互认（幂等）是安全装配点。
     weak var cpuFanMonitor: CpuFanMonitor?
 
-    /// 通知事件出口（CellarApp 注入 NotificationService.deliver；§2.3 单一入口投递）。
+    /// 通知事件出口（默认接线自标定于本类 init——0.23.6 B1-3 迁移；§2.3 单一入口
+    /// 投递 NotificationService.deliver）。
     /// WP2'：载荷附带 lastPercent——放电终态文案「当前电量 N%」由 App 按
     /// event.kind + status.lastPercent 组装（评审 P2-6：参数不进 lastAction 线格式）。
     var onNotificationEvent: ((CellarNotificationEvent, Int?) -> Void)?
 
-    /// 充电日程边沿事件出口（Phase 5 v1.6 UD-7；CellarApp 注入
-    /// NotificationService.deliverSchedule 直投——不走 CellarNotificationEvent
-    /// 映射，不新增 case、不动 daemon 字面量→通知映射）。
+    /// 充电日程边沿事件出口（Phase 5 v1.6 UD-7；默认接线自标定于本类 init——
+    /// 0.23.6 B1-3 迁移，NotificationService.deliverSchedule 直投——不走
+    /// CellarNotificationEvent 映射，不新增 case、不动 daemon 字面量→通知映射）。
     var onScheduleEvent: ((ScheduleNotification) -> Void)?
 
-    /// suppression 自动恢复结果出口（0.22.1 §1.3；CellarApp 注入通知直投）。
+    /// suppression 自动恢复结果出口（0.22.1 §1.3；默认接线自标定于本类 init——
+    /// 0.23.6 B1-3 迁移，通知直投）。
     /// **通知一律由恢复写完成回调驱动**（评审 P1-4——0.22.0 的 onSuppressionNotice
     /// 边沿直投退役，防「先手动指引后已恢复」双通知）：true = API 写成功投
     /// 「已自动恢复」；false = 写失败投既有手动指引。防轰炸由通知服务侧两个
@@ -181,6 +183,33 @@ final class StatusController: ObservableObject {
         refreshCadence()
         powerSourceMonitor.controller = self
         powerSourceMonitor.install()
+        // 通知三出口自标定接线（0.23.6 B1-3——0.4.1 批迁移收尾）：组合根 App.init
+        // 接线依赖「最后一次 init 运行=幸存实例」的未文档化时序（deinit 尸体链
+        // 实证）不可靠；接线自标定于本 init = 幸存实例诞生即自带（refreshCadence
+        // 同款已被真机验证的形态），时序依赖归零。闭包体与 WHY 注释自
+        // CellarApp.swift 原文搬移，捕获改 NotificationService.shared 单点。
+        // §2.3 单一入口接线：StatusController 事件出口 → NotificationService 投递。
+        // WP2'：载荷附带 status.lastPercent（放电终态文案「当前电量 N%」组装）。
+        onNotificationEvent = { event, lastPercent in
+            NotificationService.shared.deliver(event, lastPercent: lastPercent)
+        }
+        // Phase 5 v1.6 日程边沿通知（UD-7）：不走 CellarNotificationEvent 映射的
+        // 第二出口——deliverSchedule 直投（identifier 内嵌 epoch 豁免冷却）。
+        onScheduleEvent = { notification in
+            NotificationService.shared.deliverSchedule(notification)
+        }
+        // 0.22.1 suppression 自动恢复结果通知（评审 P1-4——0.22.0 的
+        // onSuppressionNotice 边沿直投退役，通知一律由恢复写完成回调驱动，
+        // 防「先手动指引后已恢复」双通知）：true = API 写成功投「已自动恢复」；
+        // false = 写失败投既有手动指引。两个通知各自 1h 静态限频在通知服务侧
+        // （冷却重试拍失败静默的兜底；菜单栏独占场景告警补全语义保留）。
+        onSuppressionRecoveryOutcome = { recovered in
+            if recovered {
+                NotificationService.shared.deliverSuppressionRecovered()
+            } else {
+                NotificationService.shared.deliverSuppressionNotice()
+            }
+        }
         // 0.21.0 §1.5：关断残留态驱动对账循环（App 进程常驻——daemon 侧关断无
         // 回包事件，唯轮询观察；26 平台循环内 platformModern 门 no-op）。
         mclReconcileTask = Task { [weak self] in

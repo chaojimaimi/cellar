@@ -32,8 +32,10 @@ final class OnboardingController: ObservableObject {
     /// 磁盘标志是否已加载（加载完成前引导门不判定）。
     @Published private(set) var completedLoaded = false
 
-    /// 安装成功回调（CellarApp 注入：请求通知授权）——组合根分层，控制器不直接
-    /// 依赖通知服务。
+    /// 安装成功回调（请求通知授权）——组合根分层修订（0.23.6 B1-3）：outlet 保留
+    /// （解耦与可覆写面不变），但默认接线自标定于 init——组合根 App.init 接线依赖
+    /// 「最后一次 init 运行=幸存实例」的未文档化时序（deinit 尸体链实证），不可靠；
+    /// 控制器经单例触达通知服务，依赖面 = NotificationService.shared 单点。
     var onInstallSucceeded: (() -> Void)?
 
     private let store: AppConfigStore
@@ -45,6 +47,9 @@ final class OnboardingController: ObservableObject {
         // ——App.init 早期访问 @StateObject 拿到的是被丢弃的临时实例，自标定保证
         // 幸存实例必然完成加载（幂等；多实例创建无害）。
         loadCompletedFlag()
+        // 0.23.6 B1-3：安装成功 → 请求通知授权的默认接线自标定（StatusController
+        // 三通知出口同批同款——App.init 接线时序依赖退役；outlet 可再赋值覆写）。
+        onInstallSucceeded = { NotificationService.shared.requestAuthorization() }
     }
 
     // MARK: - 加载与注册变化（App 组合根接线）

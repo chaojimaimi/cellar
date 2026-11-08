@@ -24,11 +24,23 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     // （catalog 双形态：xcodebuild 编译 lproj / swift build 原始 xcstrings 回退）；
     // 面板横幅（StatusFailureKind.message）与通知同源共用同一批 key。
 
+    /// 进程级单例（0.23.6 B1-3）：控制器 init 自标定接线统一经 `shared` 触达——
+    /// 迁移前全库唯一构造点为 CellarApp 的 `private let notifications`（grep 实证
+    /// 零外部构造），迁移后 init 私有化防临时实例陷阱复发（deinit 尸体链教训）。
+    /// 附带行为改进（登记非回归）：实例态 600s 冷却表（lastDelivered）随单例获得
+    /// **进程级生存期**——现状每次 App 结构体重建即重置的隐性冷却失效面顺带消除；
+    /// suppression 两个 1h 冷却本为 static 不受影响。
+    static let shared = NotificationService()
+
     /// 同事件类型投递冷却（秒；内存级，App 重启清零）。
     private static let cooldownSeconds: TimeInterval = 600
     private var lastDelivered: [String: Date] = [:]
 
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "notifications")
+
+    /// 构造私有化（0.23.6 B1-3 单例化——唯一合法入口 = `shared`，见上注；
+    /// NSObject 子类覆写 init 需 override 标记）。
+    private override init() {}
 
     /// delegate 早期赋值（App 启动时调用一次；硬事实 4）。
     func installDelegate() {

@@ -29,8 +29,9 @@ struct CellarApp: App {
     /// StatusController.setPanelVisible 转发——弱引用回填点在 PanelView.panelAppeared；
     /// @Published 直注 PanelView，不经 statusController 传播的 MenuBarIconLabel 教训）。
     @StateObject private var cpuFanMonitor = CpuFanMonitor()
-    /// WP5 通知服务：非可观察（视图不直接读），CellarApp 持有并接线。
-    private let notifications = NotificationService()
+    // WP5 通知服务（0.23.6 B1-3）：`private let notifications` 存储属性退役——
+    // NotificationService 单例化（NotificationService.shared，构造私有化），通知
+    // 接线迁入各控制器 init 自标定（见 init 内登记注释）。
     /// 0.23.3 §1.4 Sparkle 更新控制器（自研 UpdateChecker 0.23.3 退役）：**普通
     /// 存储属性，非 ObservableObject**（常规 P2——Sparkle 标准更新窗为独立 UI 面，
     /// App 视图树零观察需求；普通属性在 App.init 可安全访问，@StateObject 临时
@@ -55,41 +56,19 @@ struct CellarApp: App {
         UserDefaults.standard.removeObject(forKey: "com.cellar.update.lastCheckAt")
         UserDefaults.standard.removeObject(forKey: "com.cellar.update.lastNotifiedVersion")
         // WP5 硬事实 4：通知 delegate 必须在启动早期赋值——迟设错过首条
-        // willPresent（前台呈现策略失效）。
-        notifications.installDelegate()
-        // §2.3 单一入口接线：StatusController 事件出口 → NotificationService 投递。
-        // WP2'：载荷附带 status.lastPercent（放电终态文案「当前电量 N%」组装）。
-        statusController.onNotificationEvent = { [notifications] event, lastPercent in
-            notifications.deliver(event, lastPercent: lastPercent)
-        }
-        // Phase 5 v1.6 日程边沿通知（UD-7）：不走 CellarNotificationEvent 映射的
-        // 第二出口——deliverSchedule 直投（identifier 内嵌 epoch 豁免冷却）。
-        statusController.onScheduleEvent = { [notifications] notification in
-            notifications.deliverSchedule(notification)
-        }
-        // 0.22.1 suppression 自动恢复结果通知（评审 P1-4——0.22.0 的
-        // onSuppressionNotice 边沿直投退役，通知一律由恢复写完成回调驱动，
-        // 防「先手动指引后已恢复」双通知）：true = API 写成功投「已自动恢复」；
-        // false = 写失败投既有手动指引。两个通知各自 1h 静态限频在通知服务侧
-        // （冷却重试拍失败静默的兜底；菜单栏独占场景告警补全语义保留）。
-        statusController.onSuppressionRecoveryOutcome = { [notifications] recovered in
-            if recovered {
-                notifications.deliverSuppressionRecovered()
-            } else {
-                notifications.deliverSuppressionNotice()
-            }
-        }
-        // 0.23.3 §2：updateChecker.onUpdateAvailable 接线随自研更新链退役删除
+        // willPresent（前台呈现策略失效）。0.23.6 B1-3：改经进程级单例调用（赋值
+        // 幂等）——App.init 仍是启动最早确定性时点，delegate 赋值锚点保留组合根。
+        NotificationService.shared.installDelegate()
+        // 0.23.6 B1-3：通知接线整体迁出组合根——onNotificationEvent /
+        // onScheduleEvent / onSuppressionRecoveryOutcome 三闭包迁入
+        // StatusController.init，onInstallSucceeded 迁入 OnboardingController.init
+        // （迁移前 4 处闭包接线——既有登记注释「上方两处」系计数漂移，按迁移前
+        // 实数在此修正）。动机：App.init 接线依赖「最后一次 init 运行=幸存实例」
+        // 的未文档化时序（deinit 尸体链实证）不可靠；接线自标定于控制器 init =
+        // 幸存实例诞生即自带（0.4.1 批 refreshCadence/loadCompletedFlag 同款已被
+        // 真机验证的形态），时序依赖归零。outlet 本体保留（解耦与可覆写面不变）。
+        // 0.23.3 §2：updateChecker.onUpdateAvailable 接线已随自研更新链退役删除
         //（新版发现改由 Sparkle 更新窗承载——不再走系统通知）。
-        // 引导安装成功（授权完成转 enabled）后请求一次通知授权（拒绝静默停用）。
-        onboarding.onInstallSucceeded = { [notifications] in
-            notifications.requestAuthorization()
-        }
-        // 0.4.1 批（观察期收尾）：installer/onboarding 的启动期调用已迁移进各自
-        // init 自标定（StatusController/StyleController 同款模式）——App.init 早期
-        // 访问 @StateObject 拿到的是被 SwiftUI 丢弃的临时实例（deinit 尸体链实锤），
-        // 自标定保证幸存实例必然完成首次刷新/加载。已知残留：上方两处回调接线
-        // 仍接线于临时实例且无 re-trigger 兜底（真机通知实证工作，登记不扩 scope）。
         // WP3：风格加载在 StyleController.init 内自启动。
     }
 
