@@ -218,6 +218,10 @@ public struct ChargeScheduleEntryEditor: View {
             Spacer()
             Button(CellarL10n.s("common.cancel")) { onCancel() }
                 .disabled(busy)
+            // B2-3 R6 钉注释（0.23.8 B3-5）：列表行 onTapGesture 不受 busy 门控
+            // ——busy 期编辑器仍可展开，本两钮 busy 门是编辑路径唯一防「过期
+            // config 快照重放」防线，不可删（四处门同存，见
+            // ChargeScheduleListView :175）。
             Button(CellarL10n.s("chargeSchedule.save")) { save() }
                 .disabled(busy || !isDraftValid)
         }

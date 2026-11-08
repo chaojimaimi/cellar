@@ -173,6 +173,10 @@ public struct ChargeScheduleListView: View {
                 .font(.caption)
         }
         .disabled(busy)
+        // B2-3 R6 钉注释（0.23.8 B3-5）：本 busy 门不可删——runControl 单槽队列
+        // 补发期间日程宿主总开关保持禁用，结构性关闭「日程快照重放复活窗」（busy
+        // 期放行 = 可能携过期 config 快照重放）；四处门须同存（列表三处 + 编辑器
+        // 取消/保存），phase8-0.23.7-b2-ux-feedback.md §R6。
     }
 
     /// 条目摘要行（星期 · 时段 · 动作 + 双态徽章 + 行内删除；整行点击进编辑）。
@@ -215,6 +219,10 @@ public struct ChargeScheduleListView: View {
             }
             .buttonStyle(.plain)
             .disabled(busy)
+            // B2-3 R6 钉注释（0.23.8 B3-5）：本 busy 门不可删——runControl 单槽队列
+            // 补发期间日程删除入口保持禁用，结构性关闭「日程快照重放复活窗」（busy
+            // 期放行 = 可能携过期 config 快照重放）；四处门须同存（列表三处 + 编辑器
+            // 取消/保存），phase8-0.23.7-b2-ux-feedback.md §R6。
         }
         .contentShape(Rectangle())
         .onTapGesture { onEdit(entry) }
@@ -234,5 +242,10 @@ public struct ChargeScheduleListView: View {
         .buttonStyle(.plain)
         .foregroundStyle(theme.accent)
         .disabled(busy || (config?.entries.count ?? 0) >= ChargeScheduleConfig.maxEntries)
+        // B2-3 R6 钉注释（0.23.8 B3-5）：busy 门不可删（禁用条件 busy 项）——runControl
+        // 单槽队列补发期间日程添加入口保持禁用，结构性关闭「日程快照重放复活窗」
+        // （busy 期放行 = 可能携过期 config 快照重放）；四处门须同存（列表三处 +
+        // 编辑器取消/保存），phase8-0.23.7-b2-ux-feedback.md §R6。maxEntries 条件
+        // = 条目达上限前置防线，语义见上方函数头注释。
     }
 }

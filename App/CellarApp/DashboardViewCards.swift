@@ -125,11 +125,18 @@ extension DashboardView {
         return "dashboard.card.spec.power"
     }
 
-    /// 千分位分组（mock 5,103——NumberFormatter 分组形态）。
-    private func grouped(_ value: Int) -> String {
+    /// 千分位分组（mock 5,103——NumberFormatter 分组形态）。0.23.8 B3-4：formatter
+    /// 静态缓存（原每次调用新建；消费点规格卡 rawCurrentCapacityMAh/designCapacityMAh
+    /// 两行——面板开启时仪表板 1Hz 重渲染 → 1Hz 分配）。@MainActor 隔离：消费点全
+    /// 在 View body（MainActor）；NumberFormatter 非 Sendable → static let 须隔离。
+    @MainActor private static let groupedFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        return formatter
+    }()
+
+    private func grouped(_ value: Int) -> String {
+        Self.groupedFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
     // ---- 电池健康卡 ----
