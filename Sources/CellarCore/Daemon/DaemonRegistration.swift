@@ -158,3 +158,32 @@ public func verifyRootOwnedDirectory(path: String) -> Bool {
     guard st.st_uid == 0 else { return false }
     return (st.st_mode & S_IWGRP) == 0 && (st.st_mode & S_IWOTH) == 0
 }
+
+// MARK: - daemon 编译产物源路径推导（0.23.11 B5-5：CLI install 源路径去 CWD 化）
+
+extension DaemonRegistration {
+    /// 自 CLI 可执行文件位置推导仓库根（0.23.11 B5-5）：解析 symlink 后三级上溯
+    /// （`<仓库根>/.build/release/cellar` → 上三级 = 仓库根）+ 百分号解码。
+    /// **原 CWD 相对路径（".build/release/cellar-daemon"）为提权面**：用户在攻击者
+    /// 可控目录执行 `sudo cellar install` 时解析到攻击者预置文件 → root copyItem +
+    /// chmod 0755 → launchd root 执行（任意代码提权）。推导失败（可执行位置缺席/
+    /// 路径过短/百分号解码失败）→ nil——CLI 侧显式报错拒装（防静默回退 CWD 解析）；
+    /// 产物存在性由 CLI 层 fileExists + isExecutableFile 双检承担。
+    /// 纯函数面（CellarCoreCheck 直测：临时 SPM 形态目录树成功路径 + symlink 解析
+    /// + nil 拒绝；CLI executable target 不可 import，故推导核心落本库）。
+    public static func helperSourceRoot(fromExecutablePath executablePath: String?) -> String? {
+        guard let executablePath else { return nil }
+        // 先解析 symlink（_NSGetExecutablePath 结果可含符号链接——PATH 形态调用时
+        // argv 可执行为 symlink，不解析则三级上溯误拒）。解析不削弱安全：结果仍指向
+        // 运行中二进制的真实落位，CLI 层 fileExists + isExecutableFile 双检保留
+        // （执行攻击者 cellar 时本已全盘皆输，fail-closed 面不变）。
+        let resolved = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath()
+        guard let repoRoot = resolved.deletingLastPathComponent()   // .build/release/
+            .deletingLastPathComponent()                            // .build/
+            .deletingLastPathComponent()                            // 仓库根
+            .path.removingPercentEncoding else {
+            return nil
+        }
+        return repoRoot
+    }
+}

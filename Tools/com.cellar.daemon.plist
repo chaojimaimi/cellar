@@ -21,8 +21,10 @@
 	<!-- ExitTimeOut=10：恢复含一次 SMC 写（写使能 00000000）。 -->
 	<key>ExitTimeOut</key>
 	<integer>10</integer>
-	<key>StandardErrorPath</key>
-	<string>/Library/Logs/Cellar/daemon.log</string>
+	<!-- 无 StandardErrorPath：重定向目录缺失时 launchd 在 exec 前打开会失败，最坏
+	     情形 job 无法 spawn、自愈代码永远没机会跑（App 内嵌模板同款教训注释钉死）；
+	     0.23.11 B5-4 起两路线日志统一由 daemon 自写 /Library/Logs/Cellar/daemon.log
+	     （persistLog——root:admin 0640，8MB rotate）。 -->
 	<key>MachServices</key>
 	<dict>
 		<key>com.cellar.daemon</key>

@@ -250,20 +250,90 @@ struct UninstallCommand: ParsableCommand {
     }
 }
 
-/// 安装/卸载（规格 §4；本文件内聚——安装器蓝图 Tools/com.cellar.daemon.plist）。
+/// 安装/卸载（规格 §4；本文件内聚——daemon 源路径自可执行位置推导（B5-5 去 CWD 化），
+/// plist 模板内嵌常量与 Tools/com.cellar.daemon.plist 同文（CellarCoreCheck 一致性
+/// 源钉防漂移））。
 enum DaemonInstaller {
-    static let helperSource = ".build/release/cellar-daemon"   // 相对当前工作目录
     static let helperPath = "/Library/PrivilegedHelperTools/com.cellar.daemon"
-    static let plistSource = "Tools/com.cellar.daemon.plist"   // 相对当前工作目录
     static let plistPath = "/Library/LaunchDaemons/com.cellar.daemon.plist"
     static let policyDirectory = "/Library/Application Support/Cellar"
     static let logDirectory = "/Library/Logs/Cellar"
 
+    /// daemon 二进制源路径（0.23.11 B5-5）：自本可执行文件位置推导仓库根——
+    /// .build/release/cellar → 上三级 = 仓库根（解析 symlink + 三级上溯 + 百分号
+    /// 解码核心在 CellarCore.DaemonRegistration.helperSourceRoot——CellarCoreCheck
+    /// 直测可达：同包 executable target 不可 import 的架构事实，方案 §2.5 直测要求
+    /// 经该拆分落实，偏差登记）。**原 CWD 相对写法为提权面**（同名产物路径）：用户
+    /// 在攻击者可控目录执行 `sudo cellar install` 时解析到预置文件 → root copyItem
+    /// + chmod 0755 → launchd root 执行（任意代码提权）。推导失败（非标准 SPM 布局/
+    /// 可执行位置缺席）→ 显式报错拒装（防静默回退 CWD 解析——报错文案不含任何
+    /// CWD 兜底指引）。推导字面量仅存在于本函数内（下方组合处——CellarCoreCheck
+    /// 全文件计数钉 1）。
+    static func helperSourcePath(executablePath: String?) throws -> String {
+        guard let executablePath else { throw CocoaError(.fileNoSuchFile) }
+        guard let repoRoot = DaemonRegistration.helperSourceRoot(fromExecutablePath: executablePath) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let source = URL(fileURLWithPath: repoRoot)
+            .appendingPathComponent(".build/release/cellar-daemon").path
+        guard FileManager.default.fileExists(atPath: source) else {
+            print("❌ 未找到编译产物 \(source)（自可执行位置推导；请先 swift build -c release）")
+            throw ExitCode(1)
+        }
+        return source
+    }
+
+    /// 手工路线 LaunchDaemon plist 模板（0.23.11 B5-5 内嵌——原 CWD 相对读
+    /// "Tools/com.cellar.daemon.plist" 为提权面同源）。**内容须与
+    /// Tools/com.cellar.daemon.plist 保持一致**（CellarCoreCheck 一致性源钉断言
+    /// 两者防漂移）；StandardErrorPath 已随 B5-4 删除（两路线日志统一由 daemon
+    /// persistLog 自写）。
+    private static let plistTemplate = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+        	<key>Label</key>
+        	<string>com.cellar.daemon</string>
+        	<key>ProgramArguments</key>
+        	<array>
+        		<string>/Library/PrivilegedHelperTools/com.cellar.daemon</string>
+        	</array>
+        	<key>RunAtLoad</key>
+        	<true/>
+        	<!-- KeepAlive 必须为字典形态 {SuccessfulExit:false}（评审 A-1/P0）：布尔 true
+        	     会在干净退出（SIGTERM 恢复动作）后重拉 daemon，把恢复动作静默撤销；
+        	     语义 = 仅崩溃/非零退出才重启。 -->
+        	<key>KeepAlive</key>
+        	<dict>
+        		<key>SuccessfulExit</key>
+        		<false/>
+        	</dict>
+        	<!-- ExitTimeOut=10：恢复含一次 SMC 写（写使能 00000000）。 -->
+        	<key>ExitTimeOut</key>
+        	<integer>10</integer>
+        	<!-- 无 StandardErrorPath：重定向目录缺失时 launchd 在 exec 前打开会失败，最坏
+        	     情形 job 无法 spawn、自愈代码永远没机会跑（App 内嵌模板同款教训注释钉死）；
+        	     0.23.11 B5-4 起两路线日志统一由 daemon 自写 /Library/Logs/Cellar/daemon.log
+        	     （persistLog——root:admin 0640，8MB rotate）。 -->
+        	<key>MachServices</key>
+        	<dict>
+        		<key>com.cellar.daemon</key>
+        		<true/>
+        	</dict>
+        	<key>ProcessType</key>
+        	<string>Background</string>
+        </dict>
+        </plist>
+        """
+
     static func install() throws {
-        // 1. 校验 daemon 产物（target 名即 cellar-daemon）。
+        // 1. 校验 daemon 产物（target 名即 cellar-daemon；源路径自可执行位置推导
+        //    ——0.23.11 B5-5 去 CWD 化，推导失败显式报错拒装）。
         let fileManager = FileManager.default
+        let helperSource = try helperSourcePath(executablePath: Bundle.main.executableURL?.path)
         guard fileManager.fileExists(atPath: helperSource), fileManager.isExecutableFile(atPath: helperSource) else {
-            print("❌ 未找到编译产物 \(helperSource)（相对当前工作目录解析）")
+            print("❌ 编译产物校验失败（缺失或不可执行）：\(helperSource)")
             print("   请先运行 swift build -c release，再执行 cellar install")
             throw ExitCode(1)
         }
@@ -306,7 +376,6 @@ enum DaemonInstaller {
 
         // 4. 以模板为蓝本写 plist + 创建日志/策略目录（root:wheel 0755）。
         do {
-            let template = try String(contentsOfFile: plistSource, encoding: .utf8)
             try fileManager.createDirectory(atPath: logDirectory, withIntermediateDirectories: true)
             try fileManager.createDirectory(atPath: policyDirectory, withIntermediateDirectories: true)
             // 归一化 root:wheel 0755（createDirectory 组继承父目录 admin——曾导致
@@ -330,7 +399,7 @@ enum DaemonInstaller {
                 print("❌ 数据目录属主/权限校验失败（须 root 属主且无组/其他可写位）：\(directory)")
                 throw ExitCode(1)
             }
-            try template.write(toFile: plistPath, atomically: true, encoding: .utf8)
+            try plistTemplate.write(toFile: plistPath, atomically: true, encoding: .utf8)
             chown(plistPath, 0, 0)
             chmod(plistPath, 0o644)
         } catch {

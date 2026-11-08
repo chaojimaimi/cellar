@@ -2,8 +2,7 @@
 //
 // 按域拆独立文件（照 FullChargeAutoRestoreDomain 源钉先例；直测 + 源码钉面）。
 // 覆盖清单（方案 §2 逐项，每项注明机制：纯函数直测 / 源码钉面；随批分 commit
-// 递增——② B5-2/3 XPCServer 源钉、③ B5-4 persistLog/双 plist 源钉、④ B5-5
-// 推导核心直测与模板一致性随 commit 2/3 追加）：
+// 递增——①② 随 commit 1/2 先行，本 commit 收全 ①..④）：
 // ① B5-1 固定名临时文件 O_EXCL 纵深加固（纵深-1..3）：ActionStore.save 直测
 //    （预置 symlink tmp → fail-closed 拒写 + 哨兵未改写；普通残留 → 清理后成功）
 //    + 其余 4 处 store O_EXCL 序列源钉（5 处独立实现为格式红线——逐文件钉）。
@@ -146,4 +145,141 @@ func runSecurityHardeningDomainScenarios() throws {
     check(xpcServerSrc.contains("try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)"),
           "纵深-5", "`try Data(...)` 原样（load 内部自捕获失败——读失败 detectorError 形态照常入缓存）")
 
+    // ---- ③ B5-4：daemon.log 自写统一 0640 源钉（方案 §2.4 场景段）----
+    let topoffExtSrc = source("Sources/cellar-daemon/DaemonCore+Topoff.swift")
+
+    // 纵深-6：persistLog 双写 + 串行锁——stderr 保留（主路径永不失效）+
+    // writeDaemonLog 第二落点；static NSLock 串行化（DaemonCore 主锁 ~40 调用点
+    // + watchdog 独立队列遗言例外）；失败一次性告警标记防刷屏。
+    check(topoffExtSrc.contains(#"FileHandle.standardError.write(Data((message + "\n").utf8))"#)
+            && topoffExtSrc.contains("writeDaemonLog(message)"),
+          "纵深-6", "persistLog 双写（stderr 保留 + writeDaemonLog 自写）在位")
+    check(topoffExtSrc.contains("private static let logLock = NSLock()")
+            && topoffExtSrc.contains("logLock.lock()")
+            && topoffExtSrc.contains("defer { logLock.unlock() }"),
+          "纵深-6", "writeDaemonLog 自带 static NSLock 全程串行（watchdog 并发例外收口）")
+    check(topoffExtSrc.contains("daemonLogFailureAnnounced"),
+          "纵深-6", "失败一次性告警标记在位（daemonLogFailureAnnounced 防刷屏）")
+
+    // 纵深-7：目录防护先行（防新增 CWE-59/61 root 写原语）——verifyRootOwnedDirectory
+    // 恰好两处判定（既有目录直接判 + createDirectory 后复核一次，单调用窗闭窗）+
+    // root 上下文建档归一化 root:wheel 0755。
+    check(topoffExtSrc.components(separatedBy: "verifyRootOwnedDirectory(path: daemonLogDirectory)").count - 1 == 2,
+          "纵深-7", "目录防护判定恰好两处（既有目录判 + create 后复核——P3-b 单调用窗闭窗）")
+    check(topoffExtSrc.contains("atPath: daemonLogDirectory, withIntermediateDirectories: true")
+            && topoffExtSrc.contains("chown(daemonLogDirectory, 0, 0)")
+            && topoffExtSrc.contains("chmod(daemonLogDirectory, 0o755)"),
+          "纵深-7", "缺席时 createDirectory + 归一化 root:wheel 0755（自举先例同款）")
+
+    // 纵深-8：rotate ≥8MB + append 属主/权限定版——阈值钉值（8MB 字面量）；
+    // rename 前对将轮转文件 chown root:admin + chmod 0640（daemon.log.1 同批收敛）；
+    // append open O_CREAT|O_WRONLY|O_APPEND 0o640 → chown(0,80) → chmod 0640 每次
+    // double-guard（launchd 历史档 0644 首写即矫正，无需独立自举收敛段）。
+    check(topoffExtSrc.contains("daemonLogRotateBytes = 8 * 1024 * 1024"),
+          "纵深-8", "rotate 阈值钉值 8MB（8 * 1024 * 1024 字面量）")
+    check(topoffExtSrc.contains("logStatus.st_size >= off_t(daemonLogRotateBytes)")
+            && topoffExtSrc.contains("rename(daemonLogPath, daemonLogRotatedPath)")
+            && topoffExtSrc.contains(#"daemonLogRotatedPath = daemonLogDirectory + "/daemon.log.1""#),
+          "纵深-8", "rotate 判定 + rename daemon.log.1（单份覆盖旧档）在位")
+    check(topoffExtSrc.components(separatedBy: "chown(daemonLogPath, 0, 80)").count - 1 == 2
+            && topoffExtSrc.components(separatedBy: "chmod(daemonLogPath, 0o640)").count - 1 == 2,
+          "纵深-8", "root:admin 0640 双保恰好两处（rotate 前 + append 每次 double-guard）")
+    check(topoffExtSrc.contains("open(daemonLogPath, O_CREAT | O_WRONLY | O_APPEND, 0o640)")
+            && topoffExtSrc.contains(#"daemonLogPath = daemonLogDirectory + "/daemon.log""#),
+          "纵深-8", "append open 序列（O_CREAT|O_WRONLY|O_APPEND 0o640）+ 路径常量在位")
+
+    // 纵深-9：双 plist 无 StandardErrorPath（键级断言——App 模板含「无
+    // StandardErrorPath」教训注释，字符串级 contains 反断言恒红不成立；两路线
+    // 日志统一由 daemon persistLog 自写，launchd 重定向面永久退出）。
+    do {
+        for plistPath in ["App/Tools/com.cellar.daemon.plist", "Tools/com.cellar.daemon.plist"] {
+            let url = repoRoot.appendingPathComponent(plistPath)
+            var root: [String: Any]?
+            if let data = try? Data(contentsOf: url),
+               let raw = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
+                root = raw as? [String: Any]
+            }
+            check(root != nil && root?["StandardErrorPath"] == nil,
+                  "纵深-9", "\(plistPath)：可解析且无 StandardErrorPath 键")
+        }
+    }
+
+    // ---- ④ B5-5：install 源路径去 CWD 化（方案 §2.5 场景段）----
+
+    // 纵深-10：helperSourceRoot 推导核心直测——临时 SPM 形态目录树（.build/
+    // release/cellar）推导成功路径（symlink 解析 + 三级上溯 + 百分号解码）+ nil
+    // 拒绝（可执行位置缺席）。CLI 包装层（组合 .build/release/cellar-daemon +
+    // fileExists + print + ExitCode）由纵深-11 源钉。推导核心落
+    // CellarCore.DaemonRegistration（同包 executable target 不可 import 的架构
+    // 事实——方案 §2.5 直测要求经该拆分落实，偏差登记）。
+    do {
+        let fakeRepo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cellar-b55-repo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: fakeRepo.appendingPathComponent(".build/release"),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fakeRepo) }
+        let fakeExecutable = fakeRepo.appendingPathComponent(".build/release/cellar")
+        try Data("mach-o".utf8).write(to: fakeExecutable)
+
+        expectEqual(
+            DaemonRegistration.helperSourceRoot(fromExecutablePath: fakeExecutable.path),
+            fakeRepo.path,
+            "纵深-10", "SPM 形态目录树推导成功路径（三级上溯 = 仓库根）")
+        // symlink 形态（PATH 形态调用时 argv 可执行为 symlink——解析后上溯）。
+        let linkURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cellar-b55-link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(
+            atPath: linkURL.path, withDestinationPath: fakeExecutable.path)
+        defer { try? FileManager.default.removeItem(at: linkURL) }
+        expectEqual(
+            DaemonRegistration.helperSourceRoot(fromExecutablePath: linkURL.path),
+            fakeRepo.path,
+            "纵深-10", "symlink 形态可执行解析后推导（P2-b——不解析则三级上溯误拒）")
+        expectEqual(
+            DaemonRegistration.helperSourceRoot(fromExecutablePath: nil),
+            nil as String?,
+            "纵深-10", "executablePath nil → nil（CLI 层显式报错拒装——禁回退 CWD）")
+    }
+
+    // 纵深-11：CLI 层源钉——helperSource 调用点无 CWD 字面量/表述残留（推导
+    // 字面量仅存在于推导函数内）；CWD 相对 plist 读取整链删除；plistTemplate
+    // 内嵌常量 + 写入点改用常量；executablePath 来源钉死（_NSGetExecutablePath
+    // 形态——不受调用者 CWD/argv[0] 操纵）。
+    let cliSource = source("Sources/CellarCLI/Commands/PlaceholderCommands.swift")
+    check(cliSource.components(separatedBy: ".build/release/cellar-daemon").count - 1 == 1,
+          "纵深-11", "`.build/release/cellar-daemon` 字面量仅在推导函数内（无 CWD 调用点残留）")
+    check(!cliSource.contains("相对当前工作目录"),
+          "纵深-11", "CWD 相对路径表述零残留（错误文案同步更新）")
+    check(!cliSource.contains("plistSource") && !cliSource.contains("String(contentsOfFile"),
+          "纵深-11", "CWD 相对 plist 读取整链删除（提权面同源消除）")
+    check(cliSource.contains("private static let plistTemplate")
+            && cliSource.contains("try plistTemplate.write(toFile: plistPath, atomically: true, encoding: .utf8)"),
+          "纵深-11", "plistTemplate 内嵌常量 + 写入点改用常量（消除 CWD 文件读依赖）")
+    check(cliSource.contains("helperSourcePath(executablePath: Bundle.main.executableURL?.path)")
+            && cliSource.contains("DaemonRegistration.helperSourceRoot(fromExecutablePath: executablePath)"),
+          "纵深-11", "executablePath 来源 = Bundle.main.executableURL（_NSGetExecutablePath 形态）+ 推导核心接线在位")
+
+    // 纵深-12：内嵌 plistTemplate == Tools 模板文件内容（双方剥离全部空白字符后
+    // 逐字节比对——Tools 为 tab 缩进、Swift 多行常量为字面量缩进，仅 trim 行尾
+    // 会恒红；plist 数据面无空白敏感内容，该定义安全）。
+    do {
+        let templateMarker = #"private static let plistTemplate = """"#
+        if let markerRange = cliSource.range(of: templateMarker) {
+            let afterMarker = cliSource[markerRange.upperBound...]
+            if let closeRange = afterMarker.range(of: #"""""#) {
+                let templateText = String(afterMarker[..<closeRange.lowerBound])
+                let toolsText = source("Tools/com.cellar.daemon.plist")
+                func stripped(_ text: String) -> String {
+                    String(text.filter { !($0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r") })
+                }
+                expectEqual(stripped(templateText), stripped(toolsText),
+                            "纵深-12", "内嵌模板 == Tools 文件内容（剥全部空白逐字节一致——防漂移）")
+            } else {
+                check(false, "纵深-12", "plistTemplate 闭界未找到（多行字面量形态破坏）")
+            }
+        } else {
+            check(false, "纵深-12", "plistTemplate 开界未找到（内嵌常量缺失）")
+        }
+    }
 }

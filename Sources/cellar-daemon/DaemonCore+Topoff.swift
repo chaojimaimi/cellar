@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CellarCore
 
 // MARK: - WP2 topoffprotection <80% 限充通道（daemon 侧；方案 §3 全部）
@@ -491,11 +492,118 @@ extension DaemonCore {
         }
     }
 
-    /// 持久可观测（0.20.1 P0——wedge 事件教训）：关键执法动作直写 stderr（plist 重定向
-    /// → /Library/Logs/Cellar/daemon.log）。LogEvent 内存环随进程消失（wedge 后事件
-    /// 不可溯源的直接成因），关键动作必须落持久文件。调用方持锁串行（写入原子性足够）。
+    // MARK: - daemon.log 自写（0.23.11 B5-4 双路线统一）
+
+    /// 文件日志目录/路径（CLI DaemonInstaller.logDirectory 同值——install 建目录
+    /// 路线与 daemon 自写路线同目录；App BTM 路线无人建目录 → 本函数自建）。
+    private static let daemonLogDirectory = "/Library/Logs/Cellar"
+    private static let daemonLogPath = daemonLogDirectory + "/daemon.log"
+    /// 轮转档（单份，覆盖旧档）。
+    private static let daemonLogRotatedPath = daemonLogDirectory + "/daemon.log.1"
+    /// rotate 阈值（≥8MB 轮转单份 daemon.log.1）。
+    private static let daemonLogRotateBytes = 8 * 1024 * 1024
+    /// 文件日志全程串行锁（stat/rotate/open/write）：DaemonCore 主锁内约 40 处
+    /// persistLog 调用 + main.swift watchdog 独立队列遗言路径 ≥1 处例外——本锁
+    /// 串行化文件面（R6：遗言与主线程并发写互不撕裂；O_APPEND 单写原子兜底）。
+    private static let logLock = NSLock()
+    /// 文件日志失败一次性告警标记（logLock 内访问——B3-1 词表缓存同款纪律）。
+    nonisolated(unsafe) private static var daemonLogFailureAnnounced = false
+    /// 文件日志降级告警通道（一次性 error，防每刷）。
+    private static let daemonLogLogger = Logger(subsystem: "com.cellar", category: "daemon-log")
+
+    /// 关键动作持久日志（0.23.11 B5-4 双路线统一）：stderr 保留（进程调试）+
+    /// 自写 /Library/Logs/Cellar/daemon.log（**root:admin 0640**——与 daemon 鉴权
+    /// 边界一致：admin 组可读排障，非 admin 本地用户不可读；8MB rotate 单份
+    /// daemon.log.1）。**不依赖 launchd StandardErrorPath**（App BTM 路线内嵌
+    /// plist 无该键——spawn 失败教训注释钉死；CLI 手工路线模板 0.23.11 起同步
+    /// 删除，两路线日志统一由本函数承担）。**并发模型（plan-reviewer P2-a 修订）**：
+    /// DaemonCore 锁内约 40 处调用 + watchdog 独立队列 ≥1 处例外（main.swift:199-216
+    /// 遗言路径）——writeDaemonLog 自带 static NSLock 串行化 stat/rotate/open/write。
+    /// 写失败降级 stderr-only + 一次性 os_log error（不每刷）。0.20.1 P0 溯源目标
+    /// 在 App 主路线达成（0.20.1 时点 stderr 输出被 launchd 丢弃——persistLog 旧注记）。
     static func persistLog(_ message: String) {
         FileHandle.standardError.write(Data((message + "\n").utf8))
+        writeDaemonLog(message)
+    }
+
+    /// daemon.log 自写（stderr 之外的第二落点）。全程持 logLock；任一失败 →
+    /// 本函数 return（stderr-only 降级）+ 一次性 error——stderr 主路径永不失效。
+    /// 步骤：①目录防护（CWE-59/61——投毒目录下 append-open 跟随 symlink = root
+    /// 写任意文件，先于一切写路径判定）；②rotate ≥8MB（rename 前收敛属主/权限）；
+    /// ③append 写 + 属主/权限定版（每次写路径双保，无需独立自举收敛段）。
+    private static func writeDaemonLog(_ message: String) {
+        logLock.lock()
+        defer { logLock.unlock() }
+
+        // 1. 目录防护先行：照 AppSide/CLI 目录纪律同款判定 verifyRootOwnedDirectory
+        //    （uid==0 ∧ 无组/其他写位）。已存在且判定不过 → 疑似预创建投毒目录，
+        //    不写文件日志（日志非关键路径，不 fail-secure 退出）。目录合规后
+        //    （root 专属写位）预置 symlink 不可植入，后续 chown/chmod 收敛安全。
+        var directoryStatus = stat()
+        if stat(daemonLogDirectory, &directoryStatus) == 0 {
+            guard verifyRootOwnedDirectory(path: daemonLogDirectory) else {
+                announceFileLogDegraded("数据目录疑似非 root 属主，文件日志停用")
+                return
+            }
+        } else {
+            // 不存在 → createDirectory（root 上下文建）+ 归一化 root:wheel 0755
+            // （照 CLI install/main.swift 自举先例）+ 复核一次 verifyRootOwnedDirectory
+            // （stat→createDirectory 单调用窗闭窗——不过则当次降级 stderr-only）。
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: daemonLogDirectory, withIntermediateDirectories: true)
+            } catch {
+                announceFileLogDegraded("日志目录创建失败（\(error.localizedDescription)）")
+                return
+            }
+            chown(daemonLogDirectory, 0, 0)
+            chmod(daemonLogDirectory, 0o755)
+            guard verifyRootOwnedDirectory(path: daemonLogDirectory) else {
+                announceFileLogDegraded("数据目录疑似非 root 属主，文件日志停用")
+                return
+            }
+        }
+
+        // 2. rotate：写前 stat daemon.log size ≥ 8MB → rename 前对将轮转文件
+        //    chown root:admin + chmod 0640（daemon.log.1 收敛挂此，与 daemon.log
+        //    同批）→ rename 原子覆盖旧档。
+        var logStatus = stat()
+        if stat(daemonLogPath, &logStatus) == 0,
+           logStatus.st_size >= off_t(daemonLogRotateBytes) {
+            chown(daemonLogPath, 0, 80)   // root:admin（gid 80——鉴权模型信任 admin 组）
+            chmod(daemonLogPath, 0o640)
+            if rename(daemonLogPath, daemonLogRotatedPath) != 0 {
+                announceFileLogDegraded("日志轮转 rename 失败（errno \(errno)）——本拍继续 append")
+            }
+        }
+
+        // 3. append 写 + 属主/权限定版（root:admin 0640）：open mode 受 umask、
+        //    launchd 历史建档 0644——每次写路径双保（chown/chmod），launchd 历史
+        //    档在目录门 + logLock 内的首写即被矫正，无需独立自举收敛段。
+        let fd = open(daemonLogPath, O_CREAT | O_WRONLY | O_APPEND, 0o640)
+        guard fd >= 0 else {
+            announceFileLogDegraded("日志文件打开失败（errno \(errno)）")
+            return
+        }
+        chown(daemonLogPath, 0, 80)
+        chmod(daemonLogPath, 0o640)
+        let line = Data((message + "\n").utf8)
+        let written = line.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return write(fd, base, raw.count)
+        }
+        close(fd)
+        if written < line.count {
+            announceFileLogDegraded("日志写入失败（written \(written)/\(line.count)）")
+        }
+    }
+
+    /// 文件日志降级一次性告警（daemonLogFailureAnnounced 防刷屏；stderr 主路径
+    /// 永不失效，降级仅指文件侧——日志非关键路径不阻塞执法动作）。
+    private static func announceFileLogDegraded(_ reason: String) {
+        guard !daemonLogFailureAnnounced else { return }
+        daemonLogFailureAnnounced = true
+        daemonLogLogger.error("daemon 文件日志停用（stderr-only 降级）：\(reason, privacy: .public)")
     }
 
     /// 子进程捕获（stdout+stderr 合并 + 退出码；DoctorCommand 同款实现——daemon root
