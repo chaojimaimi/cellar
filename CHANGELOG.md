@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.9-alpha]
+
+> 背景：0.23.8 B3-3 真机回归缺陷修复——面板在 MenuBarExtra `.window` 容器下**塌缩成细条**（ScrollView 不向系统报告内容理想高，MenuBarExtra 开窗按理想尺寸取 → 取到 ScrollView 最小值；B3 方案 R2 预判的容器自适应风险应验，golden/907 静态门禁不覆盖容器行为，真机运行才暴露——流程教训：**App 层 UI 容器改动必须真机运行验证**，已登记）。修复经真机验证（构建产物独立运行，用户确认面板形态恢复）后发版；零 daemon 逻辑改动（升级无需重装守护进程）；wire 零 schema 变化。
+
+### Fixed
+
+- **面板塌缩（0.23.8 回归）**：原 `ScrollView { … }.frame(maxHeight:)` 直挂——ScrollView 的理想高度是自身最小值而非内容高度，MenuBarExtra `.window` 按内容理想尺寸开窗 → 面板塌缩成一条横带、内容不可见（真机截图实证）。修复 = `onGeometryChange` 实测内容自然高（ScrollView 对子视图纵向提议无界 → VStack 报告自然高）+ `@State` 持久 + 显示高 = **min(自然高, 屏幕可用上限)**：首帧未测量不约束高度（自然撑开，0.23.7 形态）；稳态内容矮于上限时 = 自然高（**视觉与 0.23.7 零差异**）；分区全展开超上限时封顶滚动（B3-3 原目标达成——页脚可达）。内容宽恒定 340（Group 级 frame），测量高与视口高解耦无反馈环；背景/网格底纹/边框保持在 ScrollView 外层不随内容滚动。
+
 ## [0.23.8-alpha]
 
 > 背景：修复路标 B3「性能批」——统计页 hover 逐帧整页重投影消除（四卡状态下沉）+ CellarTheme 手写 Equatable 与 resolve 词表缓存 + 面板小屏滚动 + NumberFormatter 静态缓存 + R6 日程宿主 busy 门钉注释收口（B2 必办登记）；wire 零 schema 变化（**零 daemon 逻辑改动**——升级 App 无需重装守护进程）；方案经 plan-reviewer 两轮审核（REVISE→修订→PASS：LinearGradient 在当前 SDK 无 Equatable 改手写 ==、Swift 6 模式 static var 须 nonisolated(unsafe)、R6 实为四处门非三处）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：== 18 字段逐一核对无遗漏、锁纪律无持锁跨 await、投影空白归一后逐字相同、golden 384=384 经独立基线重建证实）；907 场景全绿、golden 失败集合 384=384 逐条零差异、l10n 477 key 零变化、coverage 92.11%、CellarApp BUILD SUCCEEDED。

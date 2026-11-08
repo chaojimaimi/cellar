@@ -61,12 +61,16 @@ struct PanelView: View {
         }
     }
 
-    /// 常规面板（引导不活跃时）。0.23.8 B3-3：包 ScrollView(.vertical) +
-    /// frame(maxHeight: maxPanelHeight)——小屏（NSScreen.visibleFrame 受限）或
-    /// 分区全展开内容超菜单栏下方可视高时滚动，页脚（含退出入口）可达；内容
-    /// 矮于上限时 maxHeight 是上限非地板，ScrollView 自然尺寸 = 内容尺寸，
-    /// 常规屏面板视觉零变化。自绘背景/网格底纹/边框移至 ScrollView 外层——
-    /// 背景不随内容滚动，面板纹理恒定（滚动指示条由容器自动显隐）。
+    /// 常规面板（引导不活跃时）。0.23.8 B3-3：包 ScrollView(.vertical) 小屏滚动
+    /// ——**0.23.8 真机回归失败修复（0.23.9）**：原 `frame(maxHeight:)` 直挂
+    /// ScrollView 在 MenuBarExtra `.window` 容器下面板塌缩成一条（ScrollView
+    /// 不向系统报告内容理想高，MenuBarExtra 开窗按理想尺寸取 → 取到 ScrollView
+    /// 的最小值；R2 预判的容器自适应风险应验，golden/907 静态门禁不覆盖容器
+    /// 行为，真机运行才暴露）。修复 = `onGeometryChange` 实测内容自然高，
+    /// 显示高 = min(自然高, 上限)：首帧未测量不约束高度（自然撑开，同 0.23.7
+    /// 形态）；稳态内容矮于上限时 = 自然高（视觉与 0.23.7 零差异）；超上限封顶
+    /// 滚动（页脚可达）。内容宽恒定 340（Group 级 frame），测量高与视口高解耦
+    /// ——无反馈环。自绘背景/网格底纹/边框在 ScrollView 外层（不随内容滚动）。
     private var regularPanel: some View {
         ScrollView(.vertical) {
             VStack(spacing: 14) {
@@ -146,8 +150,16 @@ struct PanelView: View {
                 PanelFooterView()
             }
             .padding(18)
+            // 实测内容自然高（ScrollView 对子视图的纵向提议 = 无界，VStack 报
+            // 告自然高——即「装得下时面板应有的高度」）。@State 跨帧持久，分区
+            // 展开/收起变化时回调跟随（面板长高直到上限）。
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { naturalPanelHeight = $0 }
         }
-        .frame(maxHeight: maxPanelHeight)
+        // 显示高 = min(自然高, 上限)；0 = 首帧未测量 → nil 不约束（自然撑开，
+        // 防 MenuBarExtra 按理想尺寸开窗塌缩——0.23.8 真机塌缩的修复点）。
+        .frame(height: panelDisplayHeight)
         // 自绘面板背景（WP3 §3.2；spike S2 定版：容器圆角贴合、无白边/脏色）——
         // nil = 不画（native 走系统容器材质，A 原生零回归）。0.23.8 B3-3：原挂
         // VStack，现移 ScrollView 外层——背景不随内容滚动，面板纹理恒定。
@@ -169,12 +181,21 @@ struct PanelView: View {
         }
     }
 
+    /// 内容自然高实测值（0.23.9 B3-3 修复；0 = 首帧未测量哨兵）。
+    @State private var naturalPanelHeight: CGFloat = 0
+
     /// 面板最大高（0.23.8 B3-3）：NSScreen.visibleFrame 已排除菜单栏与 Dock，
     /// 面板锚定菜单栏下方 → 可用高 ≈ visibleFrame.height；-24 保守余量（阴影/
     /// 边距）。nil 兜底 664（= 640 + 24）。下限 360：极小屏仍保滚动可用而非塌缩。
     private var maxPanelHeight: CGFloat {
         let visible = NSScreen.main?.visibleFrame.height ?? 664
         return max(360, visible - 24)
+    }
+
+    /// 显示高（0.23.9 B3-3 修复）：未测量（0）→ nil 不约束；已测量 →
+    /// min(自然高, 上限)——矮于上限零变化，超上限封顶滚动。
+    private var panelDisplayHeight: CGFloat? {
+        naturalPanelHeight > 0 ? min(naturalPanelHeight, maxPanelHeight) : nil
     }
 
     // MARK: - 面板生命周期（§2.8：只做换档 + 遥测档启停；安装刷新在 App 启动）
