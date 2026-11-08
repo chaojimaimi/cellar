@@ -26,6 +26,16 @@ final class StatusController: ObservableObject {
     /// pending 打开「飞行中第二笔提交」窗口后的前置防线，方案 §1/§3.3）。非视觉
     /// 态不入 @Published。
     private var fanQueuedApply: (wire: FanWire, field: FanPendingField)?
+    /// runControl 单槽排队（latest-wins，深度恒 1——fan fanQueuedApply 同构）：
+    /// busy 期收到新提交 → 暂存整笔调用（attempt/operation/feedback/onSuccess），
+    /// 回包收尾后自动补发。0.23.7 B2-3：修「busy 期点击静默丢弃」。
+    private struct QueuedControlCall {
+        let attempt: ControlAttempt
+        let operation: @Sendable () throws -> DaemonStatus
+        let successFeedback: String
+        let onSuccess: (@MainActor (DaemonStatus) -> Void)?
+    }
+    private var queuedControlCall: QueuedControlCall?
     @Published private(set) var controlFeedback: ControlFeedback?
     /// MagSafe LED 独立轻路径状态槽（v1.10 M2）：pending = LED 在途（不进全局 busy，防通用页全节闪灰）；
     /// feedback = 组件内轻提示（成功 5s 清 / 失败常驻，不写全局 controlFeedback——横幅归属隔离）。
@@ -975,15 +985,31 @@ final class StatusController: ObservableObject {
         }
     }
 
-    /// 统一控制执行器：busy 防重入（非静默）+ XPC 后台 + 结果回主 actor。
-    /// lastAttempt 在入口记录（分支① 重试依据），成功清除（成功反馈自动清横幅）。
+    /// 统一控制执行器：busy 期提交入单槽队列（latest-wins），回包后自动补发
+    /// ——0.23.7 B2-3 前为静默丢弃（原注释自称「非静默」失实）+ XPC 后台 +
+    /// 结果回主 actor。lastAttempt 在入口记录（分支① 重试依据），成功清除
+    /// （成功反馈自动清横幅）。
     private func runControl(
         attempt: ControlAttempt,
         operation: @escaping @Sendable () throws -> DaemonStatus,
         successFeedback: String,
         onSuccess: (@MainActor (DaemonStatus) -> Void)? = nil
     ) {
-        guard !busy else { return }
+        guard !busy else {
+            // 0.23.7 B2-3：busy 期提交入单槽（latest-wins 覆盖旧槽），回包后
+            // finishControl 尾部经完整入口补发——13 个 runControl 入口
+            // （applyLimits/toggleCharging/fullOnce/cancelFullOnce/dischargeToLimit/
+            // cancelDischarge/calibrateStart/calibrateCancel/applyCalibrationSchedule/
+            // setThermal/applyChargeSchedule/setChHysteresisEnabled/restoreChargeLimit）
+            // 全部自动获益。
+            queuedControlCall = QueuedControlCall(
+                attempt: attempt,
+                operation: operation,
+                successFeedback: successFeedback,
+                onSuccess: onSuccess
+            )
+            return
+        }
         busy = true
         controlFeedback = nil
         lastAttempt = attempt
@@ -1019,6 +1045,22 @@ final class StatusController: ObservableObject {
             onSuccess?(status)
         case .failure(let error):
             classifyControlFailure(error) { self.controlFeedback = $0 }
+        }
+        // 0.23.7 B2-3 单槽补发（fan finishFanApply 同构）：补发经**完整 runControl
+        // 入口** ≡ 用户回包后手动直发一笔——lastAttempt 重记录 + controlFeedback
+        // 清旧（fan R2 P3 教训：补发笔失败时重试槽不被前笔清空，重试钮不退化）；
+        // 补发失败照常 classifyControlFailure。
+        // code-review P0 教训钉注释（fan :718-726 同款）：**先清槽再补发**——若带
+        // 着旧槽调 runControl，补发笔会被入口 guard busy 弹回队列且再无本函数
+        // 驱动源，通道永久卡死（busy 已复位但槽恒非 nil，静默滞留等下一笔提交）。
+        if let queued = queuedControlCall {
+            queuedControlCall = nil
+            runControl(
+                attempt: queued.attempt,
+                operation: queued.operation,
+                successFeedback: queued.successFeedback,
+                onSuccess: queued.onSuccess
+            )
         }
     }
 
