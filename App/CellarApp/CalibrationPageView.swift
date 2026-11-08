@@ -24,6 +24,20 @@ struct CalibrationPageView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                // 主窗挂点（0.23.7 B2-6 校准页扩挂，B1 登记 P2 收口）——与面板
+                // 同源反馈（controlFeedback/statusFailure/失联连接态），文案沿用
+                // panel.banner.*（0.23.7 B2-4 文案已统一指主窗）；参数照 B1-2
+                // ControlPageView/GeneralSections 挂点同构。无失败态 bannerContent
+                // 返回 nil 零渲染，页面常规态零布局变化。
+                AlertBanner(
+                    feedback: statusController.controlFeedback,
+                    connection: statusController.connection,
+                    lastAttemptSummary: statusController.lastAttempt?.summary,
+                    statusFailureMessage: statusController.statusFailure?.message,
+                    onRetry: statusController.lastAttempt == nil
+                        ? { statusController.refreshNow() }
+                        : { statusController.retryLastAttempt() }
+                )
                 Text(CellarL10n.s("calibration.page.intro"))
                     .font(.system(size: 13))
                     .foregroundStyle(theme.secondaryText)

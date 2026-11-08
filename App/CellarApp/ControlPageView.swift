@@ -19,8 +19,11 @@ struct ControlPageView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // 主窗挂点（0.23.6 B1-2）——与面板同源反馈（controlFeedback/statusFailure/
-                // 失联连接态），文案沿用 panel.banner.*（stale 文案分宿主改写归 B2）。
+                header
+                // 主窗挂点（0.23.6 B1-2；0.23.7 B2-6 移至页题之后——四主窗页横幅
+                // 位置统一「页题 → 横幅 → 内容」，页身份锚定顶部）——与面板同源
+                // 反馈（controlFeedback/statusFailure/失联连接态），文案沿用
+                // panel.banner.*（0.23.7 B2-4 文案已统一指主窗）。
                 AlertBanner(
                     feedback: statusController.controlFeedback,
                     connection: statusController.connection,
@@ -30,7 +33,6 @@ struct ControlPageView: View {
                         ? { statusController.refreshNow() }
                         : { statusController.retryLastAttempt() }
                 )
-                header
                 if statusController.daemonStatus != nil {
                     ControlSectionView()
                     Divider()
