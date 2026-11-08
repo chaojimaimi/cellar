@@ -1,3 +1,4 @@
+import AppKit
 import CellarCore
 import CellarUI
 import SwiftUI
@@ -60,87 +61,96 @@ struct PanelView: View {
         }
     }
 
-    /// 常规面板（引导不活跃时）。
+    /// 常规面板（引导不活跃时）。0.23.8 B3-3：包 ScrollView(.vertical) +
+    /// frame(maxHeight: maxPanelHeight)——小屏（NSScreen.visibleFrame 受限）或
+    /// 分区全展开内容超菜单栏下方可视高时滚动，页脚（含退出入口）可达；内容
+    /// 矮于上限时 maxHeight 是上限非地板，ScrollView 自然尺寸 = 内容尺寸，
+    /// 常规屏面板视觉零变化。自绘背景/网格底纹/边框移至 ScrollView 外层——
+    /// 背景不随内容滚动，面板纹理恒定（滚动指示条由容器自动显隐）。
     private var regularPanel: some View {
-        VStack(spacing: 14) {
-            AlertBanner(
-                feedback: statusController.controlFeedback,
-                connection: statusController.connection,
-                lastAttemptSummary: statusController.lastAttempt?.summary,
-                statusFailureMessage: statusController.statusFailure?.message,
-                onRetry: statusController.lastAttempt == nil
-                    ? { statusController.refreshNow() }
-                    : { statusController.retryLastAttempt() }
-            )
+        ScrollView(.vertical) {
+            VStack(spacing: 14) {
+                AlertBanner(
+                    feedback: statusController.controlFeedback,
+                    connection: statusController.connection,
+                    lastAttemptSummary: statusController.lastAttempt?.summary,
+                    statusFailureMessage: statusController.statusFailure?.message,
+                    onRetry: statusController.lastAttempt == nil
+                        ? { statusController.refreshNow() }
+                        : { statusController.retryLastAttempt() }
+                )
 
-            // 0.21.0 §3.2：校准抑制横幅（daemon 回读 calibrationSuspected——模式指纹
-            // 识别态；nil/false = 旧 daemon/26 平台/未识别 → 零渲染）。
-            CalibrationBanner(visible: statusController.daemonStatus?.calibrationSuspected == true)
+                // 0.21.0 §3.2：校准抑制横幅（daemon 回读 calibrationSuspected——模式指纹
+                // 识别态；nil/false = 旧 daemon/26 平台/未识别 → 零渲染）。
+                CalibrationBanner(visible: statusController.daemonStatus?.calibrationSuspected == true)
 
-            GaugeView(state: gaugeState)
-                .frame(width: 150, height: 150)
-                .padding(.top, 4)
+                GaugeView(state: gaugeState)
+                    .frame(width: 150, height: 150)
+                    .padding(.top, 4)
 
-            // WP2' §4.2：功率流向图（数据源 = App 侧 1s telemetry 快照——非
-            // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。0.19.4 §1.2：
-            // kind/batteryEdgeW 直取 flowModel(of:) 投影（FlowDiagramKind 单一
-            // 判据；数字随形态同源——遥测裁决时取遥测 |BP|/1000，与三角图边标签
-            // 同源，② 回退维持 |V×I|）。
-            PowerFlowView(
-                kind: panelFlowModel?.kind,
-                batteryEdgeW: panelFlowModel?.batteryEdgeW,
-                // Phase 5 v1.1：风扇状态行（仅 boost/hold 介入期显形；off 完全隐形）。
-                fanStatus: statusController.daemonStatus?.fan
-            )
+                // WP2' §4.2：功率流向图（数据源 = App 侧 1s telemetry 快照——非
+                // daemonStatus 30s 滞后字段；快照缺席 → 不渲染零占用）。0.19.4 §1.2：
+                // kind/batteryEdgeW 直取 flowModel(of:) 投影（FlowDiagramKind 单一
+                // 判据；数字随形态同源——遥测裁决时取遥测 |BP|/1000，与三角图边标签
+                // 同源，② 回退维持 |V×I|）。
+                PowerFlowView(
+                    kind: panelFlowModel?.kind,
+                    batteryEdgeW: panelFlowModel?.batteryEdgeW,
+                    // Phase 5 v1.1：风扇状态行（仅 boost/hold 介入期显形；off 完全隐形）。
+                    fanStatus: statusController.daemonStatus?.fan
+                )
 
-            // WP1：温度暂停注词接线——daemonStatus 与 batterySnapshot 在本组装点
-            // 交汇（方案 §2.4 数据流：App 侧直读遥测 + daemon 轮询两源并存）。
-            // 0.18 T5 D-5c：第三行观察增强——CPU 表面温度 + 双风扇实时转速
-            // （CpuFanMonitor 30s 采样；nil 格隐藏，单风扇合并格由组件内收敛）。
-            // 0.18.1 T7：风扇来源标注（状态词映射 fanSourceWord，fan 缺席 → nil
-            // 不显后缀——旧 daemon 缺席兼容照既有）。v0.19.5 §D2/R2 P3：前态
-            // **显式传参**（漏传则稳态 assist 在状态行退化为「充电中」）。
-            StatusLineView(
-                snapshot: statusController.batterySnapshot,
-                tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true,
-                cpuSkinTempC: cpuFanMonitor.cpuSkinTempC,
-                fanLRPM: cpuFanMonitor.fanRPMs?.first,
-                fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil },
-                fanSource: fanSourceWord,
-                previous: statusController.flowPreviousSample
-            )
+                // WP1：温度暂停注词接线——daemonStatus 与 batterySnapshot 在本组装点
+                // 交汇（方案 §2.4 数据流：App 侧直读遥测 + daemon 轮询两源并存）。
+                // 0.18 T5 D-5c：第三行观察增强——CPU 表面温度 + 双风扇实时转速
+                // （CpuFanMonitor 30s 采样；nil 格隐藏，单风扇合并格由组件内收敛）。
+                // 0.18.1 T7：风扇来源标注（状态词映射 fanSourceWord，fan 缺席 → nil
+                // 不显后缀——旧 daemon 缺席兼容照既有）。v0.19.5 §D2/R2 P3：前态
+                // **显式传参**（漏传则稳态 assist 在状态行退化为「充电中」）。
+                StatusLineView(
+                    snapshot: statusController.batterySnapshot,
+                    tempPauseActive: statusController.daemonStatus?.isTempPauseAction == true,
+                    cpuSkinTempC: cpuFanMonitor.cpuSkinTempC,
+                    fanLRPM: cpuFanMonitor.fanRPMs?.first,
+                    fanRRPM: cpuFanMonitor.fanRPMs.flatMap { $0.count > 1 ? $0[1] : nil },
+                    fanSource: fanSourceWord,
+                    previous: statusController.flowPreviousSample
+                )
 
-            // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
-            // 手工路线（CLI 安装）的 daemon 同样可控制；mode=="disabled" 时区内
-            // 控件自带禁用 + 启用按钮（既有 isModeDisabled 设计）。SMAppService
-            // 注册态仅驱动安装区。轮询与注册态解耦见 StatusController/AppSide。
-            // Phase 5 v1.2 §4.1：控制区迁出为共享组件 ControlSectionView（面板
-            // 与主窗口页双宿主；控制逻辑/守卫/防抖全语义随组件移动，此处仅消费）。
-            if statusController.daemonStatus != nil {
+                // 控制区/动作区门控（双路线定版）：按「XPC 证明 daemon 在应答」呈现——
+                // 手工路线（CLI 安装）的 daemon 同样可控制；mode=="disabled" 时区内
+                // 控件自带禁用 + 启用按钮（既有 isModeDisabled 设计）。SMAppService
+                // 注册态仅驱动安装区。轮询与注册态解耦见 StatusController/AppSide。
+                // Phase 5 v1.2 §4.1：控制区迁出为共享组件 ControlSectionView（面板
+                // 与主窗口页双宿主；控制逻辑/守卫/防抖全语义随组件移动，此处仅消费）。
+                if statusController.daemonStatus != nil {
+                    Divider()
+                    ControlSectionView()
+                    Divider()
+                    ActionSectionView()
+                    // WP3：校准区（ActionSection 之后；能力门控缺失时组件整区隐藏）。
+                    Divider()
+                    CalibrationSection()
+                }
+
                 Divider()
-                ControlSectionView()
+                LoginItemSectionView()
+
                 Divider()
-                ActionSectionView()
-                // WP3：校准区（ActionSection 之后；能力门控缺失时组件整区隐藏）。
+
+                // v1.10 M2：菜单栏电量百分比显隐（FooterLinks 邻位单入口，D-1d）。
+                MenuBarPercentageRow()
+
                 Divider()
-                CalibrationSection()
+
+                PanelFooterView()
             }
-
-            Divider()
-            LoginItemSectionView()
-
-            Divider()
-
-            // v1.10 M2：菜单栏电量百分比显隐（FooterLinks 邻位单入口，D-1d）。
-            MenuBarPercentageRow()
-
-            Divider()
-
-            PanelFooterView()
+            .padding(18)
         }
-        .padding(18)
+        .frame(maxHeight: maxPanelHeight)
         // 自绘面板背景（WP3 §3.2；spike S2 定版：容器圆角贴合、无白边/脏色）——
-        // nil = 不画（native 走系统容器材质，A 原生零回归）。
+        // nil = 不画（native 走系统容器材质，A 原生零回归）。0.23.8 B3-3：原挂
+        // VStack，现移 ScrollView 外层——背景不随内容滚动，面板纹理恒定。
         .background {
             if let panelBackground = theme.panelBackground {
                 panelBackground
@@ -157,6 +167,14 @@ struct PanelView: View {
                 RoundedRectangle(cornerRadius: 8).strokeBorder(panelBorder)
             }
         }
+    }
+
+    /// 面板最大高（0.23.8 B3-3）：NSScreen.visibleFrame 已排除菜单栏与 Dock，
+    /// 面板锚定菜单栏下方 → 可用高 ≈ visibleFrame.height；-24 保守余量（阴影/
+    /// 边距）。nil 兜底 664（= 640 + 24）。下限 360：极小屏仍保滚动可用而非塌缩。
+    private var maxPanelHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 664
+        return max(360, visible - 24)
     }
 
     // MARK: - 面板生命周期（§2.8：只做换档 + 遥测档启停；安装刷新在 App 启动）
