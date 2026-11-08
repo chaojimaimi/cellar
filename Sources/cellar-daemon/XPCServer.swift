@@ -24,6 +24,8 @@ import CellarCore
 final class XPCServer: @unchecked Sendable {
     /// 鉴权失败取消阈值（评审：限流）。
     private static let authFailureLimit = 10
+    /// 全局鉴权拒绝一次性告警阈值（0.23.11 B5-2；== 判定非 >=——防日志洪水）。
+    private static let globalAuthAnnounceLimit = 50
     /// admin 组 GID（40 年 macOS 惯例固定值；放宽判定目标）。
     private static let adminGroupGID: gid_t = 80
 
@@ -32,6 +34,18 @@ final class XPCServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.cellar.daemon.xpc")
     /// 监听器（+1 所有权；进程存活期持有，从不释放）。
     private var listener: xpc_connection_t?
+    /// 全局鉴权拒绝累计（0.23.11 B5-2：per-connection 限流对重连攻击无效——
+    /// 断开重连即重置 peer.rejections；全局计数进程生存期不重置，承担攻击
+    /// 可见性）。**对外行为零变化**：拒绝回包/cancel 语义照旧（方案 §0.2-4
+    /// 不冻结合法 admin）。仅串行队列访问，无需锁。
+    private var globalAuthRejections = 0
+    /// nativeLimit wireStatus 缓存（0.23.11 B5-3）：sendStatus 每回包读盘
+    /// （/Library powerd plist——App 1Hz 轮询 → 1Hz 读盘）；plist 仅系统设置
+    /// 变更时写，5s TTL 无感（既有呈现即 30s 级滞后量级）。Cellar 变更命令
+    /// 不写该 plist → 无失效钩；串行队列内访问无数据竞争。
+    private var nativeLimitCache: (status: NativeLimitStatus, at: Date)?
+    /// nativeLimit 缓存 TTL（秒）。
+    private static let nativeLimitCacheTTL: TimeInterval = 5
 
     init(core: DaemonCore, log: os.Logger) {
         self.core = core
@@ -398,6 +412,11 @@ final class XPCServer: @unchecked Sendable {
     private func authorize(_ peer: Peer, operation: String) -> Bool {
         guard peer.euid == 0 || isAdminGroupMember(euid: peer.euid) else {
             peer.rejections += 1
+            globalAuthRejections += 1
+            // == 一次性（非 >= 防日志洪水）：达 50 次告警一条，此后计数继续但不重复告警。
+            if globalAuthRejections == Self.globalAuthAnnounceLimit {
+                log.error("全局鉴权拒绝累计 \(self.globalAuthRejections) 次（跨连接，进程生存期）——疑似暴力尝试流量")
+            }
             send(errorReply("需要管理员权限（admin 组）才能执行 \(operation)。当前账户无此权限，请联系管理员。"), to: peer.connection)
             if peer.rejections >= Self.authFailureLimit {
                 log.error("鉴权拒绝累计 \(peer.rejections) 次，取消连接（限流）")
@@ -454,14 +473,23 @@ final class XPCServer: @unchecked Sendable {
     /// 每 tick 组装 lastStatus，挂点置此即「不进 enforce tick」）。**必须全回包恒携带**：
     /// App 侧变更回包经 ingest 整体覆盖 daemonStatus，字段缺席会被「nil = 旧 daemon」
     /// 语义瞬态误判（注记行/横幅闪断、门控按钮误点亮）——与 fan 字段全回包语义一致。
-    /// 每请求一次读盘（/Library 域 0644 只读）；读失败 → load 的 detectorError 形态，
-    /// 三态形态由 wireStatus 钉死；旧 CLI/App 收到多出的键按合成 Codable
-    /// decodeIfPresent 天然忽略。
+    /// 0.23.11 B5-3：读盘（/Library 域 0644 只读）走 5s TTL 缓存——App 1Hz 轮询不再
+    /// 每请求读盘；读失败 → load 的 detectorError 形态（load 内部自捕获，照常入缓存
+    /// ——读失败通常为持续态，5s 重试成本可接受，三态语义不变），三态形态由
+    /// wireStatus 钉死；旧 CLI/App 收到多出的键按合成 Codable decodeIfPresent
+    /// 天然忽略。
     private func sendStatus(_ status: DaemonStatus, to peer: Peer) {
         var status = status
-        status.nativeLimit = NativeChargeLimit.wireStatus(
-            NativeChargeLimit.load(rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL))
-        )
+        let now = Date()
+        if let cache = nativeLimitCache, now.timeIntervalSince(cache.at) < Self.nativeLimitCacheTTL {
+            status.nativeLimit = cache.status
+        } else {
+            let wire = NativeChargeLimit.wireStatus(
+                NativeChargeLimit.load(rooted: try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL))
+            )
+            nativeLimitCache = (wire, now)
+            status.nativeLimit = wire
+        }
         guard let json = DaemonXPC.encodeStatus(status) else {
             send(errorReply("状态编码失败"), to: peer.connection)
             return

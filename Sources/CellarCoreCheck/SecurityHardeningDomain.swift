@@ -112,4 +112,38 @@ func runSecurityHardeningDomainScenarios() throws {
               "纵深-3", "\(pin.file)：O_EXCL 序列 + lstat 守卫 + fail-closed 注记三标记在位")
     }
 
+    // ---- ② B5-2/B5-3：XPCServer 源钉（方案 §2.2/§2.3 场景段）----
+    // 限流链在串行队列锁内、回包链需活体连接——直测面不存在（executable target
+    // 不可 import），按方案钉源码标记。
+
+    // 纵深-4：全局拒绝计数（B5-2）——计数声明/累加/== 一次性判定在位；>= 漂移
+    // 显式反向钉（== 非至少一次告警语义，改成 >= 即日志洪水回归）；Peer.rejections
+    // per-connection 限流与 cancel 语义标记照旧（对外行为零变化）。
+    let xpcServerSrc = source("Sources/cellar-daemon/XPCServer.swift")
+    check(xpcServerSrc.contains("private var globalAuthRejections = 0")
+            && xpcServerSrc.contains("globalAuthRejections += 1"),
+          "纵深-4", "globalAuthRejections 声明 + 拒绝分支累加在位（跨连接进程生存期计数）")
+    check(xpcServerSrc.contains("private static let globalAuthAnnounceLimit = 50")
+            && xpcServerSrc.contains("if globalAuthRejections == Self.globalAuthAnnounceLimit"),
+          "纵深-4", "== 50 一次性告警判定在位（阈值钉 50）")
+    check(!xpcServerSrc.contains("globalAuthRejections >="),
+          "纵深-4", "无 >= 漂移形态（== 一次性语义反向钉——防日志洪水回归）")
+    check(xpcServerSrc.contains("peer.rejections += 1")
+            && xpcServerSrc.contains("peer.rejections >= Self.authFailureLimit")
+            && xpcServerSrc.contains("xpc_connection_cancel(peer.connection)"),
+          "纵深-4", "Peer.rejections / authFailureLimit / cancel 语义标记照旧（对外行为零变化）")
+
+    // 纵深-5：nativeLimit 5s TTL 缓存（B5-3）——缓存字段/TTL 常量/新鲜度判定/
+    // 回写点在位；`try Data(...)` 形态钉死（load(rooted:) 为 @autoclosure throws
+    // 且内部自捕获读取失败返回 detectorError 形态、本身不向上 throw——保持现网
+    // 读失败语义保真，勿改 try?）。
+    check(xpcServerSrc.contains("private var nativeLimitCache: (status: NativeLimitStatus, at: Date)?")
+            && xpcServerSrc.contains("private static let nativeLimitCacheTTL: TimeInterval = 5"),
+          "纵深-5", "nativeLimitCache 元组字段 + TTL 常量 5s 在位")
+    check(xpcServerSrc.contains("now.timeIntervalSince(cache.at) < Self.nativeLimitCacheTTL")
+            && xpcServerSrc.contains("nativeLimitCache = (wire, now)"),
+          "纵深-5", "TTL 新鲜度判定 + 缓存回写在位（5s 内零读盘）")
+    check(xpcServerSrc.contains("try Data(contentsOf: NativeChargeLimit.powerdPoliciesURL)"),
+          "纵深-5", "`try Data(...)` 原样（load 内部自捕获失败——读失败 detectorError 形态照常入缓存）")
+
 }
