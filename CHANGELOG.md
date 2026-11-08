@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.10-alpha]
+
+> 背景：修复路标 B4「核心逻辑补强批」——两处 daemon 实证缺陷收口：①校准 hold→discharge 推进持续失败时 24h 兜底 deadline 被 advance 判定结构性短路（动作永不终止、30s 重试日志无限刷）；②巡检 selfheal 锁存无条件覆盖既有终态锁存（单槽互踩——fullOnce 窗终态/崩溃恢复终态的 App 通知丢失面）。深审第三条「selfheal 通知振荡」经独立穷举证实在位防护三层齐全（App 同值守卫 / 锁存无自动清除 / P1-4 前缀豁免），**如实降级为观察登记不修**；方案经 plan-reviewer 第一轮 PASS（2×P2 + 4×P3 折入）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：计数时序/回写链/清零出口/双路径一致性逐路径核实，2×P3 断言强度随批修）；912 场景全绿（907→912，新增推进失败三态/生命周期钉值/daemon 源钉五组）、golden 384=384 零差异、l10n 477 key 零变化；**daemon 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（lastAction 零新字面量，复用 calibration:timeout）。
+
+### Fixed
+
+- **校准推进失败兜底不可达（B4-1）**：hold→discharge 推进副作用（26 撤停充 / 26+27 CHIE 写回读）持续失败时内存相位恒 hold——每 tick 均被 advance 判定分支短路，`now ≥ deadline` 的 abort(timeout) 永不可达。修复 = 转移层新增 `advanceFailures` 计数（`CalibrationTickInput` 带默认值扩展，轨道内存态照 debounceTicks 判例）+ advance 判定分支内 `≥ advanceFailureLimit(3)` → abort(reason: advanceExhausted, safety: false)——第 4 拍收口（3 次失败尝试后），abort 臂显式映射复用 `calibration:timeout` 字面量（App 侧通知/记录链零改动；deadline 判定保留但如实定位：被 advance 判定结构性遮蔽，计数收口是唯一可达兜底）。计数清零出口统一 `resetDischargeCounters()`（全生命周期共用点）。
+- **巡检 selfheal 锁存互踩（B4-2）**：巡检恢复成功臂 `latchTerminalLiteral(selfheal)` 无判空覆盖锁存单槽——fullOnce 窗终态（`fullOnce:done/timeout`）/`cancel(crash-recovery)` 等既有终态的 App 可见性丢失。修复 = 巡检调用点判空（`latchedLiteral == nil` 才落锁存，既有终态优先 + persistLog 可溯源；兜底语义天然低优先级）；`latchTerminalLiteral` 本体与窗清理消费点零触及。
+
+### 文档与版本
+
+- 四方版本 0.23.10-alpha（CFBundleVersion 2310）；CellarCoreCheck 907→912（README 双语言同步）；方案 docs/plans/phase8-0.23.10-b4-core-logic.md（本地私有化）；B4-3 观察登记：真机若再现 selfheal 通知反复，抓 Cellar 进程日志（`log stream --predicate 'processImagePath CONTAINS "Cellar"'`）+ daemon.log 巡检段按证据单开修复。
+
 ## [0.23.9-alpha]
 
 > 背景：0.23.8 B3-3 真机回归缺陷修复——面板在 MenuBarExtra `.window` 容器下**塌缩成细条**（ScrollView 不向系统报告内容理想高，MenuBarExtra 开窗按理想尺寸取 → 取到 ScrollView 最小值；B3 方案 R2 预判的容器自适应风险应验，golden/907 静态门禁不覆盖容器行为，真机运行才暴露——流程教训：**App 层 UI 容器改动必须真机运行验证**，已登记）。修复经真机验证（构建产物独立运行，用户确认面板形态恢复）后发版；零 daemon 逻辑改动（升级无需重装守护进程）；wire 零 schema 变化。

@@ -150,7 +150,7 @@ sudo cellar uninstall  # uninstall and restore default system charging
 ## Validation
 
 ```bash
-swift run CellarCoreCheck   # 907 scenarios, hundreds of checks: exhaustive decision-matrix
+swift run CellarCoreCheck   # 912 scenarios, hundreds of checks: exhaustive decision-matrix
                             # enumeration (800+ boundary combinations), packing/parsing,
                             # XPC validation, policy persistence, action state machine,
                             # notification classification, discharge safety gating,
