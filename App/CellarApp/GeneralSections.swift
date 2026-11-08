@@ -33,6 +33,17 @@ struct GeneralSections: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // 主窗挂点（0.23.6 B1-2）——与面板同源反馈（controlFeedback/statusFailure/
+            // 失联连接态），文案沿用 panel.banner.*（stale 文案分宿主改写归 B2）。
+            AlertBanner(
+                feedback: statusController.controlFeedback,
+                connection: statusController.connection,
+                lastAttemptSummary: statusController.lastAttempt?.summary,
+                statusFailureMessage: statusController.statusFailure?.message,
+                onRetry: statusController.lastAttempt == nil
+                    ? { statusController.refreshNow() }
+                    : { statusController.retryLastAttempt() }
+            )
             generalSection
             // **0.23.1 编排退役**：原 v0.19.20 编排节（WP-3——capabilities 含
             // orchestration 才显示）随批删除（§1.0——wire enabled=false 照填下编排节

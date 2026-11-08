@@ -19,6 +19,17 @@ struct ControlPageView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // 主窗挂点（0.23.6 B1-2）——与面板同源反馈（controlFeedback/statusFailure/
+                // 失联连接态），文案沿用 panel.banner.*（stale 文案分宿主改写归 B2）。
+                AlertBanner(
+                    feedback: statusController.controlFeedback,
+                    connection: statusController.connection,
+                    lastAttemptSummary: statusController.lastAttempt?.summary,
+                    statusFailureMessage: statusController.statusFailure?.message,
+                    onRetry: statusController.lastAttempt == nil
+                        ? { statusController.refreshNow() }
+                        : { statusController.retryLastAttempt() }
+                )
                 header
                 if statusController.daemonStatus != nil {
                     ControlSectionView()
