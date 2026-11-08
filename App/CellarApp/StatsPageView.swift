@@ -104,12 +104,9 @@ struct StatsPageView: View {
     /// 当前范围（断档判定需读 bucketSeconds——StatsPageViewCards 投影消费）。
     @State var rangeWindow: RangeWindow = .hours24
     @State private var isLoading = true
-    // 0.18 T2 D-2a：四卡 hover 游标态（各卡独立——共享会跨卡串显；跨文件
-    // internal 同 buckets 先例，StatsPageViewCards 消费）。
-    @State var batteryHover: StatsHoverPoint?
-    @State var temperatureHover: StatsHoverPoint?
-    @State var powerHover: StatsHoverPoint?
-    @State var capacityHover: StatsHoverPoint?
+    // 0.18 T2 D-2a：四卡 hover 游标态原页级 @State（0.23.8 B3-2 已随卡下沉为
+    // StatsPageViewCards.swift 四个卡 struct 的卡级 @State——「各卡独立——共享
+    // 会跨卡串显」语义随迁；hover 写入不再触发页级 body 重求值）。
 
     var body: some View {
         ScrollView {
@@ -123,14 +120,20 @@ struct StatsPageView: View {
                         emptyCard
                     }
                 } else {
-                    batteryCard
-                    temperatureCard
-                    powerCard
+                    // 四曲线卡（0.23.8 B3-2 hover 下沉为卡 struct——hover 写入
+                    // 只重求值所在卡，页级零求值；定义在 StatsPageViewCards.swift）。
+                    StatsBatteryCard(theme: theme, buckets: buckets, rangeWindow: rangeWindow,
+                                     accumulatingNoteText: accumulatingNoteText)
+                    StatsTemperatureCard(theme: theme, buckets: buckets, rangeWindow: rangeWindow,
+                                         accumulatingNoteText: accumulatingNoteText)
+                    StatsPowerCard(theme: theme, buckets: buckets, rangeWindow: rangeWindow,
+                                   accumulatingNoteText: accumulatingNoteText)
+                    // energyCard 留页级（无 hover，迁移零收益）。
                     if energyShowsCard {
                         energyCard
                     }
                     if capacityPoints.count >= 2 {
-                        capacityCard
+                        StatsCapacityCard(theme: theme, capacityPoints: capacityPoints)
                     }
                 }
             }
@@ -237,8 +240,10 @@ struct StatsPageView: View {
         return CellarL10n.s("stats.accumulating", max(1, Int(ceil(span / 86_400))))
     }
 
-    /// 曲线卡内空区注记（三张随所选窗的曲线卡消费；容量卡不接——其 X 域恒全
-    /// 保留窗，与所选窗口径无关，方案 D-2d「曲线卡」语汇 = 三张 range 卡）。
+    /// 卡内空区注记（0.23.8 B3-2 后唯一消费点 = 能耗卡——三张 range 卡的注记
+    /// 渲染形态已随卡内联等价视图（caption2 + tertiaryText），卡仅持
+    /// accumulatingNoteText 文本参数不回读页；容量卡不接——其 X 域恒全保留窗，
+    /// 与所选窗口径无关，方案 D-2d「曲线卡」语汇 = 三张 range 卡）。
     var accumulatingNote: some View {
         Group {
             if let accumulatingNoteText {
@@ -247,33 +252,6 @@ struct StatsPageView: View {
                     .foregroundStyle(theme.tertiaryText)
             }
         }
-    }
-
-    // MARK: - 面板容器（照仪表板 panel 形态；曲线卡消费，StatsPageViewCards）
-
-    /// 面板卡（DashboardView.panel 同款：surface 底 + 描边 + 圆角 18 + 小标题行；
-    /// 高度 220 适配单曲线卡）。
-    func panel(title: String, subtitle: String? = nil, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(1.5)
-                    .foregroundStyle(theme.secondaryText)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.tertiaryText)
-                }
-            }
-            content()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
-        .background {
-            if let panelBackground = theme.panelBackground { panelBackground }
-        }
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.secondaryText.opacity(0.25)))
     }
 
     // MARK: - 加载态 / 空态
