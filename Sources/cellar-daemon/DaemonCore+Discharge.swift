@@ -563,8 +563,17 @@ extension DaemonCore {
         ))
         // 0.23.5：恢复成功臂 selfheal 锁存 + persistLog 落盘（三调用点一次覆盖）。
         Self.persistLog("CHIE 残留巡检：检测到非使能状态，已清零并回读确认（放电残留自愈，selfheal 锁存）")
+        // 0.23.10 B4-2：锁存判空——selfheal 是巡检兜底（无动作期残留自愈知情），天然
+        // 低优先级，不覆盖既有终态锁存（fullOnce 窗 done/timeout、cancel(crash-recovery)、
+        // 校准终态等——latchTerminalLiteral 单槽无条件覆盖致窗终态 App 通知丢失，互踩
+        // 双方向实证见方案 §1.2）。既有锁存在位 → 保留原锁存，自愈事实已由上方 persistLog
+        // 落盘可溯源（如实呈现：锁存槽 = 最早未消费终态）。
         let healed = OneShotLiteral.selfheal(kind: Discharge.dischargeToLimitKind)
-        actionTrack.latchTerminalLiteral(healed)
+        if actionTrack.latchedLiteral == nil {
+            actionTrack.latchTerminalLiteral(healed)
+        } else {
+            Self.persistLog("CHIE 残留巡检：既有终态锁存在位（\(actionTrack.latchedLiteral ?? "?")），selfheal 不覆盖（兜底低优先级）")
+        }
         return healed
     }
 

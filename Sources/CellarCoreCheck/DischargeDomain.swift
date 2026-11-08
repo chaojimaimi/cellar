@@ -15,6 +15,9 @@
 // ④旧格式 action.json decode（fullOnce 无 targetPercent → nil）
 // ⑤XPC 前置拒绝矩阵（mode≠active/ext=false/percent≤目标/幂等）
 // ⑧notificationEvents discharge 映射（用例 102 模式）
+// ⑨巡检 selfheal 锁存判空源钉（0.23.10 B4-2：巡检恢复成功臂 latchedLiteral 判空——
+//   兜底不覆盖既有终态锁存，FullChargeAutoRestoreDomain source() 先例形态对 daemon
+//   源文本断言；cellar-daemon 目标不可 import、锁内方法不可直达）
 
 import CellarCore
 import Foundation
@@ -806,5 +809,39 @@ func runDischargeDomainScenarios() throws {
         // 26 运行不中止：即使合盖强检查命中也不中止（26 clamshell-mode 运行续行照旧）。
         check(!ClamshellGate.shouldAbort(gateActive: false, closed: true),
               "放电-34", "26：运行中检出合盖 → 不中止（维护 tick 门控不生效——26 行为零变化）")
+    }
+
+    // 放电-35（0.23.10 B4-2）：巡检 selfheal 锁存判空源钉（FullChargeAutoRestoreDomain
+    // source() 先例形态——对 daemon 源 body.contains 断言；cellar-daemon 目标不可
+    // import，巡检恢复成功臂为锁内方法不可直达，方案 §2.2 P3-b 修订）。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Sources/CellarCoreCheck
+            .deletingLastPathComponent()   // Sources
+            .deletingLastPathComponent()   // 仓库根
+        let url = repoRoot.appendingPathComponent("Sources/cellar-daemon/DaemonCore+Discharge.swift")
+        let dischargeExt: String
+        if let data = try? Data(contentsOf: url),
+           let text = String(data: data, encoding: .utf8) {
+            dischargeExt = text
+        } else {
+            // 源文件缺席 = 钉面失效（checkout 残缺/文件被改名）——fail 红而非静默绿。
+            check(false, "放电-35", "源文件读取失败：Sources/cellar-daemon/DaemonCore+Discharge.swift（结构钉面依赖仓库布局）")
+            dischargeExt = ""
+        }
+        // 巡检恢复成功臂区段（0.23.5 selfheal persistLog 锚 → return healed）。
+        if let anchor = dischargeExt.range(of: "放电残留自愈，selfheal 锁存"),
+           let tail = dischargeExt.range(of: "return healed") {
+            let body = String(dischargeExt[anchor.lowerBound..<tail.upperBound])
+            check(body.contains("if actionTrack.latchedLiteral == nil {")
+                      && body.contains("actionTrack.latchTerminalLiteral(healed)"),
+                  "放电-35", "巡检恢复成功臂锁存判空：latchedLiteral == nil 才 latchTerminalLiteral(selfheal)（兜底不覆盖——fullOnce 窗 done/timeout、cancel(crash-recovery)、校准终态等既有锁存保留；latchTerminalLiteral 本体不改，窗终态覆盖行为照旧）")
+            check(body.contains("selfheal 不覆盖（兜底低优先级）"),
+                  "放电-35", "既有锁存在位臂 persistLog 落盘可溯源（自愈事实不丢——如实呈现：锁存槽 = 最早未消费终态）")
+            check(body.contains("return healed"),
+                  "放电-35", "返回值 healed 不变（本 tick 命中事实——effectiveLastAction 由锁存槽决定，既有锁存优先显示如实）")
+        } else {
+            check(false, "放电-35", "巡检恢复成功臂区段定位失败（persistLog/return healed 锚点缺席 = 钉面红）")
+        }
     }
 }

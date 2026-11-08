@@ -331,5 +331,25 @@ func runFullChargeAutoRestoreDomainScenarios() {
     check(oneShotCore.contains("case actionOccupiedOn27")
               && oneShotCore.contains("latchTerminalLiteral"),
           "校27-8", "CellarCore 新面在位：OneShotStartRejection.actionOccupiedOn27 拒因 + OneShotTrack.latchTerminalLiteral 窗终态锁存（批内既有纯函数域回归：校准-34a/用例 102）")
+
+    // 校27-9（0.23.10 B4-1）：推进失败收口 daemon 接线三钉（abort 臂 advanceExhausted
+    // 显式映射 / TickInput 计数回传 / .advance 臂结果回写——方案 §2.1-6 源码钉；
+    // cellar-daemon 目标不可 import，照本文件 source() 先例对 daemon 源文本断言）。
+    do {
+        if let head = calibrationExt.range(of: "let literal: String"),
+           let tail = calibrationExt.range(of: "let latched = actionTrack.terminateCalibration(literal)") {
+            let body = String(calibrationExt[head.lowerBound..<tail.lowerBound])
+            check(body.contains("} else if reason == CalibrationLiteral.AbortReason.advanceExhausted {")
+                      && body.contains("literal = CalibrationLiteral.timeout()"),
+                  "校27-9", "abort 臂映射：advanceExhausted → CalibrationLiteral.timeout() 显式分支（防落 else 的 calibration:cancel——App 侧 cancel 无通知致用户无感知；timeout ∈ B1-1 五终态族，App 通知/记录链零改动复用）")
+        } else {
+            check(false, "校27-9", "abort 臂字面量映射区段定位失败（锚点缺席 = 钉面红）")
+        }
+        check(calibrationExt.contains("advanceFailures: actionTrack.advanceFailures,"),
+              "校27-9", "TickInput 接线：maintainCalibrationLocked 构造传 advanceFailures（daemon 上拍执行结果持有，26/27 共用点——计数链同源防断裂回归）")
+        check(calibrationExt.contains("let advanced = advanceCalibrationLocked(")
+                  && calibrationExt.contains("actionTrack.applyAdvanceOutcome(advanced)"),
+              "校27-9", ".advance 臂接线：显式接收返回值 + applyAdvanceOutcome 回写（成功归零/失败 +1——移除 discardable 下划线消费防计数链静默断裂）")
+    }
     _ = t0   // 时间基准保留（后续纯函数场景扩展用）
 }
