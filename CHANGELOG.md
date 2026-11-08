@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.11-alpha]
+
+> 背景：修复路标 B5「安全纵深批」——五处安全面收口；方案经 plan-reviewer **三轮**审核（REVISE→REVISE→PASS：第一轮拦下方案自身在 /Library/Logs/Cellar 引入的 symlink root 写原语与 0640/admin 可读性矛盾，第二轮拦下自举收敛段绕门残留——「删除而非修补」收敛为门后锁内单一路径）；code-reviewer 落地前评审 REVISE（单条 P1：writeDaemonLog 建档竞速洗白窗——照 CLI install P1-1 纪律随批收口 c1cfdba，其余逐面全过含两项落地偏差裁决）；924 场景全绿（912→924，SecurityHardeningDomain 新域 12 组）、golden 384=384 零差异、l10n 477 key 零变化；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
+
+### Security
+
+- **固定名临时文件 symlink 竞态纵深加固（B5-1，CWE-59/61）**：root 域五 store（action.json/schedule-state/policy/topoff-state/calibration-state）原子写改 O_EXCL 序列（lstat 守卫仅清普通残留 → `O_CREAT|O_EXCL|O_WRONLY` open → FileHandle 写 → chmod 0644 → rename）——预置符号链接恒 EEXIST 拒写（Apple open(2)：dangling symlink 亦然），目录权限防线（verifyRootOwnedDirectory 启动+安装双校验）被后续变更时独立成立；预置 symlink 场景强断言（throw + 目录外哨兵内容未被改写）。
+- **XPC 鉴权失败限流全局化（B5-2）**：per-connection 拒绝计数对重连攻击无效——新增进程生存期全局计数 + 达 50 一次性 error 告警（跨连接攻击可见性）；**对外行为零变化**（拒绝回包/cancel 语义照旧，不冻结合法 admin）。
+- **getStatus nativeLimit 读盘 TTL 缓存（B5-3）**：sendStatus 每回包读 /Library powerd plist（App 1Hz 轮询 → 1Hz 读盘）→ 5s TTL 缓存（powerd plist 仅系统设置变更时写；读失败 detectorError 三态语义不变照常入缓存）。
+- **daemon.log 双路线统一落盘 + 权限收敛（B5-4）**：App BTM 路线 persistLog（stderr）原被 launchd 丢弃（内嵌 plist 无 StandardErrorPath——spawn 失败教训）→ persistLog 双写（stderr 保留 + 自写 `/Library/Logs/Cellar/daemon.log` **root:admin 0640**（daemon 鉴权边界一致——admin 可读排障、非 admin 不可读）+ 8MB 单份 rotate + logLock 串行（watchdog 遗言例外收口）+ 目录防投毒三重判定（既有目录 verifyRootOwnedDirectory / 新建后属主拒洗白 / 门后文件形态 lstat S_IFREG 守卫））；CLI 手工模板删 StandardErrorPath（两路线统一由 daemon 自写，launchd 重定向面永久退出）；CLI 两处「查看 daemon.log」指引变真实。
+- **CLI install 源路径去 CWD 化（B5-5，提权面修复）**：`helperSource = ".build/release/cellar-daemon"` / `plistSource = "Tools/com.cellar.daemon.plist"` 原 **CWD 相对解析**——用户在攻击者可控目录执行 `sudo cellar install` 时 root copyItem + chmod 0755 + launchd 执行 = 任意代码提权。修复 = 源路径自 `Bundle.main.executableURL`（+symlink 解析）推导仓库根（推导失败显式拒装禁止 CWD 回退）+ plist 模板内嵌常量（与 Tools 模板剥空白逐字节一致性源钉防漂移）。
+
+### 文档与版本
+
+- 四方版本 0.23.11-alpha（CFBundleVersion 2311）；CellarCoreCheck 912→924（README 双语言同步；SecurityHardeningDomain 新域）；方案 docs/plans/phase8-0.23.11-b5-security.md（本地私有化）。
+
 ## [0.23.10-alpha]
 
 > 背景：修复路标 B4「核心逻辑补强批」——两处 daemon 实证缺陷收口：①校准 hold→discharge 推进持续失败时 24h 兜底 deadline 被 advance 判定结构性短路（动作永不终止、30s 重试日志无限刷）；②巡检 selfheal 锁存无条件覆盖既有终态锁存（单槽互踩——fullOnce 窗终态/崩溃恢复终态的 App 通知丢失面）。深审第三条「selfheal 通知振荡」经独立穷举证实在位防护三层齐全（App 同值守卫 / 锁存无自动清除 / P1-4 前缀豁免），**如实降级为观察登记不修**；方案经 plan-reviewer 第一轮 PASS（2×P2 + 4×P3 折入）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：计数时序/回写链/清零出口/双路径一致性逐路径核实，2×P3 断言强度随批修）；912 场景全绿（907→912，新增推进失败三态/生命周期钉值/daemon 源钉五组）、golden 384=384 零差异、l10n 477 key 零变化；**daemon 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（lastAction 零新字面量，复用 calibration:timeout）。

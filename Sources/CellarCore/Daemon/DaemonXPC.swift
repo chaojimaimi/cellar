@@ -399,7 +399,8 @@ public enum DaemonXPC {
     // 0.23.8-alpha（2026-11-08）：B3 性能批——统计页 hover 下沉 + CellarTheme 手写 Equatable/resolve 缓存 + 面板小屏滚动 + NumberFormatter 缓存 + R6 四门钉注释（**零 daemon 逻辑改动**——升级 App 无需重装守护进程）；wire 零 schema 变化（XPC 协议零触及）。
     // 0.23.9-alpha（2026-11-08）：面板塌缩真机回归修复——onGeometryChange 实测内容自然高（MenuBarExtra .window 开窗按理想尺寸，ScrollView 不报告理想高致 0.23.8 塌缩成细条）；**零 daemon 逻辑改动**；wire 零 schema 变化。
     // 0.23.10-alpha（2026-11-08）：B4 核心逻辑补强——校准 hold→discharge 推进失败收口（advance 判定短路 deadline 兜底不可达 → advanceFailures ≥3 abort，字面量复用 calibration:timeout）+ 巡检 selfheal 锁存判空（单槽互踩收口）；**daemon 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（lastAction 零新字面量）。
-    public static let daemonVersion = "0.23.10-alpha"
+    // 0.23.11-alpha（2026-11-09）：B5 安全纵深——固定名临时文件 O_EXCL 纵深加固（root 域五 store）+ XPC 鉴权失败限流全局化（可见性，对外行为零变化）+ getStatus nativeLimit TTL 缓存（1Hz 读盘消除）+ daemon.log 自写统一 root:admin 0640（双路线对齐 + world-readable 收敛）+ CLI install 源路径去 CWD 化（sudo cellar install 提权面修复）；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
+    public static let daemonVersion = "0.23.11-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载
