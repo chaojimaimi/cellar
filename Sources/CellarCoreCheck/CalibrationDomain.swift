@@ -1,9 +1,9 @@
-// CellarCoreCheck —— WP3 校准（手动触发版）场景域（方案 §4.1 十一项）
+// CellarCoreCheck —— WP3 校准（手动触发版）场景域（方案 §4.1 十二项）
 //
 // 按域拆独立文件（main.swift 不再增长）。与 main.swift / 其他场景域共用
 // FailureCounter 与断言助手。
 //
-// 覆盖清单（方案 §4.1 十一项）：
+// 覆盖清单（方案 §4.1 十二项；⑫ 为 0.23.6 B1-1 增补）：
 // ① 启动前置矩阵（mode/external/actionActive/capability 逐条件 + 全过 + 原文可读）
 // ② chargeFull 相：充满判定复用（主判据/≥99 降级/2 tick 去抖/中断归零）、
 //    ext=false → abort(unplug)、相位超时 → abort(timeout)、stay
@@ -26,6 +26,9 @@
 //    拒绝枚举格式与触发条件钉死（R1 P1-3）
 // ⑪ StatusFailureKind 映射钉死（R2 P2-3）：safety/timeout/crash → .actionInterrupted；
 //    done/cancel 不入失败通道；既有 fullOnce/discharge 映射不回归
+// ⑫ 终态观察空闲臂判定（0.23.6 B1-1）：calibrationIdleOutcomeObservation 单一谓词源
+//    （26 执法段空闲臂 / 27 观测段镜像臂共用）——在轨/无锁存双挡门、五终态字面量
+//    全映射、非校准字面量 nil（calibrationOutcomeLiteral 全映射已由调度域钉死）
 
 import CellarCore
 import Foundation
@@ -522,4 +525,41 @@ func runCalibrationDomainScenarios() throws {
             && StatusFailureKind(status: dStatus("dischargeToLimit:safety")) == .actionSafetyTerminated
             && StatusFailureKind(status: dStatus("enforce:error")) == .writeFailed,
           "校准-36", "回归：既有 fullOnce/discharge/enforce 映射不回归")
+
+    // ---- ⑫ 终态观察空闲臂判定（0.23.6 B1-1：calibrationIdleOutcomeObservation
+    //      单一谓词源——26 执法段空闲臂 / 27 观测段镜像臂共用，防两臂判定漂移）----
+
+    // 校准-37：判定双挡门（在轨挡住 / 无锁存挡住——镜像臂消费的真值表两负例）。
+    check(calibrationIdleOutcomeObservation(
+        actionActive: true, latchedLiteral: CalibrationLiteral.done()) == nil,
+          "校准-37", "actionActive=true（在轨）+ done 锁存 → nil（在轨动作期不观察——③ 调度臂静默同形）")
+    check(calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: nil) == nil,
+          "校准-37", "actionActive=false + 无锁存 → nil（无终态可观察——常态空闲不补写）")
+
+    // 校准-38：空闲 + 5 个校准终态字面量 → 各自 outcome 全映射（镜像臂补写记录的输入域；
+    // cancel/crashRecovery 在列——与执法段空闲臂共用同源，语义收敛不漂移）。
+    check(calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: CalibrationLiteral.done()) == .done
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: CalibrationLiteral.cancel()) == .cancel
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: CalibrationLiteral.timeout()) == .timeout
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: CalibrationLiteral.safety()) == .safety
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: CalibrationLiteral.cancelCrashRecovery()) == .crashRecovery,
+          "校准-38", "空闲 + 五终态字面量 → 各自 outcome（done/cancel/timeout/safety/crashRecovery 全映射）")
+
+    // 校准-39：空闲 + 非校准字面量 → nil（R1 P2 全等匹配同源——相位/其他动作族/
+    // 空串不进观察臂，不虚构校准记录）。
+    check(calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: "dischargeToLimit:done") == nil
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: "enforce:disableCharging") == nil
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: "enforce:noop") == nil
+            && calibrationIdleOutcomeObservation(
+        actionActive: false, latchedLiteral: "") == nil,
+          "校准-39", "空闲 + 非校准字面量（dischargeToLimit:done/enforce:*/空串）→ nil")
 }

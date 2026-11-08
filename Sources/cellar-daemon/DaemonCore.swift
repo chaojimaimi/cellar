@@ -933,8 +933,11 @@ final class DaemonCore: @unchecked Sendable {
         // 校准终态族（全等匹配）→ 补写上次校准记录——覆盖 done/timeout/safety 等
         // 锁存型终态（取消路径不锁存，由 cancelActionLocked 即时补写，第①点）。
         // startedAt 去重（第③点）在记录助手内——锁存存活期内逐 tick 不重写。
-        if !actionTrack.isActive, let latched = actionTrack.latchedLiteral,
-           let outcome = calibrationOutcomeLiteral(latched) {
+        // 0.23.6 B1-1：判定改经 calibrationIdleOutcomeObservation 单一谓词源
+        // （与 27 观测段镜像臂共用——防两臂判定漂移；行为逐字节等价）。
+        if let outcome = calibrationIdleOutcomeObservation(
+            actionActive: actionTrack.isActive, latchedLiteral: actionTrack.latchedLiteral
+        ) {
             recordCalibrationOutcomeLocked(outcome: outcome, startedAt: nil, events: &events)
         }
 

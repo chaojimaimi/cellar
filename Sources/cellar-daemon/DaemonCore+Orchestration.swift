@@ -38,6 +38,8 @@ extension DaemonCore {
     /// ② fullOnce 窗自动恢复（0.23.2 §3——挂点钉死：日程转移后、topoff 路由前）；
     /// ③ 校准 27 调度臂（0.23.2 §1.1 全量方案 (a)——26 执法段调度臂的观测段镜像：
     ///    27 执法段不可达，本处是自动校准唯一驱动点；拒因处置照 26 调度臂）；
+    /// ③b 校准终态观察空闲臂（0.23.6 B1-1——26 执法段空闲臂的观测段对偶，判定
+    ///    经 calibrationIdleOutcomeObservation 单一谓词源；详见臂内注释）；
     /// ④ 汇聚点路由消费（0.20 M1b §3.1——desired 推导链随编排退役删除后，本消费
     ///    = topoff 域承载副作用（域写/验证/重申/降级/自愈/§3.6 卫生/§3.7 关断清理）
     ///    在 DaemonCore+Topoff.swift 的 topoffConvergenceRouteLocked 完成）。
@@ -126,6 +128,16 @@ extension DaemonCore {
                     message: "自动校准未启动：\(error)（静默顺延，窗口内下 tick 重判）"
                 ))
             }
+        }
+
+        // ③b 校准终态观察空闲臂（0.23.6 B1-1——26 执法段空闲臂的观测段对偶：
+        // 27 终态下执法段不可达，本臂是自然终态补写「上次校准」的唯一消费点）。
+        // 锁存为终态汇合点（terminateCalibration / terminateMonitoringLoss 双路径
+        // 均写 latchedLiteral），startedAt 去重在 record 内——锁存存活期逐 tick 不重写。
+        if let outcome = calibrationIdleOutcomeObservation(
+            actionActive: actionTrack.isActive, latchedLiteral: actionTrack.latchedLiteral
+        ) {
+            recordCalibrationOutcomeLocked(outcome: outcome, startedAt: nil, events: &events)
         }
 
         // ④ 汇聚点路由消费（0.20 M1b §3.1）。chargingDisabled 在窗判定 = state

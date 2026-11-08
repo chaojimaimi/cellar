@@ -84,6 +84,16 @@ public func calibrationOutcomeLiteral(_ latched: String) -> CalibrationOutcome? 
     }
 }
 
+/// 终态观察空闲臂判定（UD-5 第②点纯函数化——26 执法段空闲臂与 27 观测段
+/// 镜像臂共用单一谓词源，防两臂判定漂移；0.23.6 B1-1）。
+/// 语义：无在轨动作 ∧ 锁存字面量可映射校准 outcome → 返回 outcome；否则 nil。
+public func calibrationIdleOutcomeObservation(
+    actionActive: Bool, latchedLiteral: String?
+) -> CalibrationOutcome? {
+    guard !actionActive, let latched = latchedLiteral else { return nil }
+    return calibrationOutcomeLiteral(latched)
+}
+
 /// 自动校准就绪判定（方案 §2.1；**纯时间判定**——外接/mode/在轨前置不在本函数内，
 /// 由 startCalibrationLocked 共用核心把守，UD-6；调度臂对拒绝的处置 = 静默顺延）：
 /// `enabled` ∧ 窗口内 ∧ (锚点 nil ∨ max(0, now − lastStartedAt) ≥ intervalDays 天)。
