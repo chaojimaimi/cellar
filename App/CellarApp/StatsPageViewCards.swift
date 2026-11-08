@@ -144,7 +144,10 @@ extension StatsPageView {
                     StatsChartHover.ruleMark(
                         for: powerHover, theme: theme,
                         value: StatsChartHoverFormat.watt,
-                        time: StatsChartHoverFormat.dayTime
+                        // 0.23.7 B2-5：hover 时间随窗切换（原恒 dayTime 不随
+                        // rangeWindow——与电量/温度卡对齐，复用同文件既有条件
+                        // 形态 hoverTimeFormat :21-24）。
+                        time: hoverTimeFormat
                     )
                 }
             }

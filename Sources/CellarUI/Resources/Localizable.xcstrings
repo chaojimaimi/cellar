@@ -3656,23 +3656,6 @@
         }
       }
     },
-    "panel.action.dischargeToLimit": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Discharge to Limit"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "放电到上限"
-          }
-        }
-      },
-      "shouldTranslate": false
-    },
     "panel.action.dischargeWarning": {
       "extractionState": "manual",
       "localizations": {
@@ -3798,13 +3781,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The daemon version is outdated — please uninstall and reinstall it. Click “Uninstall Daemon” below, then “Install Daemon”."
+            "value": "The daemon version is outdated — please reinstall it. Open the main window’s General page, click “Uninstall Daemon”, then “Install Daemon”."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "守护进程版本过旧，请卸载后重新安装。先点下方「卸载守护进程」，再点「安装守护进程」"
+            "value": "守护进程版本过旧，请重新安装：打开主窗口 → 「通用」页，先点「卸载守护进程」，再点「安装守护进程」"
           }
         }
       }

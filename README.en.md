@@ -159,7 +159,7 @@ bash Tools/coverage.sh      # state-machine line-coverage gate (scoped to Contro
                             # pure logic, ≥80% · currently 92.11%)
 swift run CellarUICheck     # UI snapshot comparisons (three-style matrix; currently 426
                             # authoritative cases)
-                            # + localization gate (474 keys × en/zh-Hans)
+                            # + localization gate (477 keys × en/zh-Hans)
 ```
 
 Hardware-in-the-loop acceptance (install → limit → discharge recovery → sleep/wake → uninstall) is performed with each version release; recorded in CHANGELOG.

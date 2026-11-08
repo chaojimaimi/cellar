@@ -103,11 +103,13 @@ extension DashboardView {
     }
 
     /// 功率幅值取 `flowModel.batteryEdgeW ?? batteryPowerW` 绝对值（遥测源按 kind
-    /// 同快照；回退/缺席落 V×I 现状）。
+    /// 同快照；回退/缺席落 V×I 现状）。0.23.7 B2-5：删近零阈值分支单一路径化
+    /// （原 watts < 0.05 → 无符号 "0.0"，与主路径 %+.1f 有符号口径不一致；
+    /// 行为登记：近零读数从无符号 0.0 变 ±0.0 随向显示——与同函数电流行
+    /// %+.2f 既有有符号口径一致）。
     private var powerValue: String {
         guard snapshot != nil else { return CellarL10n.s("common.nodata") }
         let watts = abs(flowModel.batteryEdgeW ?? batteryPowerW)
-        guard watts >= 0.05 else { return "0.0" }
         return String(format: "%+.1f", batterySign * watts)
     }
 
