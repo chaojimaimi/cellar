@@ -170,6 +170,17 @@ func runSecurityHardeningDomainScenarios() throws {
             && topoffExtSrc.contains("chown(daemonLogDirectory, 0, 0)")
             && topoffExtSrc.contains("chmod(daemonLogDirectory, 0o755)"),
           "纵深-7", "缺席时 createDirectory + 归一化 root:wheel 0755（自举先例同款）")
+    // 纵深-7 补（0.23.11 发版前 code-reviewer P1 收口）：①新建分支 chown 前属主
+    // 拒——createDirectory 对已存在目录静默成功，stat(ENOENT)→create 竞速窗内
+    // 攻击者可植入投毒目录，无条件 chown 会洗白 uid 证据（照 CLI install P1-1
+    // 纪律）；②门后文件形态守卫——目录复核只查属性面，daemon.log 若为 symlink
+    // 则 rotate chown/chmod 与 append open 均跟随 = root 追写原语，lstat S_IFREG
+    // 守卫降级返回（与 B5-1 同款纪律）。
+    check(topoffExtSrc.contains("createdStatus.st_uid != 0"),
+          "纵深-7", "新建分支 chown 前属主拒（uid≠0 → 降级，防竞态投毒目录洗白）")
+    check(topoffExtSrc.contains("lstat(daemonLogPath, &fileLinkStatus)")
+            && topoffExtSrc.contains("(fileLinkStatus.st_mode & S_IFMT) != S_IFREG"),
+          "纵深-7", "门后文件形态守卫（lstat 不跟随 symlink——非 S_IFREG 降级返回）")
 
     // 纵深-8：rotate ≥8MB + append 属主/权限定版——阈值钉值（8MB 字面量）；
     // rename 前对将轮转文件 chown root:admin + chmod 0640（daemon.log.1 同批收敛）；

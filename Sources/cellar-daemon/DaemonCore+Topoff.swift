@@ -538,7 +538,7 @@ extension DaemonCore {
         // 1. 目录防护先行：照 AppSide/CLI 目录纪律同款判定 verifyRootOwnedDirectory
         //    （uid==0 ∧ 无组/其他写位）。已存在且判定不过 → 疑似预创建投毒目录，
         //    不写文件日志（日志非关键路径，不 fail-secure 退出）。目录合规后
-        //    （root 专属写位）预置 symlink 不可植入，后续 chown/chmod 收敛安全。
+        //    （root 专属写位）+ 步骤 1.5 文件形态守卫在位，chown/chmod 收敛安全。
         var directoryStatus = stat()
         if stat(daemonLogDirectory, &directoryStatus) == 0 {
             guard verifyRootOwnedDirectory(path: daemonLogDirectory) else {
@@ -556,12 +556,35 @@ extension DaemonCore {
                 announceFileLogDegraded("日志目录创建失败（\(error.localizedDescription)）")
                 return
             }
+            // B5 评审 P1 修复：createDirectory 对已存在目录静默成功——stat(ENOENT)
+            // → create 之间的竞速窗内（/Library/Logs 组可写降级态）攻击者可植入投毒
+            // 目录；**无条件 chown 会把投毒目录洗白成合规态**（摧毁 uid 证据）——照
+            // CLI install P1-1 纪律（PlaceholderCommands「无条件 chown 会洗白」）：
+            // uid≠0 的既有目录 chown 前拒，人工处置。
+            var createdStatus = stat()
+            if stat(daemonLogDirectory, &createdStatus) == 0,
+               createdStatus.st_uid != 0 {
+                announceFileLogDegraded("新建日志目录属主非 root（疑似竞态预创建），文件日志停用")
+                return
+            }
             chown(daemonLogDirectory, 0, 0)
             chmod(daemonLogDirectory, 0o755)
             guard verifyRootOwnedDirectory(path: daemonLogDirectory) else {
                 announceFileLogDegraded("数据目录疑似非 root 属主，文件日志停用")
                 return
             }
+        }
+
+        // 1.5 门后文件形态守卫（B5 评审 P1 修复）：目录复核只查目录属性面——竞态
+        //    洗白形态下目录内的 daemon.log 可能是 symlink，步骤 2 的 chown/chmod 与
+        //    步骤 3 的 open 均跟随 symlink = root 追写原语（如 /etc/sudoers 被改属主
+        //    权限）。lstat 不跟随：存在且非普通文件（S_IFREG）→ 降级返回（与 B5-1
+        //    同款纪律）；不存在（首写）→ 直接进 rotate/append。
+        var fileLinkStatus = stat()
+        if lstat(daemonLogPath, &fileLinkStatus) == 0,
+           (fileLinkStatus.st_mode & S_IFMT) != S_IFREG {
+            announceFileLogDegraded("日志文件形态异常（非普通文件，疑似符号链接），文件日志停用")
+            return
         }
 
         // 2. rotate：写前 stat daemon.log size ≥ 8MB → rename 前对将轮转文件
