@@ -34,7 +34,7 @@ struct GeneralSections: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // 主窗挂点（0.23.6 B1-2）——与面板同源反馈（controlFeedback/statusFailure/
-            // 失联连接态），文案沿用 panel.banner.*（stale 文案分宿主改写归 B2）。
+            // 失联连接态），文案沿用 panel.banner.*（0.23.7 B2-4 已统一指主窗「通用」页）。
             AlertBanner(
                 feedback: statusController.controlFeedback,
                 connection: statusController.connection,

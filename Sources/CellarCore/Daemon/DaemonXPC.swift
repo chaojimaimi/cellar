@@ -395,7 +395,8 @@ public enum DaemonXPC {
     // 0.23.4-alpha（2026-10-09）：容量卡横轴分档步长（0.18.1 写死 1 天步长随数据积累标签溢出致重叠；Charts 显式 stride 无自动取舍——实证 docs/plans/phase7-0.23.4 §0）。
     // 0.23.5-alpha（2026-10-14）：CHIE 残留巡检横幅生命周期修复三件套（巡检命中 selfheal 终态锁存 + 27 观测段 lastAction 每拍重构拆透传冻结 + 通知/绿色轻提示语义分级——docs/plans/phase7-0.23.5 §0）；wire 零 schema 变化（lastAction 新字面量 = 上报值变化非键变化）。
     // 0.23.6-alpha（2026-11-08）：B1 收口批——27 校准终态观察镜像臂（lastCal 补写路径修复）+ 主窗 AlertBanner 两挂点 + 通知接线自标定迁移/NotificationService 单例化 + SECURITY.md 写面改如实；wire 零 schema 变化（lastCal 三键既有可选字段恒填，无新键无新字面量）。
-    public static let daemonVersion = "0.23.6-alpha"
+    // 0.23.7-alpha（2026-11-08）：B2 UX 反馈闭环批——卸载/日程删除两步确认 + runControl 单槽排队 + staleDaemon 文案指位 + 数字一致性 + 横幅挂点扩挂/位置统一（**零 daemon 改动**——升级 App 无需重装守护进程）；wire 零 schema 变化（XPC 协议零触及）。
+    public static let daemonVersion = "0.23.7-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

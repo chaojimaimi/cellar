@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.7-alpha]
+
+> 背景：修复路标 B2「UX 反馈闭环批」——两处破坏性操作确认 + runControl busy 期提交排队 + staleDaemon 文案指位修正 + 数字显示一致性 + 横幅挂点扩挂与位置统一；wire 零 schema 变化（**零 daemon 改动**——0.23.6 用户升级 App 无需重装守护进程）；方案经 plan-reviewer 两轮审核（REVISE→修订→PASS）；code-reviewer 落地前评审 APPROVE WITH NITS（P0–P2 零：队列无卡死/丢笔形态、pendingDelete 无滞留遗漏、13 入口无旁路三问均获代码级推演证实）；907 场景全绿、golden 384=384 逐条零差异、l10n 477 key 全查过、coverage 92.11%、CellarApp BUILD SUCCEEDED。
+
+### Fixed
+
+- **「卸载守护进程」单步破坏性操作**：enabled 态主按钮改两步确认（内嵌确认块照放电先例——警告行 + 确认/返回双钮；pending 残留移除出口保持直呼——故障态恢复出口不加摩擦，设计决策钉注释）。
+- **充电日程条目删除单步操作**：宿主层拦截（pendingDeleteEntry 暂存 + 确认块；组件零触及保 golden 零漂移）；编辑态变更四处同步清暂存；被删条目正被编辑的既有互斥保持生效。
+- **runControl busy 期并发提交静默丢弃**：单槽排队（latest-wins，fan `fanQueuedApply` 先例镜像）——13 入口（限充/总开关/充满一次/放电/校准/热暂停/日程/迟滞开关/恢复限充）busy 飞行期提交回包后自动补发；**先清槽再补发**（fan P0 卡死教训钉注释）；头注释「非静默」失实修正；行为登记：补发清前笔失败横幅（用户看到最新一笔反馈，与 fan 先例语义全等）。
+- **staleDaemon 横幅文案指向已迁走的面板按钮**：改指主窗口「通用」页（六消费宿主统一成立——AlertBanner 四宿主 + LED 轻路径 + 本批新增两页）。
+- **数字显示不一致**：dashboard 功率卡近零读数从无符号 `0.0` 统一为 ±0.0 随向（`%+.1f` 单一路径）；统计页功耗卡 24h 窗 hover 时间改时:分（**容量卡恒带日期为正确行为**——多天跨度概览查询，显式登记防后人误判同病）。
+
+### Changed
+
+- **横幅挂点扩挂 + 位置统一**：校准页/自动化页各挂 AlertBanner（B1 登记 P2 收口）；四主窗页统一「页题 → 横幅 → 内容」（B1 评审 P3 收口）；控制失败反馈全 App 六宿主闭环。
+- **l10n**：+4 key（`panel.daemon.uninstallWarning` / `chargeSchedule.deleteConfirm` / `common.confirm` / `common.back`）、−1 死键（`panel.action.dischargeToLimit` 零消费清理），474→477 key（README 双语言同步）；xcstrings 保序邻位插入（全排序会产生 2989 行无关 churn——`Tools/merge-*.py` 惯例有同样风险，登记）。
+
+### 文档与版本
+
+- 四方版本 0.23.7-alpha（CFBundleVersion 2307）；方案 docs/plans/phase8-0.23.7-b2-ux-feedback.md（本地私有化）；GeneralSections 挂点注释随 B2-4 统一文案过期，随发版 commit 顺手修正（fb7cdf6 先例）；R6 日程宿主 busy 门不变量与 R5 有界环已在代码注释/commit message 落钉。
+
 ## [0.23.6-alpha]
 
 > 背景：2026-11-07 全维度深审（0 P0 / 3 P1 / ~10 P2）B1 收口批——收口三条 P1（27 校准终态漏记 / 主窗控制失败反馈无渲染面 / App.init 回调接线时序依赖）+ SECURITY.md 写面三处改如实 + 文档数字漂移修正；wire 零 schema 变化（lastCal 三键既有可选字段恒填，无新键无新字面量）；方案经 plan-reviewer PASS 评审（P2/P3 意见折入）；code-reviewer 落地前评审 APPROVE（P0–P2 零：③b 26 不可达双门证明、单例迁移无静默失效形态）；907 场景全绿、golden 失败集合 384=384 逐条零差异、CellarApp BUILD SUCCEEDED、coverage 92.11%。
