@@ -339,9 +339,19 @@ func runFullChargeAutoRestoreDomainScenarios() {
         if let head = calibrationExt.range(of: "let literal: String"),
            let tail = calibrationExt.range(of: "let latched = actionTrack.terminateCalibration(literal)") {
             let body = String(calibrationExt[head.lowerBound..<tail.lowerBound])
-            check(body.contains("} else if reason == CalibrationLiteral.AbortReason.advanceExhausted {")
-                      && body.contains("literal = CalibrationLiteral.timeout()"),
-                  "校27-9", "abort 臂映射：advanceExhausted → CalibrationLiteral.timeout() 显式分支（防落 else 的 calibration:cancel——App 侧 cancel 无通知致用户无感知；timeout ∈ B1-1 五终态族，App 通知/记录链零改动复用）")
+            // 0.23.10 发版前 P3-2 收口：映射分支体钉面闭合——advanceExhausted 标记
+            // 与下一 "} else {" 之间切片再断言赋值（全 body contains 会被既有 timeout
+            // 分支独立满足——分支在、赋值改错仍绿的假阴性）。
+            let branchOk: Bool
+            if let mark = body.range(of: "} else if reason == CalibrationLiteral.AbortReason.advanceExhausted {"),
+               let nextElse = body[mark.upperBound...].range(of: "} else {") {
+                branchOk = body[mark.upperBound..<nextElse.lowerBound]
+                    .contains("literal = CalibrationLiteral.timeout()")
+            } else {
+                branchOk = false
+            }
+            check(body.contains("} else if reason == CalibrationLiteral.AbortReason.advanceExhausted {") && branchOk,
+                  "校27-9", "abort 臂映射：advanceExhausted → CalibrationLiteral.timeout() 显式分支且分支体内赋值钉死（防落 else 的 calibration:cancel——App 侧 cancel 无通知致用户无感知；timeout ∈ B1-1 五终态族，App 通知/记录链零改动复用）")
         } else {
             check(false, "校27-9", "abort 臂字面量映射区段定位失败（锚点缺席 = 钉面红）")
         }

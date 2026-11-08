@@ -610,8 +610,8 @@ func runCalibrationDomainScenarios() throws {
     // 校准-41：stay 分支计数透传 + keepAliveFailures 独立性 + 常量判例值钉面。
     // CalibrationTickResult 不携带 advanceFailures（计数增减由 daemon 执行结果
     // 决定——转移纯透传，applyCalibrationCounters 签名不变）。
-    check(Calibration.advanceFailureLimit == 3 && Calibration.advanceFailureLimit == Calibration.keepAliveFailureLimit,
-          "校准-41", "advanceFailureLimit = 3（判例值同 keepAliveFailureLimit——两常量独立命名同值，按语义独立演化）")
+    check(Calibration.advanceFailureLimit == 3,
+          "校准-41", "advanceFailureLimit = 3（自身判例值钉死；与 keepAliveFailureLimit 同值为初版巧合不焊死——两常量按语义独立演化，keepAliveFailureLimit 调值不联动本断言）")
     let b4Stay = calibrationTick(calInput(
         phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldStart.addingTimeInterval(600), percent: 100,
         advanceFailures: 2
