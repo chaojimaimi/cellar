@@ -317,6 +317,7 @@ extension DaemonCore {
             deadline: action.deadline,
             debounceTicks: actionTrack.debounceTicks,
             keepAliveFailures: actionTrack.keepAliveFailures,
+            advanceFailures: actionTrack.advanceFailures,
             chieStatus: chieStatus
         ))
         // 计数器回写（转移纯函数不持有状态；结果经轨道方法落回——单一属主不变量）。
@@ -354,7 +355,11 @@ extension DaemonCore {
         case .advance(let to):
             // 相位推进（四步副作用次序见 advanceCalibrationLocked；失败臂内存
             // 相位不推进 → 本 tick 返回当前相位字面量，下 tick 幂等重试全序列）。
-            _ = advanceCalibrationLocked(to: to, now: now, backend: backend, client: client, events: &events)
+            // 0.23.10 B4-1：推进结果显式接收并回写轨道计数（成功归零/失败 +1，
+            // 下拍经 TickInput 回传转移层——连续失败达 advanceFailureLimit 由
+            // 转移函数 abort 收口，防 advance 判定每拍短路 deadline 兜底）。
+            let advanced = advanceCalibrationLocked(to: to, now: now, backend: backend, client: client, events: &events)
+            actionTrack.applyAdvanceOutcome(advanced)
             let current = actionTrack.action?.phase.flatMap(Calibration.Phase.init(rawValue:))
                 ?? phase ?? .chargeFull
             return CalibrationLiteral.phase(current)
@@ -394,6 +399,10 @@ extension DaemonCore {
             if safety {
                 literal = CalibrationLiteral.safety()
             } else if reason == CalibrationLiteral.AbortReason.timeout {
+                literal = CalibrationLiteral.timeout()
+            } else if reason == CalibrationLiteral.AbortReason.advanceExhausted {
+                // B4-1：推进失败收口复用 timeout 字面量（「兜底超时类终止」；App 侧
+                // 通知/记录链零改动；日志 reason=advanceExhausted 可溯源）。
                 literal = CalibrationLiteral.timeout()
             } else {
                 literal = CalibrationLiteral.cancel()

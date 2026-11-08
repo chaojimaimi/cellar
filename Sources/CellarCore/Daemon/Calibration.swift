@@ -24,6 +24,9 @@ public enum Calibration {
     public static let temperatureLimitC = 40.0
     /// CHIE 保活失败上限（复用轨道 keepAliveFailures，判例同 dischargeToLimit）。
     public static let keepAliveFailureLimit = 3
+    /// hold→discharge 推进连续失败上限（0.23.10 B4-1：advance 判定短路 deadline
+    /// 兜底的收口——连续 ≥3 次推进失败 abort，判例值同 keepAliveFailureLimit）。
+    public static let advanceFailureLimit = 3
 
     // MARK: 0.23.3 §4 chargeFull stay 拍域读回保活（27；回读门）
 
@@ -72,6 +75,9 @@ public enum CalibrationLiteral {
         public static let temperature = "temperature"
         /// CHIE 保活连续失败 ≥3（外部恢复充电无法压制）。
         public static let keepAliveExhausted = "extRestoredExhausted"
+        /// hold→discharge 推进连续失败收口（0.23.10 B4-1；daemon 字面量映射复用
+        /// timeout——「兜底超时类终止」语义，App 侧零改动）。
+        public static let advanceExhausted = "advanceExhausted"
     }
 }
 
@@ -156,6 +162,9 @@ public struct CalibrationTickInput: Equatable, Sendable {
     public let debounceTicks: Int
     /// CHIE 保活失败计数（daemon 持有轨道计数，经结果回写）。
     public let keepAliveFailures: Int
+    /// hold 相推进连续失败计数（0.23.10 B4-1；daemon 上拍执行结果持有——
+    /// 推进成功归零/失败 +1 经 applyAdvanceOutcome 回写，转移纯透传）。
+    public let advanceFailures: Int
     /// CHIE 保活状态（仅 discharge 相有效：daemon 先读改写再传入）。
     public let chieStatus: DischargeKeepAliveStatus?
 
@@ -171,6 +180,7 @@ public struct CalibrationTickInput: Equatable, Sendable {
         deadline: Date,
         debounceTicks: Int,
         keepAliveFailures: Int,
+        advanceFailures: Int = 0,
         chieStatus: DischargeKeepAliveStatus?
     ) {
         self.percent = percent
@@ -184,6 +194,7 @@ public struct CalibrationTickInput: Equatable, Sendable {
         self.deadline = deadline
         self.debounceTicks = debounceTicks
         self.keepAliveFailures = keepAliveFailures
+        self.advanceFailures = advanceFailures
         self.chieStatus = chieStatus
     }
 }
@@ -216,7 +227,9 @@ public struct CalibrationTickResult: Equatable, Sendable {
 /// - `chargeFull`：充满判定（复用 OneShot.isFullOnceComplete 主判据 + ≥99 降级）
 ///   + 2 tick 去抖（复用 debounceTick，中断归零）→ advance(hold)；ext==false →
 ///   abort(unplug)；相位超时 → abort(timeout)；否则 stay（保活使能）。
-/// - `hold`：now ≥ phaseStartedAt + holdDuration → advance(discharge)；ext==false →
+/// - `hold`：now ≥ phaseStartedAt + holdDuration → advance(discharge)；推进连续
+///   失败 ≥3（advanceFailures，0.23.10 B4-1——advance 判定成立时短路 deadline
+///   兜底的唯一可达收口）→ abort(advanceExhausted)；ext==false →
 ///   abort(unplug)；整体兜底（action.deadline，24h）→ abort(timeout)；否则 stay
 ///   （保活停充——满电停充维持）。
 /// - `discharge`：percent ≤ 10 → restoreAndComplete；温度 ≥40 → abort(temp, safety)；
@@ -266,6 +279,16 @@ public func calibrationTick(_ input: CalibrationTickInput) -> CalibrationTickRes
     case .hold:
         if let started = input.phaseStartedAt,
            input.now >= started.addingTimeInterval(Calibration.holdDuration) {
+            // 0.23.10 B4-1：推进持续失败收口——advance 判定成立时本分支每拍短路
+            // deadline 兜底（失败臂内存相位不推进 → 每拍重进本分支），连续失败达
+            // 上限在此 abort（判例：discharge 相 keepAliveFailures ≥3 收口）。
+            // safety=false：失败臂维持 hold 语义（CHTE 停充维持中）= 安全态。
+            if input.advanceFailures >= Calibration.advanceFailureLimit {
+                return CalibrationTickResult(
+                    output: .abort(reason: CalibrationLiteral.AbortReason.advanceExhausted, safety: false),
+                    debounceTicks: 0, keepAliveFailures: 0
+                )
+            }
             return CalibrationTickResult(
                 output: .advance(to: .discharge), debounceTicks: 0, keepAliveFailures: 0
             )
@@ -357,6 +380,12 @@ extension OneShotTrack {
     public mutating func applyCalibrationCounters(debounceTicks: Int, keepAliveFailures: Int) {
         self.debounceTicks = debounceTicks
         self.keepAliveFailures = keepAliveFailures
+    }
+
+    /// 推进结果回写（0.23.10 B4-1；daemon advanceCalibrationLocked 调用：成功归零 /
+    /// 失败 +1；单一回写点——照 applyCalibrationCounters 模式，保持转移纯函数不持状态）。
+    public mutating func applyAdvanceOutcome(_ succeeded: Bool) {
+        advanceFailures = succeeded ? 0 : advanceFailures + 1
     }
 
     /// 校准终态锁存（done/safety/timeout——daemon 发起终态，App 轮询必见：

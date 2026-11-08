@@ -248,6 +248,11 @@ public struct OneShotTrack: Equatable, Sendable {
     public internal(set) var keepAliveFailures = 0
     /// 监护缺失连续 tick 计数（backend/采样早退；≥3 → 安全终止 + 告警，评审 P1-5）。
     public internal(set) var monitoringLossTicks = 0
+    /// hold→discharge 推进连续失败计数（0.23.10 B4-1；内存轨道态不持久化——
+    /// 与 debounceTicks/keepAliveFailures 同型判例（OneShotAction Codable 无计数器
+    /// 字段），动作随轨道消亡、计数无跨动作消费面：启动崩溃恢复一律取消在轨动作
+    /// （adoptForCrashRecovery → cancelForCrashRecovery），校准不跨重启存活）。
+    public internal(set) var advanceFailures = 0
 
     public init() {}
 

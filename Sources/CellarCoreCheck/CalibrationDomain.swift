@@ -29,6 +29,11 @@
 // ⑫ 终态观察空闲臂判定（0.23.6 B1-1）：calibrationIdleOutcomeObservation 单一谓词源
 //    （26 执法段空闲臂 / 27 观测段镜像臂共用）——在轨/无锁存双挡门、五终态字面量
 //    全映射、非校准字面量 nil（calibrationOutcomeLiteral 全映射已由调度域钉死）
+// ⑬ hold→discharge 推进失败收口（0.23.10 B4-1）：推进失败三态（0/1/2 → advance /
+//    ≥3 → abort(advanceExhausted, safety:false)——advance 判定短路 deadline 兜底的
+//    唯一可达收口）、stay 分支计数透传、discharge 相 keepAliveFailures 独立性、
+//    生命周期钉值（取消/崩溃恢复 → 重启校准 → advanceFailures == 0——track 层
+//    MainEntry 用例 100 形态直测）
 
 import CellarCore
 import Foundation
@@ -52,13 +57,15 @@ func runCalibrationDomainScenarios() throws {
         deadline: Date = deadline,
         debounceTicks: Int = 0,
         keepAliveFailures: Int = 0,
+        advanceFailures: Int = 0,
         chieStatus: DischargeKeepAliveStatus? = nil
     ) -> CalibrationTickInput {
         CalibrationTickInput(
             percent: percent, temperatureC: temperatureC, externalConnected: externalConnected,
             isCharging: isCharging, fullyCharged: fullyCharged, now: now, phase: phase,
             phaseStartedAt: phaseStartedAt, deadline: deadline, debounceTicks: debounceTicks,
-            keepAliveFailures: keepAliveFailures, chieStatus: chieStatus
+            keepAliveFailures: keepAliveFailures, advanceFailures: advanceFailures,
+            chieStatus: chieStatus
         )
     }
 
@@ -562,4 +569,98 @@ func runCalibrationDomainScenarios() throws {
             && calibrationIdleOutcomeObservation(
         actionActive: false, latchedLiteral: "") == nil,
           "校准-39", "空闲 + 非校准字面量（dischargeToLimit:done/enforce:*/空串）→ nil")
+
+    // ---- ⑬ hold→discharge 推进失败收口（0.23.10 B4-1，方案 §2.1）----
+
+    // 校准-40：推进失败三态——advanceFailures 0/1/2 → advance 重试（正常路径与
+    // 瞬时失败幂等重试语义零变化）；≥3 → abort(advanceExhausted, safety:false)。
+    // 缺陷闭环钉面：推进判定成立时本分支每拍短路 deadline 兜底（失败臂内存相位
+    // 不推进 → 每拍重进本分支）——持续失败期连 deadline 判定都不可达，计数收口
+    // 是唯一可达兜底（plan-reviewer P2-b：deadline 仅 phaseStartedAt==nil 防御态可达）。
+    let b4HoldStart = t0.addingTimeInterval(3600)
+    let b4HoldDue = b4HoldStart.addingTimeInterval(Calibration.holdDuration)
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldDue, percent: 100,
+        advanceFailures: 0
+    )).output == .advance(to: .discharge), "校准-40", "advanceFailures=0（推进成功常态）→ advance(discharge)——收口不误伤正常路径")
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldDue, percent: 100,
+        advanceFailures: 1
+    )).output == .advance(to: .discharge), "校准-40", "advanceFailures=1（瞬时失败第 1 拍）→ advance（下 tick 幂等重试语义保留）")
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldDue, percent: 100,
+        advanceFailures: 2
+    )).output == .advance(to: .discharge), "校准-40", "advanceFailures=2（瞬时失败第 2 拍）→ advance（重试窗口内）")
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldDue, percent: 100,
+        advanceFailures: Calibration.advanceFailureLimit
+    )).output == .abort(reason: CalibrationLiteral.AbortReason.advanceExhausted, safety: false),
+    "校准-40", "advanceFailures=3（达上限）→ abort(advanceExhausted, safety:false)（判例：discharge 相 keepAliveFailures ≥3 收口；safety=false = hold 停充维持是安全态）")
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldDue, percent: 100,
+        advanceFailures: 10
+    )).output == .abort(reason: CalibrationLiteral.AbortReason.advanceExhausted, safety: false),
+    "校准-40", "advanceFailures=10（远超上限）→ abort(advanceExhausted)（≥ 判定非 ==3 精确匹配）")
+    check(calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: deadline.addingTimeInterval(1), percent: 100,
+        advanceFailures: Calibration.advanceFailureLimit
+    )).output == .abort(reason: CalibrationLiteral.AbortReason.advanceExhausted, safety: false),
+    "校准-40", "持续失败期已超 24h deadline → abort(advanceExhausted)（deadline 判定被 advance 判定结构性遮蔽——计数收口不依赖 deadline 可达性）")
+
+    // 校准-41：stay 分支计数透传 + keepAliveFailures 独立性 + 常量判例值钉面。
+    // CalibrationTickResult 不携带 advanceFailures（计数增减由 daemon 执行结果
+    // 决定——转移纯透传，applyCalibrationCounters 签名不变）。
+    check(Calibration.advanceFailureLimit == 3 && Calibration.advanceFailureLimit == Calibration.keepAliveFailureLimit,
+          "校准-41", "advanceFailureLimit = 3（判例值同 keepAliveFailureLimit——两常量独立命名同值，按语义独立演化）")
+    let b4Stay = calibrationTick(calInput(
+        phase: .hold, phaseStartedAt: b4HoldStart, now: b4HoldStart.addingTimeInterval(600), percent: 100,
+        advanceFailures: 2
+    ))
+    check(b4Stay.output == .stay(phase: .hold) && b4Stay.keepAliveFailures == 0 && b4Stay.debounceTicks == 0,
+          "校准-41", "hold stay 分支（静置未满）在 advanceFailures=2 时照常 stay、两计数器归零输出——转移不改写推进计数（生命周期归 daemon 执行结果）")
+    let b4HoldIndependent = calibrationTick(calInput(
+        phase: .discharge, phaseStartedAt: dischargeStart, now: dischargeStart.addingTimeInterval(300),
+        percent: 50, keepAliveFailures: 0, advanceFailures: 3, chieStatus: .held
+    ))
+    check(b4HoldIndependent.output == .stay(phase: .discharge) && b4HoldIndependent.keepAliveFailures == 0,
+          "校准-41", "discharge 相不消费 advanceFailures（held 清零回归——保活判定链零触及）")
+    let b4KeepAliveCounting = calibrationTick(calInput(
+        phase: .discharge, phaseStartedAt: dischargeStart, now: dischargeStart.addingTimeInterval(300),
+        percent: 50, keepAliveFailures: 1, advanceFailures: 3, chieStatus: .failed
+    ))
+    check(b4KeepAliveCounting.output == .stay(phase: .discharge) && b4KeepAliveCounting.keepAliveFailures == 2,
+          "校准-41", "failed 递增仅走 keepAliveFailures（1+1=2，advanceFailures=3 不混入——两计数独立演化，B4-1 非目标：保活语义零触及）")
+
+    // 校准-42：生命周期钉值（track 层直测，MainEntry 用例 100 形态）——取消/崩溃
+    // 恢复出口 → 重启校准 → advanceFailures == 0（resetDischargeCounters 全生命周期
+    // 出口共用点：startIfIdle/cancel/cancelLatched/cancelForCrashRecovery/
+    // terminateCalibration 均调它，逐调用点核对无 mid-action 调用）。
+    do {
+        var track = OneShotTrack()
+        _ = track.startIfIdle(now: t0, kind: kind, timeout: Calibration.totalDeadline)
+        track.setCalibrationPhase(.hold, startedAt: t0)
+        track.applyAdvanceOutcome(false)
+        track.applyAdvanceOutcome(false)
+        check(track.advanceFailures == 2, "校准-42", "推进失败 2 拍 → 计数 2（applyAdvanceOutcome 失败 +1）")
+        _ = track.cancel()
+        check(track.advanceFailures == 0, "校准-42", "取消（cancel）→ 计数归零（resetDischargeCounters 共用出口）")
+        _ = track.startIfIdle(now: t0.addingTimeInterval(60), kind: kind, timeout: Calibration.totalDeadline)
+        check(track.advanceFailures == 0 && track.isActive, "校准-42", "重启校准 → advanceFailures == 0（新动作计数零起点——计数不跨动作存活钉值）")
+        track.applyAdvanceOutcome(false)
+        check(track.advanceFailures == 1, "校准-42", "重启后再失败 1 拍 → 计数 1（从零起点累计，不残留上轮）")
+        track.applyAdvanceOutcome(true)
+        check(track.advanceFailures == 0, "校准-42", "推进成功 → 计数归零（成功归零循环——正常路径零变化的行为登记）")
+
+        var crashTrack = OneShotTrack()
+        _ = crashTrack.startIfIdle(now: t0, kind: kind, timeout: Calibration.totalDeadline)
+        crashTrack.applyAdvanceOutcome(false)
+        crashTrack.applyAdvanceOutcome(false)
+        crashTrack.applyAdvanceOutcome(false)
+        check(crashTrack.advanceFailures == 3, "校准-42", "崩溃恢复前置于轨计数 3（已达上限态）")
+        _ = crashTrack.adoptForCrashRecovery(OneShotAction(
+            kind: kind, startedAt: t0, deadline: deadline
+        ))
+        _ = crashTrack.startIfIdle(now: t0.addingTimeInterval(120), kind: kind, timeout: Calibration.totalDeadline)
+        check(crashTrack.advanceFailures == 0, "校准-42", "崩溃恢复出口（adoptForCrashRecovery→cancelForCrashRecovery）→ 重启校准 → 计数归零（启动侧出口同源 resetDischargeCounters）")
+    }
 }

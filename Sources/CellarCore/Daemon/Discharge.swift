@@ -239,10 +239,15 @@ extension OneShotTrack {
     /// 全部放电计数器归零（启动/取消/终态/崩溃恢复共用）。
     /// internal：跨文件访问（OneShot.swift 的 startIfIdle/cancel 等调用于本扩展定义；
     /// 存储属性本体在 OneShot.swift 主声明——扩展不能加存储属性）。
+    /// 0.23.10 B4-1：advanceFailures 一并归零——本方法是全部生命周期出口共用点
+    /// （startIfIdle/cancel/cancelLatched/cancelForCrashRecovery/terminateCalibration
+    /// 均调它），取消→重启校准后推进失败计数必须归零（逐调用点核对无 mid-action
+    /// 调用——仅动作终结/启动时刻可达）。
     mutating func resetDischargeCounters() {
         extDebounceTicks = 0
         keepAliveFailures = 0
         monitoringLossTicks = 0
+        advanceFailures = 0
     }
 
     /// 放电维护判定链（方案 §2.3 次序定版，**逐条短路**）：
