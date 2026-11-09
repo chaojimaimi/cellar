@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.12-alpha]
+
+> 背景：0.23.11 B5-5 仓库根推导真机回归热修——用户 `sudo cellar install` 实证报错路径 `/Cellar/.build/out/.build/release/cellar-daemon` 双层嵌套：0.23.11 的**三级硬编码上溯**对 SwiftPM 新构建布局（`.build/out/Products/<config>/cellar`——Xcode 26 工具链副产物，四层）少算层级 → repoRoot 误判为 `.build/out` 子目录。fail-closed 行为正确（报错拒装未装错东西——防线起作用，仅推导算法错）。924 场景全绿（纵深-10 补新布局回归钉 + 无标记拒绝 + Package.swift 哨兵哨兵化）；**升级仍需重装守护进程**（0.23.11 的 daemon 安装被本 bug 挡下——B5 daemon 变更随本次重装一并落地）；wire 零 schema 变化。
+
+### Fixed
+
+- **手工安装路线源路径推导（B5-5 回归）**：`helperSourceRoot` 三级硬编码上溯改 **walk-up 找 Package.swift 标记**（从可执行所在目录逐级上溯，标记在位即仓库根——语义定义替代层数猜测，对任意布局深度鲁棒；上限 16 级防环）。安全等价论证不变（walk-up 链条沿运行中二进制的真实祖先目录；CLI 层 fileExists + isExecutableFile 双检保留）。
+
 ## [0.23.11-alpha]
 
 > 背景：修复路标 B5「安全纵深批」——五处安全面收口；方案经 plan-reviewer **三轮**审核（REVISE→REVISE→PASS：第一轮拦下方案自身在 /Library/Logs/Cellar 引入的 symlink root 写原语与 0640/admin 可读性矛盾，第二轮拦下自举收敛段绕门残留——「删除而非修补」收敛为门后锁内单一路径）；code-reviewer 落地前评审 REVISE（单条 P1：writeDaemonLog 建档竞速洗白窗——照 CLI install P1-1 纪律随批收口 c1cfdba，其余逐面全过含两项落地偏差裁决）；924 场景全绿（912→924，SecurityHardeningDomain 新域 12 组）、golden 384=384 零差异、l10n 477 key 零变化；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
