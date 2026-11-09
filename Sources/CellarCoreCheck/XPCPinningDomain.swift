@@ -277,13 +277,19 @@ func runXPCPinningDomainScenarios() {
             && xpcServerSrc.contains("需要管理员权限（admin 组）才能执行 "),
           "钉扎-17", "legacy admin 门调用点 + 拒绝消息原文逐字在位（第三段行为零变化）")
 
-    // ---- 钉扎-18：hardened runtime 源钉（方案 §2.4，随 B6-3 落地）----
+    // ---- 钉扎-18：hardened runtime 反向回归钉（0.23.14 真机实证回退，R3 预判应验）----
 
-    // 钉扎-18：pbxproj 两处 build configuration（Debug+Release）ENABLE_HARDENED_RUNTIME
-    // = YES 在位（堵「注入钉扎宿主 App」的洞——库验证随 hardened 默认启用（无
-    // disable-library-validation entitlement）→ 阻断同用户进程 DYLD 注入；ad-hoc +
-    // hardened 合法组合；单开关独立可回滚 R3）。
+    // 0.23.13 曾启用 ENABLE_HARDENED_RUNTIME = YES（堵「注入钉扎宿主 App」的洞——
+    // 库验证随 hardened 默认启用），**真机回归秒死**（R3 风险显形）：App ad-hoc
+    // 签名 TeamIdentifier 为空，而 SPM 引入的 Sparkle.framework 自带 Sparkle 官方
+    // 签名（不同 Team ID）→ hardened 的库验证在 dyld 加载期直接拒绝
+    //（DYLD "Library not loaded: ...Sparkle... different Team IDs"，SIGABRT，
+    // 四次双击四份崩溃报告实证）→ 0.23.14 回退两行（pbxproj 单开关，R3 既定
+    // 回滚路径）。本钉**反转**为缺席断言：防「修好嵌入 Sparkle 签名链（各嵌套
+    // 项 ad-hoc 重签使 Team ID 归一，Sparkle 文档支持的消费方重签流程）之前」
+    // 无意再引入同一发版杀手。再引入 hardened 的前置 = 签名链修复 + 本钉同步
+    // 改回在位断言。
     let hardenedPbxprojSrc = source("App/CellarApp.xcodeproj/project.pbxproj")
-    check(hardenedPbxprojSrc.components(separatedBy: "ENABLE_HARDENED_RUNTIME = YES").count - 1 == 2,
-          "钉扎-18", "pbxproj ENABLE_HARDENED_RUNTIME = YES 恰两处（Debug+Release——注入宿主洞堵死，漏一处即 Debug/Release 态差异面）")
+    check(!hardenedPbxprojSrc.contains("ENABLE_HARDENED_RUNTIME"),
+          "钉扎-18", "pbxproj 零 ENABLE_HARDENED_RUNTIME 命中（0.23.14 真机实证回退——ad-hoc + hardened 库验证杀 Sparkle 框架加载；再引入须先修嵌入签名链）")
 }

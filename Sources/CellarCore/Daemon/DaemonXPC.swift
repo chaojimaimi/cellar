@@ -402,7 +402,8 @@ public enum DaemonXPC {
     // 0.23.11-alpha（2026-11-09）：B5 安全纵深——固定名临时文件 O_EXCL 纵深加固（root 域五 store）+ XPC 鉴权失败限流全局化（可见性，对外行为零变化）+ getStatus nativeLimit TTL 缓存（1Hz 读盘消除）+ daemon.log 自写统一 root:admin 0640（双路线对齐 + world-readable 收敛）+ CLI install 源路径去 CWD 化（sudo cellar install 提权面修复）；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
     // 0.23.12-alpha（2026-11-09）：B5-5 热修——仓库根推导 walk-up 找 Package.swift 标记（三级硬编码上溯对 SwiftPM 新布局 .build/out/Products 少算层级，真机实证）；daemon 本体逻辑零变化（helperSourceRoot 仅 CLI 消费），但 0.23.11 的 B5 daemon 变更随本次重装一并落地（0.23.11 安装被本 bug 挡下）→ **升级仍需重装守护进程**；wire 零 schema 变化。
     // 0.23.13-alpha（2026-11-09）：B6 XPC 客户端身份钉扎——变更命令门升级「euid==0 ∨（admin 组 ∧ 代码身份钉扎命中）」（App-route 下 daemon 从自身可执行路径自锚 App bundle + 消息绑定 SecCode 取证：路径精确相等承重墙 + 标识符 + 有效签名；CLI-route 无锚诚实降级维持 admin 门）+ App hardened runtime（堵注入钉扎宿主）+ getStatus 鉴权面零触及；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（钉扎为连接/鉴权层，命令集零新增）。
-    public static let daemonVersion = "0.23.13-alpha"
+    // 0.23.14-alpha（2026-11-09）：0.23.13 真机回归热修——0.23.13 启用的 App hardened runtime 的库验证对「ad-hoc 主程序 + SPM 引入的 Sparkle.framework（官方签名不同 Team ID）」在 dyld 加载期直接拒绝（SIGABRT 秒死，崩溃报告 DYLD "different Team IDs" 实证）→ 回退 pbxproj 两行（R3 既定回滚路径）；钉扎-18 场景反转为缺席断言防再引入；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化。
+    public static let daemonVersion = "0.23.14-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

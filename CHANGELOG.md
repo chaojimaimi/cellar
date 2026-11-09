@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.14-alpha]
+
+> 背景：0.23.13 真机回归热修（R3 风险显形）——0.23.13 启用的 App hardened runtime 在真机上导致 App 双击秒死：dyld 加载期库验证拒绝「ad-hoc 主程序（TeamIdentifier 空）+ SPM 引入的 Sparkle.framework（Sparkle 官方签名，不同 Team ID）」组合（崩溃报告 DYLD `"Library not loaded: ...Sparkle... different Team IDs"` + SIGABRT，四次启动四份崩溃报告实证）。方案 R3 的既定回滚路径执行：**回退 pbxproj 两行**（单开关独立可回滚）；钉扎-18 场景反转为**缺席断言**（防在嵌入 Sparkle 签名链修复前无意再引入同一发版杀手）。**发版前本机构建产物启动实证存活**（B3 教训强化：行为面改动必须真机运行验证——本例静态门禁/签名校验全绿仍拦不住 dyld 加载期失败，已升级为发版硬门）。942 场景全绿（钉扎-18 改断言不改数）；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化；门禁独立重跑全过（942 全绿 / golden 384=384 / coverage / xcodebuild / 启动实证）。
+
+### Fixed
+
+- **App 无法启动（0.23.13 回归）**：移除 `ENABLE_HARDENED_RUNTIME = YES`（Debug/Release 两处）——ad-hoc 签名 + hardened 的库验证与嵌入式 Sparkle 框架签名 Team ID 不匹配，dyld 拒载主框架。B6 的 daemon 侧身份钉扎**不受影响**（hardened 仅是注入防御的补充层；SECURITY.md 已把「同用户进程可向运行中 App 注入」并入定向攻击残留局限，再引入前置 = Sparkle 签名链归一重签，登记为后续项）。
+
 ## [0.23.13-alpha]
 
 > 背景：修复路标 B6「XPC 客户端身份钉扎批」——深审 2026-11-07 P2 收口（安全侧最后一项大投入）：变更命令鉴权门从「euid==0 ∨ admin 组成员」升级为「euid==0 ∨（admin 组 ∧ **代码身份钉扎命中**）」。App-route 部署下，同一 admin 用户的任意其他进程（会话内恶意软件）不再能对守护进程下发放电/风扇/校准指令。方案经 plan-reviewer **四轮**审核至 PASS（三轮累计拦下 12+3 项：两连 SPI 事实纠错——连接级/字典级 audit-token API 皆私有，取证原语换消息绑定公开 API `SecCodeCreateWithXPCMessage`；测试诱饵归因错位补 .app 收尾守卫独立覆盖；跨提交场景错位）；code-reviewer 落地前全审 **APPROVE WITH NITS**（P0–P2 零，4×P3 登记性观察；对抗推演 + macOS 27.2 SDK 头文件独立复核）；ds-worker 实施期两次按纪律停下上报，主代理裁决两处落地偏差（偏差一：提取常量改公开 `kSecCodeInfoMainExecutable`——原方案钉的 `kSecCodeInfoPath` 系私有常量且对 bundle 返回 bundle 路径会恒 deny 误杀 App；偏差二：recordRejection 助手落 XPCServer.swift 文件内——Swift private 跨文件不可及 + B5 源钉字面量文件级存活依赖）。942 场景全绿（924→942，XPCPinningDomain 新域 18 组）、golden 384=384 零差异、l10n 零变化、coverage 92.01%、App 产物实证 `flags=0x10002(adhoc,runtime)`（hardened 生效，内嵌 daemon `0x2(adhoc)` 照旧）。**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
