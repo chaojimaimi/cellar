@@ -438,6 +438,9 @@ public struct FanSectionView: View {
                 if !editing { applyThreshold() }
             })
                 .disabled(pendingField == .threshold)
+                // B7-1 a11y：滑杆与相邻标签 Text 无自动关联——显式引用既有标签 key
+                // （元数据零像素；本文件四根滑杆同批）。
+                .accessibilityLabel(CellarL10n.s("fan.threshold"))
         }
     }
 
@@ -464,6 +467,7 @@ public struct FanSectionView: View {
                 if !editing { onApply(FanWire(speed: UInt64(Int(speedPercent))), .speed) }
             })
                 .disabled(pendingField == .speed)
+                .accessibilityLabel(CellarL10n.s("fan.speed"))
         }
     }
 
@@ -481,6 +485,7 @@ public struct FanSectionView: View {
                 if !editing { onApply(FanWire(stage2: UInt64(Int(stage2Percent))), .stage2) }
             })
                 .disabled(pendingField == .stage2)
+                .accessibilityLabel(CellarL10n.s("fan.stage2"))
             HStack {
                 Text(CellarL10n.s("fan.stage2Rise"))
                 Spacer()
@@ -492,6 +497,7 @@ public struct FanSectionView: View {
                 if !editing { onApply(FanWire(stage2Rise: UInt64(Int((stage2RiseC * 100).rounded()))), .stage2Rise) }
             })
                 .disabled(pendingField == .stage2Rise)
+                .accessibilityLabel(CellarL10n.s("fan.stage2Rise"))
         }
     }
 

@@ -152,6 +152,9 @@ public struct ChargeScheduleEntryEditor: View {
                 )
         }
         .buttonStyle(.plain)
+        // B7-1 a11y：选中态纯颜色无 trait——读屏用户拿不到选中语义（元数据零像素；
+        // StatsPageView 范围 chip / MainWindowView 导航行同批三处）。
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// 开始/结束行（标签 + 内滚弹出档位选择；label 作 a11y 与弹层语境）。
@@ -209,6 +212,8 @@ public struct ChargeScheduleEntryEditor: View {
                     ... Double(ChargeScheduleEntry.upperLimitRange.upperBound),
                 step: 1
             )
+                // B7-1 a11y：滑杆引用相邻标签既有 key（元数据零像素）。
+                .accessibilityLabel(CellarL10n.s("chargeSchedule.action.limitMode"))
         }
     }
 

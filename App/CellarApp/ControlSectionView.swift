@@ -81,6 +81,9 @@ struct ControlSectionView: View {
                 }
             )
             .disabled(isModeDisabled || isActionActive)
+            // B7-1 a11y：滑杆与相邻标签 Text 无自动关联——引用既有标签词（元数据
+            // 零像素；OnboardingView 上限滑杆同词同批）。
+            .accessibilityLabel(theme.word(.limitLabel))
             // 0.20 WP2 §3.4：<80 标注按 sub80 能力分流——
             // - sub80 能力（27+CHIE 终态）：<80 为真执法（topoff 域承载通道）→ 回落进度
             //  （active ∧ percent > 目标）/ 降级横幅（degraded，随写值参数化）——
@@ -130,6 +133,8 @@ struct ControlSectionView: View {
                     }
                 }
                 .disabled(isModeDisabled || isActionActive)
+                // B7-1 a11y：Stepper 仅裸数字——滞回语义显式关联既有标签 key。
+                .accessibilityLabel(CellarL10n.s("panel.hysteresis"))
             }
 
             HStack(spacing: 8) {

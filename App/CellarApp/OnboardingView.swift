@@ -323,6 +323,9 @@ struct OnboardingView: View {
                     if !editing { scheduleApply() }
                 }
             )
+            // B7-1 a11y：滑杆引用相邻标签同源词（theme.word(.limitLabel) 与
+            // ControlSectionView 上限滑杆同批同词）。
+            .accessibilityLabel(theme.word(.limitLabel))
             HStack {
                 Text(CellarL10n.s("panel.hysteresis")).font(.callout)
                 Spacer()
@@ -337,6 +340,8 @@ struct OnboardingView: View {
                         scheduleApply()
                     }
                 }
+                // B7-1 a11y：Stepper 仅裸数字——滞回语义显式关联既有标签 key。
+                .accessibilityLabel(CellarL10n.s("panel.hysteresis"))
             }
             AlertBanner(
                 feedback: statusController.controlFeedback,

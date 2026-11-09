@@ -174,6 +174,20 @@ struct StatsBatteryCard: View {
                 }
             }
         }
+        // B7-1 a11y：图表数值仅 hover 可达——整卡合并单元素 + 最新采样摘要值
+        //（走既有 l10n 词，不逐点暴露——逐点对读屏是噪音；元数据零像素）。
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(a11ySummary)
+    }
+
+    /// a11y 值（B7-1）：最新桶采样摘要——标题词 + 均值（波动带上下界）；无数据
+    /// → common.nodata 如实降级。
+    private var a11ySummary: String {
+        guard let last = buckets.last else { return CellarL10n.s("common.nodata") }
+        return CellarL10n.s("stats.chart.percent")
+            + " " + StatsChartHoverFormat.percent(last.avgPercent)
+            + "（" + StatsChartHoverFormat.percent(Double(last.minPercent))
+            + " – " + StatsChartHoverFormat.percent(Double(last.maxPercent)) + "）"
     }
 
     /// 电量卡 hover 游标（含波动带上下界）——自 batteryChart 大表达式抽出。
@@ -366,6 +380,16 @@ struct StatsTemperatureCard: View {
                 }
             }
         }
+        // B7-1 a11y：整卡合并单元素 + 最新采样摘要值（元数据零像素）。
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(a11ySummary)
+    }
+
+    /// a11y 值（B7-1）：最新桶温度采样摘要；无数据 → common.nodata。
+    private var a11ySummary: String {
+        guard let last = buckets.last else { return CellarL10n.s("common.nodata") }
+        return CellarL10n.s("stats.chart.temp")
+            + " " + StatsChartHoverFormat.celsius(last.avgTempCentiC / 100)
     }
 
     /// hover 时间格式随窗（code-review P3-1：24h 用 HH:mm，7d/30d 跨天需日期——
@@ -438,6 +462,16 @@ struct StatsPowerCard: View {
                 }
             }
         }
+        // B7-1 a11y：整卡合并单元素 + 最新采样摘要值（元数据零像素）。
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(a11ySummary)
+    }
+
+    /// a11y 值（B7-1）：最新桶功率采样摘要；无数据 → common.nodata。
+    private var a11ySummary: String {
+        guard let last = buckets.last else { return CellarL10n.s("common.nodata") }
+        return CellarL10n.s("stats.chart.power")
+            + " " + StatsChartHoverFormat.watt(last.avgPowerMW / 1000)
     }
 
     /// hover 时间格式随窗（code-review P3-1：24h 用 HH:mm，7d/30d 跨天需日期——
@@ -505,6 +539,17 @@ struct StatsCapacityCard: View {
             )
             .frame(height: 180)
         }
+        // B7-1 a11y：整卡合并单元素 + 最新采样摘要值（元数据零像素）。
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(a11ySummary)
+    }
+
+    /// a11y 值（B7-1）：最新容量趋势点摘要（健康度口径与副标题一致）；无数据
+    /// → common.nodata。
+    private var a11ySummary: String {
+        guard let last = capacityPoints.last else { return CellarL10n.s("common.nodata") }
+        return CellarL10n.s("stats.chart.capacity")
+            + " " + StatsChartHoverFormat.healthPercent(last.percent)
     }
 
     /// 轴域 = capacityPoints 首尾跨度（Charts domain = 数据极值；ceil 保守——

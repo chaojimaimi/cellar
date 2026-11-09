@@ -224,6 +224,10 @@ struct StatsPageView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                // B7-1 a11y：选中态纯颜色无 trait——读屏用户拿不到选中语义
+                // （元数据零像素；ChargeScheduleEntryEditor 星期 chip /
+                // MainWindowView 导航行同批三处）。
+                .accessibilityAddTraits(rangeWindow == window ? .isSelected : [])
             }
         }
     }

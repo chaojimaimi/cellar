@@ -7668,6 +7668,23 @@
         }
       }
     },
+    "schedule.entry.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除此日程"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this schedule"
+          }
+        }
+      }
+    },
     "statusline.fanSource.system": {
       "extractionState": "manual",
       "localizations": {

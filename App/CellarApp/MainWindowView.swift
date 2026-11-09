@@ -153,6 +153,9 @@ struct MainWindowView: View {
             }
         }
         .buttonStyle(.plain)
+        // B7-1 a11y：自绘侧栏行选中态纯颜色/字重——读屏用户拿不到选中语义
+        // （元数据零像素；StatsPageView 范围 chip / 编辑器星期 chip 同批三处）。
+        .accessibilityAddTraits(selection == page ? .isSelected : [])
         .onHover { hovering in
             hoveredPage = hovering ? page : nil
         }

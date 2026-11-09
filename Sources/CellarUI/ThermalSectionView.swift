@@ -128,6 +128,8 @@ public struct ThermalSectionView: View {
                 if !editing { apply() }
             })
                 .disabled(busy)
+                // B7-1 a11y：滑杆引用相邻标签既有 key（元数据零像素）。
+                .accessibilityLabel(CellarL10n.s("thermal.pause"))
         }
     }
 
@@ -156,6 +158,7 @@ public struct ThermalSectionView: View {
                 }
             )
                 .disabled(busy)
+                .accessibilityLabel(CellarL10n.s("thermal.resume"))
         }
     }
 

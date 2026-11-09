@@ -477,6 +477,10 @@ struct Main {
         // + 钉扎-8..12 锚点派生——纯函数直测随 commit 1 先行；钉扎-13..17+ 源钉
         // 随 commit 2、钉扎-18 hardened 源钉随 commit 3 递增——XPCPinningDomain）。
         runXPCPinningDomainScenarios()
+        // 0.23.15 B7 打磨无障碍批 a11y 源钉场景域（方案 §2.1/§5.2：裸按钮/滑杆/
+        // Stepper 标签 + 选中态 trait + 四曲线卡 combine·a11y 值 + catalog 新 key
+        // 双语——AccessibilityDomain）。
+        runAccessibilityDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

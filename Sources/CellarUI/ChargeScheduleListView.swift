@@ -219,6 +219,9 @@ public struct ChargeScheduleListView: View {
             }
             .buttonStyle(.plain)
             .disabled(busy)
+            // B7-1 a11y：裸图标钮必须有可读标签（全库唯一图标裸按钮——VoiceOver
+            // 否则只读「按钮」）；标签 = 新 key schedule.entry.delete（元数据零像素）。
+            .accessibilityLabel(CellarL10n.s("schedule.entry.delete"))
             // B2-3 R6 钉注释（0.23.8 B3-5）：本 busy 门不可删——runControl 单槽队列
             // 补发期间日程删除入口保持禁用，结构性关闭「日程快照重放复活窗」（busy
             // 期放行 = 可能携过期 config 快照重放）；四处门须同存（列表三处 + 编辑器
