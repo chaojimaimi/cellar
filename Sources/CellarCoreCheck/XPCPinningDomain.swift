@@ -170,4 +170,110 @@ func runXPCPinningDomainScenarios() {
         appBundleAnchor(fromDaemonExecutablePath: "/Users/x/Contents 测试/cellar-daemon"),
         nil as String?,
         "钉扎-12", "…/Contents 测试/… → nil（守卫一子串缺席归因——非 .app 守卫）")
+
+    // ---- 钉扎-13..17：daemon 门接线源钉（方案 §2.4 commit 2 段；照
+    // SecurityHardeningDomain source() 先例——活体连接直测面不存在）----
+
+    let xpcServerSrc = source("Sources/cellar-daemon/XPCServer.swift")
+    let xpcIdentitySrc = source("Sources/cellar-daemon/XPCIdentity.swift")
+
+    // 钉扎-13：root 旁路先于身份门序钉（判定序单函数三段：root 旁路 → identity
+    // 门（仅 pinned）→ admin 门）——`sudo cellar <变更>` 文档化用法零影响的判定
+    // 级证据（字面量位置序，非仅存在性）。
+    do {
+        let bypassRange = xpcServerSrc.range(of: "peer.euid != 0")
+        let identityRange = xpcServerSrc.range(of: "extractClientIdentity(message:")
+        let adminRange = xpcServerSrc.range(of: "isAdminGroupMember(euid: peer.euid)")
+        if let bypassRange, let identityRange, let adminRange {
+            check(bypassRange.lowerBound < identityRange.lowerBound
+                    && identityRange.lowerBound < adminRange.lowerBound,
+                  "钉扎-13", "root 旁路（euid != 0）→ 身份门 → admin 门三段序钉死（位置序）")
+        } else {
+            check(false, "钉扎-13", "三段序标记缺席（序钉依赖字面量在位）")
+        }
+    }
+
+    // 钉扎-14：getStatus 分支零 identity 触及（未鉴权面保持——方案 §0.2 显式
+    // 非目标；分支体内无 extract/evaluate/record 字面量，1Hz 轮询零 SecCode 开销）。
+    do {
+        let getStatusRange = xpcServerSrc.range(of: "case \"getStatus\":")
+        let setLimitsRange = xpcServerSrc.range(of: "case \"setLimits\":")
+        if let getStatusRange, let setLimitsRange {
+            let branch = String(xpcServerSrc[getStatusRange.upperBound..<setLimitsRange.lowerBound])
+            check(branch.contains("sendStatus(core.status(), to: peer)")
+                    && !branch.contains("extractClientIdentity")
+                    && !branch.contains("evaluateClientIdentity")
+                    && !branch.contains("recordRejection"),
+                  "钉扎-14", "getStatus 分支体零 identity 触及（未鉴权语义不变）")
+        } else {
+            check(false, "钉扎-14", "getStatus/setLimits 分支标记缺席（钉面依赖分支结构）")
+        }
+    }
+
+    // 钉扎-15：fail-closed 注记与专属错误消息字面量在位（wire 专属消息一字不差；
+    // deny reason 三串为 daemon 日志面非 wire）+ 取证唯一公开代码路径链（落地偏差
+    // 一裁决 A：kSecCodeInfoMainExecutable——方案原字面 kSecCodeInfoPath 为私有
+    // 常量公开 SDK 零声明）+ 反 SPI 钉 + 锚点解析诚实降级日志 + main 接线。
+    check(xpcServerSrc.contains("客户端身份未通过验证（仅 Cellar App 或 root 可执行变更命令）"),
+          "钉扎-15", "wire 专属错误消息字面量在位（一字不差——XPC 回包文本非 l10n）")
+    check(registrationSrc.contains("\"路径不符\"")
+            && registrationSrc.contains("\"标识符不符\"")
+            && registrationSrc.contains("\"签名校验未通过\""),
+          "钉扎-15", "deny reason 三串字面量在位（路径/标识符/签名——判定序承重）")
+    check(xpcIdentitySrc.contains("fail-closed"),
+          "钉扎-15", "取证 glue fail-closed 注记在位（API 失败/字段缺失 → nil/false 诚实缺席）")
+    check(xpcIdentitySrc.contains("SecCodeCreateWithXPCMessage(message, [], &code)")
+            && xpcIdentitySrc.contains("SecCodeCheckValidity(code, [], requirement)")
+            && xpcIdentitySrc.contains("SecCodeCopyStaticCode(code, [], &staticCode)")
+            && xpcIdentitySrc.contains("SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info)")
+            && xpcIdentitySrc.contains("kSecCodeInfoMainExecutable"),
+          "钉扎-15", "消息绑定取证链五标记在位（公开 API 全链——Create/CheckValidity/CopyStaticCode/CopySigningInformation/MainExecutable）")
+    check(!xpcIdentitySrc.contains("get_audit_token(")
+            && !xpcIdentitySrc.contains("_silgen_name")
+            && !xpcServerSrc.contains("get_audit_token(")
+            && !xpcServerSrc.contains("_silgen_name"),
+          "钉扎-15", "零 audit-token SPI 调用 / 零 @_silgen_name（类级否决面反钉——钉调用形态而非字符串提及，注释记载否决名不误伤）")
+    check(xpcIdentitySrc.contains("CLI-route 部署——客户端身份钉扎不可用（无可信锚），变更命令维持 admin 组门")
+            && xpcIdentitySrc.contains("客户端身份钉扎启用：期望 App"),
+          "钉扎-15", "锚点解析 notice/info 日志字面量在位（一次性——装配段调用一次，诚实降级不静默）")
+    let mainSrc = source("Sources/cellar-daemon/main.swift")
+    check(mainSrc.contains("resolveClientAnchor(executablePath: Bundle.main.executableURL?.path)")
+            && mainSrc.contains("XPCServer(core: core, log: lifecycleLog, clientAnchor: clientAnchor)"),
+          "钉扎-15", "启动期锚点解析接线在位（装配段纯纪律——结果随 init 注入，无共享可变态）")
+
+    // 钉扎-16：bundle ID 单一真相常量声明钉 + pbxproj PRODUCT_BUNDLE_IDENTIFIER
+    // 一致性断言（防两处漂移——常量与 App 构建配置同源）。
+    check(registrationSrc.contains("public static let appBundleIdentifier = \"com.cellar.app\""),
+          "钉扎-16", "bundle ID 单一真相常量声明在位（CellarCore/DaemonRegistration.swift）")
+    let pbxprojSrc = source("App/CellarApp.xcodeproj/project.pbxproj")
+    check(pbxprojSrc.components(separatedBy: "PRODUCT_BUNDLE_IDENTIFIER = com.cellar.app").count - 1 == 2,
+          "钉扎-16", "pbxproj PRODUCT_BUNDLE_IDENTIFIER = com.cellar.app 恰两处（Debug+Release）——与常量一致性源钉")
+
+    // 钉扎-17：行为零变化反钉——既有 admin 门标记原样在位 + 拒绝计数链字面量
+    // 同文件存活（B5 纵深-4 源钉依赖 XPCServer.swift 文本字面量——recordRejection
+    // 落点受 Swift private 可见性 + 本源钉双约束锚定于 XPCServer.swift）+
+    // recordRejection 保序（发送先于 cancel 判定）。
+    check(xpcServerSrc.contains("private func isAdminGroupMember(euid: uid_t) -> Bool")
+            && xpcServerSrc.contains("禁止传 80"),
+          "钉扎-17", "admin 组门判定 + getgrouplist basegid 纪律注释原样在位（legacy 零变化）")
+    check(xpcServerSrc.contains("private static let authFailureLimit = 10")
+            && xpcServerSrc.contains("private static let globalAuthAnnounceLimit = 50"),
+          "钉扎-17", "限流阈值钉值照旧（authFailureLimit=10 / globalAuthAnnounceLimit=50）")
+    check(xpcServerSrc.contains("private func recordRejection(peer: Peer, message: String")
+            && xpcServerSrc.contains("peer.rejections += 1")
+            && xpcServerSrc.contains("globalAuthRejections += 1"),
+          "钉扎-17", "recordRejection 共享私有助手在位且计数字面量同文件存活（两拒绝分支单一路径）")
+    do {
+        let sendRange = xpcServerSrc.range(of: "send(errorReply(message), to: peer.connection)")
+        let cancelRange = xpcServerSrc.range(of: "if peer.rejections >= Self.authFailureLimit")
+        if let sendRange, let cancelRange {
+            check(sendRange.lowerBound < cancelRange.lowerBound,
+                  "钉扎-17", "拒绝回包发送先于 cancel 判定（保序承重——先 cancel 丢拒绝回包）")
+        } else {
+            check(false, "钉扎-17", "发送/cancel 标记缺席（保序钉依赖字面量）")
+        }
+    }
+    check(xpcServerSrc.contains("guard peer.euid == 0 || isAdminGroupMember(euid: peer.euid) else {")
+            && xpcServerSrc.contains("需要管理员权限（admin 组）才能执行 "),
+          "钉扎-17", "legacy admin 门调用点 + 拒绝消息原文逐字在位（第三段行为零变化）")
 }

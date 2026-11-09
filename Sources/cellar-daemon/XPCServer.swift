@@ -3,7 +3,7 @@ import os
 @preconcurrency import XPC
 import CellarCore
 
-/// raw XPC 监听（串行队列）+ euid/组门 + 鉴权失败限流 + 命令分发（规格 §0.2/§0）。
+/// raw XPC 监听（串行队列）+ root 旁路/客户端身份门/组门 + 鉴权失败限流 + 命令分发（规格 §0.2/§0）。
 ///
 /// 安全契约：
 /// - `getStatus` 任意本地用户可调；`setLimits/disable/enable/setFan/
@@ -14,6 +14,10 @@ import CellarCore
 ///   无数据泄露；v1.8 LED 模式键为外观件单字节，同门同限流；v0.19.20 编排回报
 ///   同门（R1 P1-4）——非管理员回报被拒 → 0.23.1 幂等日志 no-op（pending/TTL 链已退役——旧 App 兼容保活）降级链），
 ///   否则错误回包（ok=false + 原文）。
+/// - 0.23.13 B6：App-route 部署（pinned 锚点）下非 root 对端另须代码身份命中
+///   （SecCode 消息绑定取证 + 路径/标识符/签名判定——判定层在 CellarCore 纯函数，
+///   取证 glue 在 XPCIdentity.swift），拒绝回专属消息；root 旁路先于身份门
+///   （sudo CLI 文档化用法零影响）；CLI-route（legacy）零变化。
 /// - 鉴权失败限流：同一连接变更命令被拒累计 ≥10 次 → `xpc_connection_cancel`
 ///   （防非特权用户 DoS 心跳）。
 /// - 消息校验经 `DaemonXPC.validateRequest`（xpc_get_type 白名单）；非法回错误包，不崩溃。
@@ -47,9 +51,14 @@ final class XPCServer: @unchecked Sendable {
     /// nativeLimit 缓存 TTL（秒）。
     private static let nativeLimitCacheTTL: TimeInterval = 5
 
-    init(core: DaemonCore, log: os.Logger) {
+    /// 客户端锚点（0.23.13 B6-2：pinned = App-route 身份钉扎启用；legacy = 无锚
+    /// 诚实降级维持 admin 门）。进程生存期不可变值随 init 注入——无共享可变态。
+    private let clientAnchor: ClientAnchor
+
+    init(core: DaemonCore, log: os.Logger, clientAnchor: ClientAnchor) {
         self.core = core
         self.log = log
+        self.clientAnchor = clientAnchor
     }
 
     /// 创建并 resume Mach 服务监听。Swift 导入下句柄非可选——创建期失败不可观测，
@@ -114,7 +123,7 @@ final class XPCServer: @unchecked Sendable {
             sendStatus(core.status(), to: peer)
 
         case "setLimits":
-            guard authorize(peer, operation: "set") else { return }
+            guard authorize(peer, operation: "set", message: object) else { return }
             // UInt64 → Int：越界（如 2^63+）按参数越界拒绝，防 Int 转换崩溃。
             guard let upper = Int(exactly: request.upper), let hysteresis = Int(exactly: request.hysteresis) else {
                 send(errorReply("上限/滞回参数越界"), to: peer.connection)
@@ -136,40 +145,40 @@ final class XPCServer: @unchecked Sendable {
             }
 
         case "disable":
-            respondChange(peer: peer, operation: "disable", body: { try core.disable() })
+            respondChange(peer: peer, operation: "disable", message: object, body: { try core.disable() })
 
         case "enable":
-            respondChange(peer: peer, operation: "enable", body: { try core.enable() })
+            respondChange(peer: peer, operation: "enable", message: object, body: { try core.enable() })
 
         case "fullOnce":
             // WP2 一次性动作（鉴权门同变更命令：root / admin 组）。
-            respondChange(peer: peer, operation: "fullOnce", body: { try core.fullOnce() })
+            respondChange(peer: peer, operation: "fullOnce", message: object, body: { try core.fullOnce() })
 
         case "dischargeToLimit":
             // WP2' 放电到上限（鉴权门同 fullOnce；无参数——目标 = 当前策略快照）。
-            respondChange(peer: peer, operation: "dischargeToLimit", body: { try core.dischargeToLimit() })
+            respondChange(peer: peer, operation: "dischargeToLimit", message: object, body: { try core.dischargeToLimit() })
 
         case "cancelAction":
-            respondChange(peer: peer, operation: "cancelAction", body: { try core.cancelAction() })
+            respondChange(peer: peer, operation: "cancelAction", message: object, body: { try core.cancelAction() })
 
         case NativeLimitSet.restoreCommand:
             // 0.21.0 §1.3 → **0.23.1 R5 重写形态**：恢复限充（27 fullOnce 配套；
             // 鉴权门同变更命令；无参数——恢复目标 = daemon 当前策略上限。原前置
             // 拒收（编排开关关）随断言链退役删除——handler 清窗 + 清锁存 + 即时
             // tick 域写 target，不再 throw）。
-            respondChange(peer: peer, operation: NativeLimitSet.restoreCommand, body: { core.restoreChargeLimit() })
+            respondChange(peer: peer, operation: NativeLimitSet.restoreCommand, message: object, body: { core.restoreChargeLimit() })
 
         case "startCalibration":
             // WP3 校准（鉴权门同变更命令；无参数——相位序列由 daemon 执行）。
-            respondChange(peer: peer, operation: "startCalibration", body: { try core.startCalibration() })
+            respondChange(peer: peer, operation: "startCalibration", message: object, body: { try core.startCalibration() })
 
         case "cancelCalibration":
-            respondChange(peer: peer, operation: "cancelCalibration", body: { try core.cancelCalibration() })
+            respondChange(peer: peer, operation: "cancelCalibration", message: object, body: { try core.cancelCalibration() })
 
         case FanWireKeys.command:
             // Phase 5 v1.1：setFan（鉴权门同变更命令；值域校验 validFan* 与
             // FanPolicy.validated 同源——CellarCoreCheck 同源测试；错误原文回包）。
-            guard authorize(peer, operation: "setFan") else { return }
+            guard authorize(peer, operation: "setFan", message: object) else { return }
             guard let fan = request.fan else {
                 send(errorReply("setFan 缺少风扇参数"), to: peer.connection)
                 return
@@ -228,7 +237,7 @@ final class XPCServer: @unchecked Sendable {
             // Phase 5 v1.4：setCalibrationSchedule（鉴权门同变更命令；三键值域校验
             // valid* 与 CalibrationSchedulePolicy.validated 同源——CellarCoreCheck
             // 同源测试；缺席保持合并在 DaemonCore.setCalibrationScheduleConfig）。
-            guard authorize(peer, operation: "setCalibrationSchedule") else { return }
+            guard authorize(peer, operation: "setCalibrationSchedule", message: object) else { return }
             guard let schedule = request.calSched else {
                 send(errorReply("setCalibrationSchedule 缺少调度参数"), to: peer.connection)
                 return
@@ -257,7 +266,7 @@ final class XPCServer: @unchecked Sendable {
             // Phase 5 v1.5：setThermal（鉴权门同变更命令；两键值域校验 validTherm*
             // 与 ThermalPolicy.validated 同源——CellarCoreCheck 同源测试；缺席保持
             // 合并在 DaemonCore.setThermalConfig）。
-            guard authorize(peer, operation: "setThermal") else { return }
+            guard authorize(peer, operation: "setThermal", message: object) else { return }
             guard let thermal = request.thermal else {
                 send(errorReply("setThermal 缺少热暂停参数"), to: peer.connection)
                 return
@@ -286,7 +295,7 @@ final class XPCServer: @unchecked Sendable {
             // R-3），此处做长度复核 + 缺键拒绝；JSON/validated 两级在
             // core.setChargeScheduleConfig（三级 = 长度/JSON/validated，无第四级
             // UTF-8——R1 P2-1），错误原文回传）。
-            guard authorize(peer, operation: "setChargeSchedule") else { return }
+            guard authorize(peer, operation: "setChargeSchedule", message: object) else { return }
             guard let json = request.schedule?.scheduleJson else {
                 send(errorReply("setChargeSchedule 缺少日程配置参数"), to: peer.connection)
                 return
@@ -307,7 +316,7 @@ final class XPCServer: @unchecked Sendable {
             // Phase 5 v1.8：setMagSafeLed（鉴权门同变更命令；单 UINT64 键——类型
             // 白名单已在 validateRequest，此处只查值域 0/1/3/4；语义决策在
             // core.setMagSafeLed——persist/立即写/恢复红线全在 DaemonCore+MagSafeLED.swift）。
-            guard authorize(peer, operation: "setMagSafeLed") else { return }
+            guard authorize(peer, operation: "setMagSafeLed", message: object) else { return }
             guard let rawMode = request.magSafeLedMode else {
                 send(errorReply("setMagSafeLed 缺少模式参数"), to: peer.connection)
                 return
@@ -329,7 +338,7 @@ final class XPCServer: @unchecked Sendable {
             // 白名单已在 validateRequest，此处只查值域 0/1（R2 P3：键型照既有开关
             // 统一）；语义决策在 core.setOrchestrationEnabled——persist/即时 tick
             // 全在 DaemonCore+Orchestration.swift）。
-            guard authorize(peer, operation: "setOrchestration") else { return }
+            guard authorize(peer, operation: "setOrchestration", message: object) else { return }
             guard let rawEnabled = request.orchestrationEnabled else {
                 send(errorReply("setOrchestration 缺少开关参数"), to: peer.connection)
                 return
@@ -345,7 +354,7 @@ final class XPCServer: @unchecked Sendable {
             // 门同变更命令；单 UINT64 键——类型白名单已在 validateRequest，此处只查
             // 值域 0/1；语义决策在 core.setChHysteresisEnabled——persist/即时 tick/
             // 回读单一真相全在 DaemonCore+Orchestration.swift）。
-            guard authorize(peer, operation: "setChHysteresisEnabled") else { return }
+            guard authorize(peer, operation: "setChHysteresisEnabled", message: object) else { return }
             guard let rawEnabled = request.chHysteresisEnabled else {
                 send(errorReply("setChHysteresisEnabled 缺少开关参数"), to: peer.connection)
                 return
@@ -361,7 +370,7 @@ final class XPCServer: @unchecked Sendable {
             // 回报被拒 = 降级链起点：0.23.1 幂等日志 no-op（pending/TTL 链已退役——旧 App 兼容保活）。token/detail 长度
             // 白名单已在 validateRequest，此处复核 + 缺键拒绝；token 幂等消费在
             // core.reportOrchestration——不匹配静默丢弃）。
-            guard authorize(peer, operation: "reportOrchestration") else { return }
+            guard authorize(peer, operation: "reportOrchestration", message: object) else { return }
             guard let report = request.orchestrationReport else {
                 send(errorReply("reportOrchestration 缺少回报参数"), to: peer.connection)
                 return
@@ -388,13 +397,14 @@ final class XPCServer: @unchecked Sendable {
         }
     }
 
-    /// 变更类命令（euid 门 + 执行 + 回包）。
+    /// 变更类命令（门 + 执行 + 回包）。
     private func respondChange(
         peer: Peer,
         operation: String,
+        message: xpc_object_t,
         body: () throws -> DaemonStatus
     ) {
-        guard authorize(peer, operation: operation) else { return }
+        guard authorize(peer, operation: operation, message: message) else { return }
         do {
             let status = try body()
             sendStatus(status, to: peer)
@@ -403,28 +413,62 @@ final class XPCServer: @unchecked Sendable {
         }
     }
 
-    /// euid/组门 + 鉴权失败限流（规格 §0.2/§0）：root 或 admin 组（gid 80）成员可调
-    /// 变更命令；其余 → 错误回包 + 拒绝计数；累计 ≥10 次 → 取消连接。返回 false =
+    /// root 旁路 + 客户端身份门（仅 pinned）+ admin 组门三段判定序（0.23.13 B6；
+    /// 规格 §0.2/§0）。root 旁路先于一切（sudo CLI 文档化用法零影响）；pinned
+    /// 锚点下非 root 对端须代码身份命中——取证改消息绑定（SecCodeCreateWithXPCMessage
+    /// 从请求消息取证而非连接——消陈旧令牌/连接回收竞态），每命令现算无 verdict
+    /// 缓存（变更命令低频、App 每命令一连接；getStatus 不进身份门 → 1Hz 轮询零
+    /// SecCode 开销）；legacy 锚点走既有 admin 门（行为零变化）。返回 false =
     /// 已回错误包，调用方不再执行。
     ///
-    /// 判定失败（用户查找/组列举失败）与原逻辑一致走限流路径——查不到即拒绝，
+    /// 判定失败（用户查找/组列举失败）与原逻辑一致走拒绝路径——查不到即拒绝，
     /// 绝不静默放行。
-    private func authorize(_ peer: Peer, operation: String) -> Bool {
+    private func authorize(_ peer: Peer, operation: String, message: xpc_object_t) -> Bool {
+        // 第一段：root 旁路先于一切（钉扎-13 序钉字面量——勿改判定序）。
+        guard peer.euid != 0 else { return true }
+        // 第二段：pinned 模式代码身份门（fail-closed——取证/判定任一失败即拒）。
+        if case .pinned(let expected) = clientAnchor {
+            let facts = extractClientIdentity(message: message)
+            if case .deny(let reason) = evaluateClientIdentity(facts, expected: expected) {
+                recordRejection(
+                    peer: peer,
+                    message: "客户端身份未通过验证（仅 Cellar App 或 root 可执行变更命令）",
+                    denyReason: reason)
+                return false
+            }
+        }
+        // 第三段：legacy admin 门（既有行为逐字保持——判定序在身份门命中后不变）。
         guard peer.euid == 0 || isAdminGroupMember(euid: peer.euid) else {
-            peer.rejections += 1
-            globalAuthRejections += 1
-            // == 一次性（非 >= 防日志洪水）：达 50 次告警一条，此后计数继续但不重复告警。
-            if globalAuthRejections == Self.globalAuthAnnounceLimit {
-                log.error("全局鉴权拒绝累计 \(self.globalAuthRejections) 次（跨连接，进程生存期）——疑似暴力尝试流量")
-            }
-            send(errorReply("需要管理员权限（admin 组）才能执行 \(operation)。当前账户无此权限，请联系管理员。"), to: peer.connection)
-            if peer.rejections >= Self.authFailureLimit {
-                log.error("鉴权拒绝累计 \(peer.rejections) 次，取消连接（限流）")
-                xpc_connection_cancel(peer.connection)
-            }
+            recordRejection(
+                peer: peer,
+                message: "需要管理员权限（admin 组）才能执行 \(operation)。当前账户无此权限，请联系管理员。")
             return false
         }
         return true
+    }
+
+    /// 拒绝计数/告警/回包/取消共享助手（0.23.13 B6 自 authorize 拒绝块迁出——
+    /// 身份门与 admin 门两拒绝分支共用单一代码路径，防复制漂移；既有计数语义与
+    /// 消息原文逐字迁入，对外行为零变化）。
+    /// ⚠️ 保序承重：peer.rejections+=1 → globalAuthRejections+=1 → ==50 一次性
+    /// 告警 → **错误回包发送** → >=10 cancel——发送在 cancel 判定之前（先 cancel
+    /// 可能丢拒绝回包）。
+    private func recordRejection(peer: Peer, message: String, denyReason: String? = nil) {
+        peer.rejections += 1
+        globalAuthRejections += 1
+        // == 一次性（非 >= 防日志洪水）：达 50 次告警一条，此后计数继续但不重复告警。
+        if globalAuthRejections == Self.globalAuthAnnounceLimit {
+            log.error("全局鉴权拒绝累计 \(self.globalAuthRejections) 次（跨连接，进程生存期）——疑似暴力尝试流量")
+        }
+        if let denyReason {
+            // deny reason 进 daemon 日志不上 wire（判定层三串字面量——排障溯源）。
+            log.error("客户端身份拒绝（\(denyReason, privacy: .public)）")
+        }
+        send(errorReply(message), to: peer.connection)
+        if peer.rejections >= Self.authFailureLimit {
+            log.error("鉴权拒绝累计 \(peer.rejections) 次，取消连接（限流）")
+            xpc_connection_cancel(peer.connection)
+        }
     }
 
     /// admin 组（gid 80）成员判定（P0 定版，规格 §0）：euid → getpwuid_r 取用户名

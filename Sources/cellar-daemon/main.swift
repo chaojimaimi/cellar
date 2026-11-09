@@ -84,7 +84,11 @@ let core = daemonCore!
 core.startup()
 
 // 3. raw XPC 监听；失败 → fatal。
-let server = XPCServer(core: core, log: lifecycleLog)
+// 0.23.13 B6-2：启动期客户端锚点解析（App-route 自锚 → pinned 身份钉扎启用；
+// CLI-route/解析失败 → legacy 诚实降级维持 admin 门——一次性日志不静默）。锚点
+// 进程生存期不可变，随 XPCServer init 注入（无共享可变态——纯装配纪律保持）。
+let clientAnchor = resolveClientAnchor(executablePath: Bundle.main.executableURL?.path)
+let server = XPCServer(core: core, log: lifecycleLog, clientAnchor: clientAnchor)
 server.start()
 
 // 4. 信号（先忽略默认处置，再建 DispatchSourceSignal——评审 C-4 定版顺序）。
