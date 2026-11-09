@@ -277,8 +277,9 @@ func runFullChargeAutoRestoreDomainScenarios() {
             // 安全解包（code-review P3——窗钉-1 同款形态）。
             // B7-5：startAt.lowerBound < routeAt.lowerBound 增强断言（源码顺序已核实
             // schedule:57 → arm:99 → start:105 → route:149——27 调度臂校准启动在
-            // topoff 路由前），同时消费 startAt 消「未使用」警告；原 startAt != nil
-            // 恒真比较随解包作用域消除。
+            // topoff 路由前），同时消费 startAt 消「未使用」警告；原外层 startAt != nil
+            // 检查与 else 分支冗余（评审 P3-3 措辞归因修正：作用于 Optional 非恒真），
+            // 其覆盖由 else「四锚点缺席即红」完整承接。
             if let scheduleAt, let armAt, let startAt, let routeAt {
                 check(armAt.lowerBound < routeAt.lowerBound
                           && scheduleAt.lowerBound < armAt.lowerBound
