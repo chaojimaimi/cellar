@@ -401,7 +401,8 @@ public enum DaemonXPC {
     // 0.23.10-alpha（2026-11-08）：B4 核心逻辑补强——校准 hold→discharge 推进失败收口（advance 判定短路 deadline 兜底不可达 → advanceFailures ≥3 abort，字面量复用 calibration:timeout）+ 巡检 selfheal 锁存判空（单槽互踩收口）；**daemon 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（lastAction 零新字面量）。
     // 0.23.11-alpha（2026-11-09）：B5 安全纵深——固定名临时文件 O_EXCL 纵深加固（root 域五 store）+ XPC 鉴权失败限流全局化（可见性，对外行为零变化）+ getStatus nativeLimit TTL 缓存（1Hz 读盘消除）+ daemon.log 自写统一 root:admin 0640（双路线对齐 + world-readable 收敛）+ CLI install 源路径去 CWD 化（sudo cellar install 提权面修复）；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
     // 0.23.12-alpha（2026-11-09）：B5-5 热修——仓库根推导 walk-up 找 Package.swift 标记（三级硬编码上溯对 SwiftPM 新布局 .build/out/Products 少算层级，真机实证）；daemon 本体逻辑零变化（helperSourceRoot 仅 CLI 消费），但 0.23.11 的 B5 daemon 变更随本次重装一并落地（0.23.11 安装被本 bug 挡下）→ **升级仍需重装守护进程**；wire 零 schema 变化。
-    public static let daemonVersion = "0.23.12-alpha"
+    // 0.23.13-alpha（2026-11-09）：B6 XPC 客户端身份钉扎——变更命令门升级「euid==0 ∨（admin 组 ∧ 代码身份钉扎命中）」（App-route 下 daemon 从自身可执行路径自锚 App bundle + 消息绑定 SecCode 取证：路径精确相等承重墙 + 标识符 + 有效签名；CLI-route 无锚诚实降级维持 admin 门）+ App hardened runtime（堵注入钉扎宿主）+ getStatus 鉴权面零触及；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（钉扎为连接/鉴权层，命令集零新增）。
+    public static let daemonVersion = "0.23.13-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

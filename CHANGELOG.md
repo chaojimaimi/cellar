@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.13-alpha]
+
+> 背景：修复路标 B6「XPC 客户端身份钉扎批」——深审 2026-11-07 P2 收口（安全侧最后一项大投入）：变更命令鉴权门从「euid==0 ∨ admin 组成员」升级为「euid==0 ∨（admin 组 ∧ **代码身份钉扎命中**）」。App-route 部署下，同一 admin 用户的任意其他进程（会话内恶意软件）不再能对守护进程下发放电/风扇/校准指令。方案经 plan-reviewer **四轮**审核至 PASS（三轮累计拦下 12+3 项：两连 SPI 事实纠错——连接级/字典级 audit-token API 皆私有，取证原语换消息绑定公开 API `SecCodeCreateWithXPCMessage`；测试诱饵归因错位补 .app 收尾守卫独立覆盖；跨提交场景错位）；code-reviewer 落地前全审 **APPROVE WITH NITS**（P0–P2 零，4×P3 登记性观察；对抗推演 + macOS 27.2 SDK 头文件独立复核）；ds-worker 实施期两次按纪律停下上报，主代理裁决两处落地偏差（偏差一：提取常量改公开 `kSecCodeInfoMainExecutable`——原方案钉的 `kSecCodeInfoPath` 系私有常量且对 bundle 返回 bundle 路径会恒 deny 误杀 App；偏差二：recordRejection 助手落 XPCServer.swift 文件内——Swift private 跨文件不可及 + B5 源钉字面量文件级存活依赖）。942 场景全绿（924→942，XPCPinningDomain 新域 18 组）、golden 384=384 零差异、l10n 零变化、coverage 92.01%、App 产物实证 `flags=0x10002(adhoc,runtime)`（hardened 生效，内嵌 daemon `0x2(adhoc)` 照旧）。**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化。
+
+### Added
+
+- **XPC 客户端身份钉扎（App-route 自锚）**：daemon 启动期从自身可执行路径派生期望 App bundle 锚点（root 进程观测自身路径 = 用户态不可伪造信任锚；双守卫：`/Contents/` 子串存在性 + 前缀末段 `.app` 收尾，语义标记非层数硬编码——0.23.12 教训延续）。非 root 对端的变更命令须通过消息绑定代码身份取证（`SecCodeCreateWithXPCMessage` → 签名有效 + 标识符 + **主可执行路径精确相等承重墙**）叠加既有 admin 门；取证全链 fail-closed（任何 API 失败 → 字段缺席 → 拒绝，绝不静默放行）；专属拒绝消息 + B5-2 拒绝计数链延续。
+- **App hardened runtime**（`ENABLE_HARDENED_RUNTIME = YES`）：库验证默认启用，阻断同用户进程向钉扎宿主 App 注入（与钉扎互补成链）。
+
+### Changed
+
+- **CLI-route 诚实降级**：手工路线 daemon 不在任何 .app 内（无可信锚）→ 维持 0.23.12 现状 admin 组门 + 一次性日志登记（降级不弱于基线，不静默）。
+- **非 root raw XPC 客户端的变更命令在 App-route 部署下被拒**（CLI 变更命令被客户端 requireRoot 先拦，本变化对 CLI 用户不可见——README 文档化用法全部 `sudo`）。
+- **开发拓扑**：开发版 App（DerivedData）+ 已装 App-route daemon 会被拒——先在 App 面板卸载守护进程再 `sudo cellar install`（README 开发者注记）。App bundle 被移动/改名后变更命令拒绝直至重装守护进程（预期 fail-closed）。
+
+### Security
+
+- 残留局限如实登记（SECURITY.md 同步）：App bundle 用户属主（拖拽安装惯例）→ 定向改写 bundle + 重签名的攻击者仍可绕过（属主归一化与 Sparkle 就地更新互斥，登记为后续项）；CLI-route 无钉扎；getStatus 保持未鉴权（既有登记）。
+
 ## [0.23.12-alpha]
 
 > 背景：0.23.11 B5-5 仓库根推导真机回归热修——用户 `sudo cellar install` 实证报错路径 `/Cellar/.build/out/.build/release/cellar-daemon` 双层嵌套：0.23.11 的**三级硬编码上溯**对 SwiftPM 新构建布局（`.build/out/Products/<config>/cellar`——Xcode 26 工具链副产物，四层）少算层级 → repoRoot 误判为 `.build/out` 子目录。fail-closed 行为正确（报错拒装未装错东西——防线起作用，仅推导算法错）。924 场景全绿（纵深-10 补新布局回归钉 + 无标记拒绝 + Package.swift 哨兵哨兵化）；**升级仍需重装守护进程**（0.23.11 的 daemon 安装被本 bug 挡下——B5 daemon 变更随本次重装一并落地）；wire 零 schema 变化。
