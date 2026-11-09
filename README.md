@@ -120,6 +120,8 @@ sudo .build/release/cellar install
 
 图形界面路线：用 Xcode 打开 `App/CellarApp.xcodeproj` 构建，将产物 **Cellar.app 放入 /Applications** 后运行（安装要求见「图形界面（App）」）。
 
+**开发者注记（0.23.13 客户端身份钉扎）**：App-route 部署（daemon 内嵌于 App bundle）下，daemon 只接受「与自身同一 App bundle」的 App 调用变更命令（客户端身份钉扎）——用 Xcode 构建的开发版 App（DerivedData 产物路径）与已装 daemon 的锚点不符，变更命令会被拒绝（回包「客户端身份未通过验证…」）。开发期请先在 App 面板「卸载守护进程」，再 `sudo .build/release/cellar install` 切手工路线（频繁替换 App 的场景见「更新 App」的双路线选择矩阵——手工路线 daemon 与 App bundle 解耦，零影响）。另请勿在安装后**移动或改名** `/Applications/Cellar.app`：路径与 daemon 记录的锚点不符后，App 的变更命令会被拒绝（预期内 fail-closed），恢复 = 先卸载守护进程，再把 App 放回原位或重装守护进程。
+
 **发布维护者注记（Sparkle 更新签名私钥，0.23.3 起）**：应用内更新的 EdDSA 签名私钥存于发布机的**登录钥匙串**（`sparkle-project/Sparkle` 的 `generate_keys` 生成）。**私钥丢失 = 更新链断**——旧客户端只认原公钥，换钥需多发一版过渡发布。请妥善备份：钥匙串访问 App → 登录钥匙串 → 搜「Sparkle_EDSA（ed25519）」→ 右键导出并离线保存；发布脚本 `Tools/package-release.sh` 第 8 步用同钥匙串的 `sign_update` 签 zip 并生成 appcast.xml（发布三断言纪律见 `docs/SMC-NOTES.md` §11.18）。
 
 ## 使用
@@ -144,7 +146,7 @@ sudo cellar uninstall  # 卸载并恢复系统默认充电
 
 - **限充下限 60%**：三层强制（CLI 参数校验 / XPC 权限与复核 / daemon 策略构造），持久化文件同样无法绕过
 - **可恢复性**：SIGTERM、disable、uninstall 均自动恢复系统默认充电；daemon 崩溃由 launchd 重拉并立即校对状态
-- **最小权限**：读取无需特权；写入收敛到单一 root daemon；XPC 变更命令仅接受 root 或 admin 组（gid 80）成员调用，带类型白名单与限流
+- **最小权限**：读取无需特权；写入收敛到单一 root daemon；XPC 变更命令仅接受 root 或 admin 组（gid 80）成员调用（0.23.13 起 App-route 部署对非 root 调用另须客户端身份钉扎命中——手工 CLI 安装路线维持 admin 组门），带类型白名单与限流
 - **不静默失败**：写入后回读校验，校验失败（含外部写者冲突）类型化上报
 - **无遥测**；出站网络 = Sparkle 更新通道（每日一次 appcast 只读 GET + 用户确认安装后的更新包下载；`SUSendSystemProfile=false` 不随请求发送任何系统信息）——首个第三方运行时依赖为 [Sparkle 2](https://sparkle-project.org)（MIT 许可，仅 App 用于更新检查/EdDSA 验包；CLI 与 daemon 仍零第三方依赖）
 - **系统设置充电上限与 Cellar 的关系（macOS 27，三分支模型）**：系统设置设具体值 → 系统原生限充主导（只用系统限充请停用 Cellar）；Cellar 执法中 → 系统上限被让到 100%、Cellar 目标值接管停充点（正常前提形态）；**手动在系统设置拖到 100% ≠ 关闭限充——那是机制关闭位**（整体关闭原生限充机制，电池自由充到 100%）。停用限充请用 Cellar 的停用按钮；Cellar 滑杆是唯一意图源，任何系统设置侧覆盖都会在读回行显性化，机制被关时 30 秒内自动恢复并提示（详见 [FAQ Q16](docs/FAQ.md)）
