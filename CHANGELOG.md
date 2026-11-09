@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.15-alpha]
+
+> 背景：修复路标 B7「打磨无障碍批」——深审修复路标最后一批。方案经 plan-reviewer 两轮审核至 PASS（第一轮 1×P1+2×P2+3×P3：横幅字色本地常量违反 CellarUI G2 单落点成文纪律、startAt 增强断言方向与源码实际顺序相反、degraded 横幅无 tint 背景；第二轮 4×P3 全折入）；code-reviewer 落地前全审 **APPROVE WITH NITS**（P0–P2 零，4×P3 登记型，其中 2 条随批收口）；对比度 20+ 比值经两轮独立重算零误差。959 场景全绿（942→959，+17：钉扎-19/a11y-1..6/对比度-1..6/字面量-1..4）；l10n 477→479 双语同步（+2 key）；coverage 92.01%；全量重编译零警告（两处登记警告清零）。**golden 基线预期漂移批**：失败集合 384→390，新增 6 条全部归因 GaugeHero tertiaryText 消费点（对比度修复的渲染面），零不可归因项——发版后走 CI `snapshot-regen` 权威流程重定基线。**daemon 逻辑变更（钉扎行落盘）——升级需重装守护进程**；wire 零 schema 变化。
+
+### Added
+
+- **无障碍（B7-1）**：日程删除图标钮 accessibilityLabel（新 key）；九处滑杆（充电上限/引导/风扇四根/热两根/日程编辑器）与两处 Stepper 标签关联既有 l10n 词；统计范围 chip / 星期 chip / 主窗导航三处选中态 `.isSelected` trait；四张统计曲线卡 accessibilityElement 聚合 + 最新采样摘要值（此前读屏用户拿不到任何图表数据）。
+- **对比度场景域**：WCAG 相对亮度/比值/alpha 复合公式进 CellarCoreCheck 纯函数，钉表全组合 ≥4.5:1 断言 + hex 防漂移 + 横幅双口径（vs tint / vs panel 名义实色）。
+- **README FAQ**：「更新 App」节增补 Sparkle 更新失败排查（本机代理到 GitHub 间歇 504 → 切换网络节点重试 / GitHub Releases 手动下载 dmg + SHA-256 校验）。
+
+### Changed
+
+- **对比度修复（B7-2，WCAG AA 文本 ≥4.5:1，色相保持最小亮度调整）**：tertiaryText 四主题实色化（旧值 2.15~3.23:1 全不达标 → #635849/#998770/#5F6972/#88949B，新值 4.95~6.83:1 且保持弱于 secondary 的层级）；native 主题 tertiary 去二次透明；amberLight secondaryText #8A7A66→#5C5144（4.09→7.61:1）；两条浅色警示横幅字色（Sub80StatusView degraded/hysteresis，2.57~3.50:1 → #69451E/#7B4C1D 达标；暗主题维持原 warning 色）。视觉身份仅亮度面调整——真机四主题走查见发布说明。
+- **数字格式统一（B7-3）**：手拼 `%` 与硬编码单位（A/V/°C/W/rpm）收敛到 NumberFormatter + 单位 key 通路（`dashboard.unit.*` 先例，新 `CellarNumericFormat` 缓存）；`LocalizedStringKey` 插值绕过 l10n 门面的五处改显式通路；`°C` 空格两形态统一带空格；`"--"` 占位统一 `common.nodata`（—）。
+- **钉扎状态可检索（B7-4）**：客户端身份锚点解析三分支结果同步写入 daemon.log 文件通道（此前走 os_log info 级不落盘、grep 不可达——0.23.13/14 钉扎状态只能行为学判据确认）；os_log 级别升 `.notice`。daemon.log `grep 身份` 可直接查钉扎启用/降级/失败三态。
+
+### Fixed
+
+- **两处登记警告清零（B7-5）**：FullChargeAutoRestoreDomain 校27-5 断言补 `startAt < routeAt` 源码顺序增强（消「未使用」警告且断言强度提升）；Theme.swift resolve 缓存锁行去冗余 `nonisolated(unsafe)`（NSLock let Sendable）。全量重编译零警告。
+- README.en.md 安全表述一行同步（0.23.13+ 钉扎形态；B6 评审 P3-3 顺手收口）。
+
 ## [0.23.14-alpha]
 
 > 背景：0.23.13 真机回归热修（R3 风险显形）——0.23.13 启用的 App hardened runtime 在真机上导致 App 双击秒死：dyld 加载期库验证拒绝「ad-hoc 主程序（TeamIdentifier 空）+ SPM 引入的 Sparkle.framework（Sparkle 官方签名，不同 Team ID）」组合（崩溃报告 DYLD `"Library not loaded: ...Sparkle... different Team IDs"` + SIGABRT，四次启动四份崩溃报告实证）。方案 R3 的既定回滚路径执行：**回退 pbxproj 两行**（单开关独立可回滚）；钉扎-18 场景反转为**缺席断言**（防在嵌入 Sparkle 签名链修复前无意再引入同一发版杀手）。**发版前本机构建产物启动实证存活**（B3 教训强化：行为面改动必须真机运行验证——本例静态门禁/签名校验全绿仍拦不住 dyld 加载期失败，已升级为发版硬门）。942 场景全绿（钉扎-18 改断言不改数）；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化；门禁独立重跑全过（942 全绿 / golden 384=384 / coverage / xcodebuild / 启动实证）。
