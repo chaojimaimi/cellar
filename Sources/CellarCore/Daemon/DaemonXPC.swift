@@ -403,7 +403,8 @@ public enum DaemonXPC {
     // 0.23.12-alpha（2026-11-09）：B5-5 热修——仓库根推导 walk-up 找 Package.swift 标记（三级硬编码上溯对 SwiftPM 新布局 .build/out/Products 少算层级，真机实证）；daemon 本体逻辑零变化（helperSourceRoot 仅 CLI 消费），但 0.23.11 的 B5 daemon 变更随本次重装一并落地（0.23.11 安装被本 bug 挡下）→ **升级仍需重装守护进程**；wire 零 schema 变化。
     // 0.23.13-alpha（2026-11-09）：B6 XPC 客户端身份钉扎——变更命令门升级「euid==0 ∨（admin 组 ∧ 代码身份钉扎命中）」（App-route 下 daemon 从自身可执行路径自锚 App bundle + 消息绑定 SecCode 取证：路径精确相等承重墙 + 标识符 + 有效签名；CLI-route 无锚诚实降级维持 admin 门）+ App hardened runtime（堵注入钉扎宿主）+ getStatus 鉴权面零触及；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（钉扎为连接/鉴权层，命令集零新增）。
     // 0.23.14-alpha（2026-11-09）：0.23.13 真机回归热修——0.23.13 启用的 App hardened runtime 的库验证对「ad-hoc 主程序 + SPM 引入的 Sparkle.framework（官方签名不同 Team ID）」在 dyld 加载期直接拒绝（SIGABRT 秒死，崩溃报告 DYLD "different Team IDs" 实证）→ 回退 pbxproj 两行（R3 既定回滚路径）；钉扎-18 场景反转为缺席断言防再引入；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化。
-    public static let daemonVersion = "0.23.14-alpha"
+    // 0.23.15-alpha（2026-11-09）：B7 打磨无障碍批——a11y 标签全缺口收口（删除钮/滑杆九根/Stepper 两根标签 + 选中态 trait 三处 + 四曲线卡 a11y 值）+ WCAG AA 对比度钉表（tertiaryText 四主题实色化 + amberLight secondaryText + 警示横幅字色双口径）+ 字面量/单位格式统一（百分号 NumberFormatter 通路/单位 dashboard.unit.* key/°C 带空格统一/「--」占位换 common.nodata）+ 钉扎行落盘（resolveClientAnchor 三分支 persistLog + .notice——B6 冒烟缺憾闭环）+ 两登记警告清理（Theme.swift cacheLock nonisolated(unsafe) / FullChargeAutoRestoreDomain startAt）；**daemon 逻辑变更（B7-4 锚点解析落盘）——升级需重装守护进程**；wire 零 schema 变化。
+    public static let daemonVersion = "0.23.15-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

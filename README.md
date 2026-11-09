@@ -46,6 +46,7 @@
 ### 更新 App（重要）
 
 - **应用内更新（0.23.4 起）**：关于页「检查更新」→ Sparkle 标准更新窗 → 确认后自动完成下载、EdDSA 验包与安装（**不自动下载**——每次安装都需用户确认）。首版自举说明：更新通道在 0.23.3 发布时还没有存量用户可服务，**从 0.23.4 开始**旧版本才会经 appcast 收到新版提示；此前升级请按下方手动路线。注意：daemon 更新仍需「卸载守护进程 → 更新 App → 重新安装守护进程」或 CLI 重装（应用内更新替换 App 后，daemon 注册的仍是旧 bundle——升级后请打开面板确认 daemon 版本行）。
+- **应用内更新反复报「更新错误」（FAQ）**：下载阶段反复失败的常见根因是本机代理到 GitHub 的链路间歇 504（Sparkle 的 appcast 与更新包均走 GitHub）。处置：切换网络节点后重试「检查更新」；仍失败则到 GitHub Releases 手动下载 dmg 覆盖安装（建议对照发布页公布的 SHA-256 校验下载完整性），装完按上文注意项确认 daemon 版本行。
 - **托管路线（面板安装）**：先在面板「卸载守护进程」→ 替换 Cellar.app → 打开 → 面板「安装守护进程」。**直接用 rm/cp 覆盖 App 可能导致守护进程无法启动**（系统注册缓存失效，表现为守护进程反复启动失败）；若已发生：重启 Mac 后重新安装，或按下方矩阵切换手工路线恢复限充（面板 pending 态另有「移除残留注册」出口）。
 - **手工路线（CLI 安装）**：替换 Cellar.app 不影响守护进程；但 daemon 升级需重跑 `sudo .build/release/cellar install`。
 - **手工路线 daemon 反复被顶掉 / install 报 Input/output error（0.20.1 新增检测）**：ad-hoc 签名 App 的托管注册记录可能生成即损坏，系统会周期性（10 分钟～1 小时）以同名 label 重新提交它——顶掉手工 daemon、并让手工 install 的 bootstrap 反复失败。`cellar install` 已能识别此形态并给出指引；手动恢复序列：App 面板「卸载守护进程」→ `sudo sfltool resetbtm`（一次性代价：全系统登录项批准记录清空，其他 App 需要时会重新弹批准）→ 重跑 `sudo cellar install`。
