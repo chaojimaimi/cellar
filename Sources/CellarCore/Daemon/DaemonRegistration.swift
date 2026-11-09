@@ -162,28 +162,40 @@ public func verifyRootOwnedDirectory(path: String) -> Bool {
 // MARK: - daemon 编译产物源路径推导（0.23.11 B5-5：CLI install 源路径去 CWD 化）
 
 extension DaemonRegistration {
-    /// 自 CLI 可执行文件位置推导仓库根（0.23.11 B5-5）：解析 symlink 后三级上溯
-    /// （`<仓库根>/.build/release/cellar` → 上三级 = 仓库根）+ 百分号解码。
+    /// 自 CLI 可执行文件位置推导仓库根（0.23.11 B5-5）+ 百分号解码。
     /// **原 CWD 相对路径（".build/release/cellar-daemon"）为提权面**：用户在攻击者
     /// 可控目录执行 `sudo cellar install` 时解析到攻击者预置文件 → root copyItem +
     /// chmod 0755 → launchd root 执行（任意代码提权）。推导失败（可执行位置缺席/
-    /// 路径过短/百分号解码失败）→ nil——CLI 侧显式报错拒装（防静默回退 CWD 解析）；
-    /// 产物存在性由 CLI 层 fileExists + isExecutableFile 双检承担。
-    /// 纯函数面（CellarCoreCheck 直测：临时 SPM 形态目录树成功路径 + symlink 解析
-    /// + nil 拒绝；CLI executable target 不可 import，故推导核心落本库）。
+    /// 无 Package.swift 标记祖先链/百分号解码失败）→ nil——CLI 侧显式报错拒装
+    /// （防静默回退 CWD 解析）；产物存在性由 CLI 层 fileExists + isExecutableFile
+    /// 双检承担。
+    /// 纯函数面（CellarCoreCheck 直测：临时目录树多布局成功路径 + symlink 解析
+    /// + 无标记拒绝 + nil 拒绝；CLI executable target 不可 import，故推导核心落本库）。
+    ///
+    /// 0.23.12 热修（真机实证）：0.23.11 的**三级硬编码上溯**对 SwiftPM 新构建布局
+    /// （`.build/out/Products/<config>/cellar`——Xcode 26 工具链副产物，四层）少算
+    /// 层级 → repoRoot 误判为 `.build/out` 子目录 → 产物路径双层嵌套（`.build/out/
+    /// .build/release/...`，用户 `sudo cellar install` 实证）。改 **walk-up 找
+    /// Package.swift 标记**：从可执行所在目录逐级上溯，Package.swift 在位即仓库根
+    /// ——对任意布局深度鲁棒（标记文件 = 仓库根的语义定义，非层数猜测）；上限
+    /// 16 级防环。安全等价论证不变：walk-up 链条沿**运行中二进制的真实祖先目录**，
+    /// 攻击者要操纵即需让恶意目录出现在真实落位的祖先链上——运行中 cellar 在
+    /// 攻击者目录 = 本已全盘皆输；CLI 层 fileExists + isExecutableFile 双检保留。
     public static func helperSourceRoot(fromExecutablePath executablePath: String?) -> String? {
         guard let executablePath else { return nil }
         // 先解析 symlink（_NSGetExecutablePath 结果可含符号链接——PATH 形态调用时
-        // argv 可执行为 symlink，不解析则三级上溯误拒）。解析不削弱安全：结果仍指向
-        // 运行中二进制的真实落位，CLI 层 fileExists + isExecutableFile 双检保留
-        // （执行攻击者 cellar 时本已全盘皆输，fail-closed 面不变）。
+        // argv 可执行为 symlink，不解析则上溯起点错位）。
         let resolved = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath()
-        guard let repoRoot = resolved.deletingLastPathComponent()   // .build/release/
-            .deletingLastPathComponent()                            // .build/
-            .deletingLastPathComponent()                            // 仓库根
-            .path.removingPercentEncoding else {
-            return nil
+        var directory = resolved.deletingLastPathComponent()
+        for _ in 0..<16 {
+            if FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("Package.swift").path) {
+                return directory.path.removingPercentEncoding ?? directory.path
+            }
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { return nil }   // 到根未找到
+            directory = parent
         }
-        return repoRoot
+        return nil
     }
 }

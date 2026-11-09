@@ -217,10 +217,11 @@ func runSecurityHardeningDomainScenarios() throws {
 
     // ---- ④ B5-5：install 源路径去 CWD 化（方案 §2.5 场景段）----
 
-    // 纵深-10：helperSourceRoot 推导核心直测——临时 SPM 形态目录树（.build/
-    // release/cellar）推导成功路径（symlink 解析 + 三级上溯 + 百分号解码）+ nil
-    // 拒绝（可执行位置缺席）。CLI 包装层（组合 .build/release/cellar-daemon +
-    // fileExists + print + ExitCode）由纵深-11 源钉。推导核心落
+    // 纵深-10：helperSourceRoot 推导核心直测——临时目录树**多布局**推导成功路径
+    // （0.23.12 热修：walk-up 找 Package.swift 标记，对任意布局深度鲁棒——三级
+    // 硬编码上溯对 .build/out/Products/<config>/cellar 新布局少算层级，真机实证）
+    // + symlink 解析 + 无标记拒绝 + nil 拒绝。CLI 包装层（组合 .build/release/
+    // cellar-daemon + fileExists + print + ExitCode）由纵深-11 源钉。推导核心落
     // CellarCore.DaemonRegistration（同包 executable target 不可 import 的架构
     // 事实——方案 §2.5 直测要求经该拆分落实，偏差登记）。
     do {
@@ -229,6 +230,9 @@ func runSecurityHardeningDomainScenarios() throws {
         try FileManager.default.createDirectory(
             at: fakeRepo.appendingPathComponent(".build/release"),
             withIntermediateDirectories: true)
+        // walk-up 标记哨兵（0.23.12：Package.swift 在位 = 仓库根语义定义）。
+        try Data("// Package.swift sentinel\n".utf8).write(
+            to: fakeRepo.appendingPathComponent("Package.swift"))
         defer { try? FileManager.default.removeItem(at: fakeRepo) }
         let fakeExecutable = fakeRepo.appendingPathComponent(".build/release/cellar")
         try Data("mach-o".utf8).write(to: fakeExecutable)
@@ -236,7 +240,20 @@ func runSecurityHardeningDomainScenarios() throws {
         expectEqual(
             DaemonRegistration.helperSourceRoot(fromExecutablePath: fakeExecutable.path),
             fakeRepo.path,
-            "纵深-10", "SPM 形态目录树推导成功路径（三级上溯 = 仓库根）")
+            "纵深-10", "SPM 标准布局（.build/release/cellar）walk-up 推导 = 仓库根")
+        // 0.23.12 热修形态：SwiftPM 新构建布局（.build/out/Products/Release/cellar
+        // ——Xcode 26 工具链副产物四层，真机 sudo cellar install 实证）——三级
+        // 硬编码上溯对该形态少算层级（repoRoot 误判为 .build/out），walk-up 鲁棒。
+        let newLayoutExecutable = fakeRepo
+            .appendingPathComponent(".build/out/Products/Release/cellar")
+        try FileManager.default.createDirectory(
+            at: newLayoutExecutable.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try Data("mach-o".utf8).write(to: newLayoutExecutable)
+        expectEqual(
+            DaemonRegistration.helperSourceRoot(fromExecutablePath: newLayoutExecutable.path),
+            fakeRepo.path,
+            "纵深-10", "SwiftPM 新布局（.build/out/Products/Release/cellar 四层）walk-up 推导 = 仓库根（0.23.12 热修回归钉）")
         // symlink 形态（PATH 形态调用时 argv 可执行为 symlink——解析后上溯）。
         let linkURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("cellar-b55-link-\(UUID().uuidString)")
@@ -246,7 +263,20 @@ func runSecurityHardeningDomainScenarios() throws {
         expectEqual(
             DaemonRegistration.helperSourceRoot(fromExecutablePath: linkURL.path),
             fakeRepo.path,
-            "纵深-10", "symlink 形态可执行解析后推导（P2-b——不解析则三级上溯误拒）")
+            "纵深-10", "symlink 形态可执行解析后推导（P2-b——不解析则上溯起点错位）")
+        // 无标记形态：可执行祖先链上无 Package.swift（如复制安装形态）→ nil
+        // 拒绝（CLI 层显式报错——语义化仓库根判定防误挂他处标记）。
+        let unmarkedDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cellar-b55-unmarked-\(UUID().uuidString)/bin")
+        try FileManager.default.createDirectory(
+            at: unmarkedDir, withIntermediateDirectories: true)
+        let unmarkedExecutable = unmarkedDir.appendingPathComponent("cellar")
+        try Data("mach-o".utf8).write(to: unmarkedExecutable)
+        defer { try? FileManager.default.removeItem(at: unmarkedDir.deletingLastPathComponent()) }
+        expectEqual(
+            DaemonRegistration.helperSourceRoot(fromExecutablePath: unmarkedExecutable.path),
+            nil as String?,
+            "纵深-10", "祖先链无 Package.swift 标记 → nil（walk-up 到根未命中）")
         expectEqual(
             DaemonRegistration.helperSourceRoot(fromExecutablePath: nil),
             nil as String?,
