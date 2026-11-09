@@ -94,7 +94,9 @@ public struct CellarTheme: Sendable, Equatable {
         bannerBackground: Color.primary.opacity(0.08),
         track: Color.primary.opacity(0.08),
         secondaryText: .secondary,
-        tertiaryText: Color.secondary.opacity(0.6),
+        // B7-2：native 三级文本去二次透明（.secondary@0.6 → .secondary 系统管理——
+        // 透明形态实底浮动，WCAG 度量无精确解；系统语义色深浅自动合规）。
+        tertiaryText: .secondary,
         success: .green,
         warning: .orange,
         panelBackground: nil,
@@ -122,8 +124,8 @@ public struct CellarTheme: Sendable, Equatable {
         alert: Color(hex: 0xC0392B),                           // demo 告警红（浅）
         bannerBackground: Color(hex: 0xD9A441).opacity(0.12),  // 暖警示底（badge 底同族）
         track: Color(hex: 0x7F7F8C).opacity(0.22),             // demo 仪表底环（浅）
-        secondaryText: Color(hex: 0x8A7A66),                   // demo 暖调次级文本
-        tertiaryText: Color(hex: 0x8A7A66).opacity(0.6),       // 次级文本降档
+        secondaryText: Color(hex: 0x5C5144),                   // 暖调次级文本（B7-2：#8A7A66 → 7.61:1 达 AA）
+        tertiaryText: Color(hex: 0x635849),                    // 三级文本（B7-2 实色化：#635849 = 6.83:1，层级弱于 secondary）
         success: Color(hex: 0xB4793B),                         // demo 无独立成功色 → 随品牌 accent
         warning: Color(hex: 0xC98A45),                         // demo 预设渐变中点（暖警示）
         panelBackground: Color(hex: 0xFFFDF8).opacity(0.93),   // demo 暖纸面板底
@@ -150,7 +152,7 @@ public struct CellarTheme: Sendable, Equatable {
         bannerBackground: Color(hex: 0xE3A94F).opacity(0.10),
         track: Color(hex: 0x7F7F8C).opacity(0.32),             // demo 仪表底环（深）
         secondaryText: Color(hex: 0xA08D74),                   // demo 暖调次级文本（深）
-        tertiaryText: Color(hex: 0xA08D74).opacity(0.6),
+        tertiaryText: Color(hex: 0x998770),                    // 三级文本（B7-2 实色化：#998770 = 4.95:1）
         success: Color(hex: 0xE3A94F),
         warning: Color(hex: 0xEAB765),
         panelBackground: Color(hex: 0x211A13).opacity(0.92),   // demo 暖夜面板底
@@ -183,7 +185,7 @@ public struct CellarTheme: Sendable, Equatable {
         bannerBackground: Color(hex: 0xB8722C).opacity(0.12),  // 警示底 = warning 同族（amber 先例推导）
         track: Color(hex: 0x5B6770).opacity(0.18),             // 仪表底环（仪器灰）
         secondaryText: Color(hex: 0x55606A),                   // 冷灰次级文本
-        tertiaryText: Color(hex: 0x55606A).opacity(0.6),       // 次级文本降档
+        tertiaryText: Color(hex: 0x5F6972),                    // 三级文本（B7-2 实色化：#5F6972 = 5.11:1，层级弱于 secondary）
         success: Color(hex: 0x0E8A63),                         // 单信号色：success = accent 同源
         warning: Color(hex: 0xB8722C),                         // 行业标准橙（语义色不品牌化）
         panelBackground: Color(hex: 0xF3F5F4).opacity(0.95),   // 仪表浅灰面板底
@@ -210,7 +212,7 @@ public struct CellarTheme: Sendable, Equatable {
         bannerBackground: Color(hex: 0xD99A4E).opacity(0.10),  // 警示底 = warning 同族（amber 先例推导）
         track: Color(hex: 0x8FA3AD).opacity(0.24),             // 仪表底环（深）
         secondaryText: Color(hex: 0x98A4AC),                   // 冷灰次级文本（深）
-        tertiaryText: Color(hex: 0x98A4AC).opacity(0.6),
+        tertiaryText: Color(hex: 0x88949B),                    // 三级文本（B7-2 实色化：#88949B = 5.33:1）
         success: Color(hex: 0x35D08E),                         // 单信号色：success = accent 同源
         warning: Color(hex: 0xD99A4E),                         // 行业标准橙（深）
         panelBackground: Color(hex: 0x1B1F23).opacity(0.94),   // 石墨面板底
@@ -227,6 +229,27 @@ public struct CellarTheme: Sendable, Equatable {
         gaugeTick: Color(hex: 0x98A4AC).opacity(0.30),         // 仪表内圈刻度（冷灰次级同源，深）
         panelGrid: Color(hex: 0x98A4AC).opacity(0.07)          // 面板细线网格（冷灰 ≤0.08，深）
     )
+
+    /// 警示横幅字色（B7-2 对比度钉表）：两浅色主题用新深色字（浅底上 warning
+    /// 2.57/3.07:1 不达 WCAG AA 文本线 4.5:1——色相保持的最小亮度调整，钉值
+    /// amberLight #69451E / industrialLight #7B4C1D），两暗主题维持 warning
+    /// （7.31/5.58:1 达标零变化）。签名 (style, scheme) 照 resolve(style:scheme:)
+    /// 先例——resolve 后 CellarTheme 值不含 style/scheme 字段，消费点
+    ///（Sub80StatusView 两横幅）经 cellarStyle environment 直调，不从 theme
+    /// 反推。Color 字面量落本文件（G2 执行门：CellarUI 字面量仅 Theme.swift）。
+    /// ⚠️ 落地偏差（照 0.23.13 B6 落地偏差二先例）：方案字面「private 静态函数」
+    /// 对 Sub80StatusView.swift 跨文件消费不可见（Swift private = 声明文件级）——
+    /// internal 为唯一可行可见性；字面量仍仅本文件，G2 零破坏。
+    static func bannerTextColor(style: PanelStyle, scheme: ColorScheme) -> Color {
+        switch style {
+        case .native:
+            return native.warning
+        case .amber:
+            return scheme == .dark ? amberDark.warning : Color(hex: 0x69451E)   // 深琥珀（色相保持）
+        case .industrial:
+            return scheme == .dark ? industrialDark.warning : Color(hex: 0x7B4C1D)   // 深棕（色相保持）
+        }
+    }
 
     /// demo 135° 渐变端点（浅 #D9A441→#B4793B / 深 #EAB765→#D99B46）。独立成对
     /// 存放：LinearGradient 无公开端点访问器，外观 Tab 色板行须展示起止色。

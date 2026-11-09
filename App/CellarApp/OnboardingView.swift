@@ -301,7 +301,8 @@ struct OnboardingView: View {
                 .foregroundStyle(theme.secondaryText)
             HStack(spacing: 8) {
                 ForEach([80, 70, 60], id: \.self) { preset in
-                    Button("\(preset)%") {
+                    // B7-3：预设标题走 NumberFormatter percent 通路（禁手拼 "%"）。
+                    Button(CellarNumericFormat.percent(preset)) {
                         upperLimit = Double(preset)
                         scheduleApply()
                     }
@@ -313,7 +314,7 @@ struct OnboardingView: View {
             HStack {
                 Text(CellarL10n.s("vocabulary.native.limitLabel")).font(.callout)
                 Spacer()
-                Text("\(Int(upperLimit))%").monospacedDigit()
+                Text(CellarNumericFormat.percent(Int(upperLimit))).monospacedDigit()
             }
             Slider(
                 value: $upperLimit,

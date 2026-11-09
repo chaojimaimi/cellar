@@ -377,7 +377,10 @@ public struct FanSectionView: View {
             HStack {
                 Text(CellarL10n.s("fan.sourceTempLabel"))
                 Spacer()
-                Text(currentTempC.map { String(format: "%.1f°C", $0) } ?? CellarL10n.s("common.nodata"))
+                // B7-3：单位词走 dashboard.unit.celsius key + 空格统一带空格形态
+                //（同文件第三处无空格形态——源钉字面量-3 检出的同形实例一并统一）。
+                Text(currentTempC.map { String(format: "%.1f", $0) + " " + CellarL10n.s("dashboard.unit.celsius") }
+                    ?? CellarL10n.s("common.nodata"))
                     .monospacedDigit()
             }
             .font(.caption)
@@ -428,7 +431,8 @@ public struct FanSectionView: View {
             HStack {
                 Text(CellarL10n.s("fan.threshold"))
                 Spacer()
-                Text(String(format: "%.1f°C", thresholdC))
+                // B7-3：单位词走 dashboard.unit.celsius key + 空格统一带空格形态。
+                Text(String(format: "%.1f", thresholdC) + " " + CellarL10n.s("dashboard.unit.celsius"))
                     .monospacedDigit()
             }
             .font(.caption)
@@ -459,7 +463,8 @@ public struct FanSectionView: View {
             HStack {
                 Text(CellarL10n.s("fan.speed"))
                 Spacer()
-                Text("\(Int(speedPercent))%")
+                // B7-3：百分数走 NumberFormatter percent 通路（禁手拼 "%"）。
+                Text(CellarNumericFormat.percent(Int(speedPercent)))
                     .monospacedDigit()
             }
             .font(.caption)
@@ -477,7 +482,7 @@ public struct FanSectionView: View {
             HStack {
                 Text(CellarL10n.s("fan.stage2"))
                 Spacer()
-                Text("\(Int(stage2Percent))%")
+                Text(CellarNumericFormat.percent(Int(stage2Percent)))
                     .monospacedDigit()
             }
             .font(.caption)
@@ -489,7 +494,7 @@ public struct FanSectionView: View {
             HStack {
                 Text(CellarL10n.s("fan.stage2Rise"))
                 Spacer()
-                Text(String(format: "%.1f°C", stage2RiseC))
+                Text(String(format: "%.1f", stage2RiseC) + " " + CellarL10n.s("dashboard.unit.celsius"))
                     .monospacedDigit()
             }
             .font(.caption)

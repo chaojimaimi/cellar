@@ -72,6 +72,11 @@ public struct Sub80StatusView: View {
     public let healProbeTicks: Int?
 
     @Environment(\.cellarTheme) private var theme
+    // B7-2：横幅字色 (style, scheme) 直调通路——resolve 后 CellarTheme 不含
+    // style/scheme 字段，风格经 cellarStyle environment 注入（ThemeProvider 注入，
+    // 快照 wrap 同款），深浅读本视图 colorScheme。
+    @Environment(\.cellarStyle) private var cellarStyle
+    @Environment(\.colorScheme) private var colorScheme
 
     public init(
         degraded: Bool = false,
@@ -168,7 +173,9 @@ public struct Sub80StatusView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
             }
-            .foregroundStyle(theme.warning)
+            // B7-2：字色走钉表（两浅色主题深色字 vs 面板底/tint 达 AA；两暗主题
+            // 维持 warning）——degraded 无背景，字直接画在面板底（vs panel 口径）。
+            .foregroundStyle(CellarTheme.bannerTextColor(style: cellarStyle, scheme: colorScheme))
             Text(CellarL10n.s("panel.sub80.degraded.banner", degradedWriteValue))
                 .font(.caption)
                 .foregroundStyle(theme.secondaryText)
@@ -186,7 +193,8 @@ public struct Sub80StatusView: View {
                 .font(.caption)
                 .fontWeight(.semibold)
         }
-        .foregroundStyle(theme.warning)
+        // B7-2：字色走钉表——本横幅有 warning@0.12 tint 背景（vs tint 口径）。
+        .foregroundStyle(CellarTheme.bannerTextColor(style: cellarStyle, scheme: colorScheme))
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(theme.warning.opacity(0.12), in: Capsule())

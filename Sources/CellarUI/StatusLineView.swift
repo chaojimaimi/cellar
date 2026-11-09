@@ -139,9 +139,10 @@ public struct StatusLineView: View {
     /// 电流段：幅值（mA → A，两位小数）+ 方向词（0.19.4 §1.1：currentDirection
     /// kind 版纯函数——方向词与流向形态同源裁决；holding → nil 只显幅值不标
     /// 方向；方向词经 CellarL10n 词条解析，native/amber 同值不 B 化——WP4 §4.3）。
+    /// B7-3：单位词走 dashboard.unit.* key（G2 语汇串纪律，禁手拼字面量）。
     private func currentSegment(_ snapshot: BatterySnapshot) -> some View {
         let amperage = Double(abs(snapshot.amperageMA)) / 1000
-        let ampText = String(format: "%.2f A", amperage)
+        let ampText = String(format: "%.2f", amperage) + " " + CellarL10n.s("dashboard.unit.ampere")
         let direction = currentDirection(kind: flowModel(of: snapshot, previous: previous).kind)
         let word = direction.map {
             switch $0 {
@@ -150,25 +151,30 @@ public struct StatusLineView: View {
             }
         }
         return segment(caption: CellarL10n.s("statusline.current")) {
-            Text(word.map { "\($0) \(ampText)" } ?? ampText)
+            // B7-3：显式 verbatim——预组装 String 禁入 LocalizedStringKey 插值
+            //（CellarL10n 门面绕过形态，方案 §2.3-4）。
+            Text(verbatim: word.map { "\($0) \(ampText)" } ?? ampText)
         }
     }
 
     /// 电压段：一位小数。
     private func voltageSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: CellarL10n.s("statusline.voltage")) {
-            Text(String(format: "%.1f V", Double(snapshot.voltageMV) / 1000))
+            Text(String(format: "%.1f", Double(snapshot.voltageMV) / 1000)
+                     + " " + CellarL10n.s("dashboard.unit.volt"))
         }
     }
 
     /// 温度段：一位小数。温度暂停态追加「 · 暂停中」注词——词经 CellarL10n
-    /// （用户可见新词不走字面量，方案 §2.5）；「40.2°C · 暂停中」形态，注词与
+    ///（用户可见新词不走字面量，方案 §2.5）；「40.2 °C · 暂停中」形态，注词与
     /// 数值同段同字体（monospacedDigit 由 segment 统一施加）。段标签随风格
     /// （word(.tempLabel)——amber「窖温」，demo）。
     private func temperatureSegment(_ snapshot: BatterySnapshot) -> some View {
         segment(caption: theme.word(.tempLabel)) {
-            let base = String(format: "%.1f °C", snapshot.temperatureC)
-            Text(tempPauseActive ? "\(base) · \(CellarL10n.s("statusline.tempPaused"))" : base)
+            let base = String(format: "%.1f", snapshot.temperatureC)
+                + " " + CellarL10n.s("dashboard.unit.celsius")
+            Text(verbatim: tempPauseActive
+                ? "\(base) · \(CellarL10n.s("statusline.tempPaused"))" : base)
         }
     }
 
@@ -182,9 +188,12 @@ public struct StatusLineView: View {
         )
         return segment(caption: CellarL10n.s("statusline.cycle")) {
             if let health {
-                Text("\(snapshot.cycleCount) · \(theme.word(.healthLabel)) \(health)%")
+                // B7-3：数值走 formatter（分组整数/百分数随 locale）+ 标签 l10n 词
+                // ——显式 verbatim（LocalizedStringKey 插值绕过门面形态消除）。
+                Text(verbatim: "\(CellarNumericFormat.grouped(snapshot.cycleCount)) · "
+                    + "\(theme.word(.healthLabel)) \(CellarNumericFormat.percent(health))")
             } else {
-                Text("\(snapshot.cycleCount)")
+                Text(verbatim: CellarNumericFormat.grouped(snapshot.cycleCount))
             }
         }
     }
@@ -204,15 +213,15 @@ public struct StatusLineView: View {
         var parts: [String] = []
         if let systemPowerMW = telemetry?.systemPowerInMW {
             // 实时 W（一位小数）+ 额定副注（复合键）；额定缺席 → 仅实时值（裸 W 形态
-            // 与既有 "\(watts) W" 同语汇）。
+            // 与既有数值+单位词同语汇）。B7-3：单位词走 dashboard.unit.watt key。
             let liveText = String(format: "%.1f", Double(systemPowerMW) / 1000)
             if let rated = adapter.watts {
                 parts.append(CellarL10n.s("statusline.adapter.live", liveText, rated))
             } else {
-                parts.append("\(liveText) W")
+                parts.append(liveText + " " + CellarL10n.s("dashboard.unit.watt"))
             }
         } else if let watts = adapter.watts {
-            parts.append("\(watts) W")
+            parts.append("\(watts) " + CellarL10n.s("dashboard.unit.watt"))
         }
         if let name = adapter.name {
             parts.append(name)
@@ -231,7 +240,8 @@ public struct StatusLineView: View {
         if let cpuSkinTempC {
             segment(caption: CellarL10n.s("statusline.cpuSkin")) {
                 // 一位小数与温度段（temperatureSegment）同口径。
-                Text(String(format: "%.1f °C", cpuSkinTempC))
+                Text(String(format: "%.1f", cpuSkinTempC)
+                         + " " + CellarL10n.s("dashboard.unit.celsius"))
             }
         }
         if let fanLRPM, let fanRRPM {
@@ -250,11 +260,14 @@ public struct StatusLineView: View {
 
     /// 风扇格值：rpm == 0 → 「已停转」词（0.20 WP4 §5——GA 低温静息停转判谳
     /// §11.3.1：0 是有效读数非门控，渲染为语汇词而非数字 0；来源小字保留）；
-    /// rpm > 0 → **保持 `Text("\(Int)…")` LocalizedStringKey 插值形态**（locale
-    /// 千分位格式化——「1,344 rpm」，golden 对账钉死；抽 String 会降级 verbatim
-    /// 丢格式，M2 对账实测回归已修）；来源小字 caption2 + tertiaryText。
+    /// rpm > 0 → **B7-3 定版：数值走 CellarNumericFormat.grouped（locale 千分位
+    /// 「1,344」语义保持——原 LocalizedStringKey 插值通路的 formatter 等价替换，
+    /// golden 对账形态逐字节一致）+ 单位词走 dashboard.unit.rpm key（新增），
+    /// 显式 verbatim Text**；来源小字 caption2 + tertiaryText。
     @ViewBuilder
     private func fanValueText(rpm: Double) -> some View {
+        let rpmText = CellarNumericFormat.grouped(Int(rpm.rounded()))
+            + " " + CellarL10n.s("dashboard.unit.rpm")
         if rpm == 0 {
             if let fanSource {
                 HStack(spacing: 4) {
@@ -268,13 +281,13 @@ public struct StatusLineView: View {
             }
         } else if let fanSource {
             HStack(spacing: 4) {
-                Text("\(Int(rpm.rounded())) rpm")
+                Text(verbatim: rpmText)
                 Text(fanSource)
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
             }
         } else {
-            Text("\(Int(rpm.rounded())) rpm")
+            Text(verbatim: rpmText)
         }
     }
 }

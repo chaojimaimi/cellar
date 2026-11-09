@@ -36,6 +36,22 @@ public extension EnvironmentValues {
     }
 }
 
+/// 面板风格注入键（B7-2）：横幅字色选色信号须携带 style——CellarTheme 经
+/// resolve(style:scheme:) 解析后值无 style/scheme 字段，消费点（Sub80StatusView
+/// 两横幅）以 (style, scheme) 直调 CellarTheme.bannerTextColor，不从 theme 反推。
+/// ThemeProvider 注入（与 cellarTheme 同一包装点）；缺省 .native = 未包裹面横幅
+/// 字色取 native.warning（系统语义，零变化）。
+private struct CellarStyleKey: EnvironmentKey {
+    public static let defaultValue = PanelStyle.native
+}
+
+public extension EnvironmentValues {
+    var cellarStyle: PanelStyle {
+        get { self[CellarStyleKey.self] }
+        set { self[CellarStyleKey.self] = newValue }
+    }
+}
+
 // MARK: - 风格注入包装（§3.3）
 
 /// 组合根包装 View：在 **View 上下文**读取 colorScheme（App 结构体层级取值不可靠
@@ -55,6 +71,8 @@ public struct ThemeProvider<Content: View>: View {
         let theme = CellarTheme.resolve(style: style, scheme: scheme)
         return content()
             .environment(\.cellarTheme, theme)
+            // B7-2：风格随 theme 同点注入（横幅字色 (style, scheme) 直调通路）。
+            .environment(\.cellarStyle, style)
             // 系统控件（滑杆/开关/选择器/按钮）跟随主题 accent——琥珀风格下不再
             // 泄漏系统蓝（走查 2026-09-04）；native 的 accent token = 系统色，零变化。
             .tint(theme.accent)

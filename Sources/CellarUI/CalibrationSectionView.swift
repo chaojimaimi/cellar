@@ -128,7 +128,8 @@ public struct CalibrationSectionView: View {
         case nil: word = CellarL10n.s("calibration.phase.chargeFull")
         }
         if let percent {
-            return "\(word)… \(percent)%"
+            // B7-3：百分数走 NumberFormatter percent 通路（禁手拼 "%"）。
+            return "\(word)… \(CellarNumericFormat.percent(percent))"
         }
         return "\(word)…"
     }

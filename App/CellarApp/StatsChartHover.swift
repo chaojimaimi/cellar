@@ -23,15 +23,25 @@ struct StatsHoverPoint: Equatable {
 }
 
 /// hover 标签格式（各卡单位/时间粒度不同的单一实现集合；卡侧以函数引用注入）。
+/// B7-3：单位词走 dashboard.unit.* key（G2 语汇串纪律——数值 printf 通路保持
+/// 跨机逐字节确定，单位字面量禁手拼）。
 enum StatsChartHoverFormat {
     /// 电量/容量：整数百分比（均值折线 Y 口径）。
-    static func percent(_ value: Double) -> String { String(format: "%.0f%%", value) }
+    static func percent(_ value: Double) -> String {
+        String(format: "%.0f", value) + CellarL10n.s("dashboard.unit.percent")
+    }
     /// 健康度（容量趋势）：一位小数百分比（容量变化以 0.1% 计，整数会抹平趋势）。
-    static func healthPercent(_ value: Double) -> String { String(format: "%.1f%%", value) }
-    /// 窖温：一位小数 °C（状态行温度段同口径）。
-    static func celsius(_ value: Double) -> String { String(format: "%.1f °C", value) }
+    static func healthPercent(_ value: Double) -> String {
+        String(format: "%.1f", value) + CellarL10n.s("dashboard.unit.percent")
+    }
+    /// 窖温：一位小数 °C（状态行温度段同口径，带空格形态统一）。
+    static func celsius(_ value: Double) -> String {
+        String(format: "%.1f", value) + " " + CellarL10n.s("dashboard.unit.celsius")
+    }
     /// 功耗：一位小数 W（状态行适配器段同口径）。
-    static func watt(_ value: Double) -> String { String(format: "%.1f W", value) }
+    static func watt(_ value: Double) -> String {
+        String(format: "%.1f", value) + " " + CellarL10n.s("dashboard.unit.watt")
+    }
     /// 24h 窗时间标签：「HH:mm」。
     static func hourMinute(_ date: Date) -> String { date.formatted(.dateTime.hour().minute()) }
     /// 7d/30d 窗时间标签：「M/d HH:mm」（跨天窗须带日期消歧义）。

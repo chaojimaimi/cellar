@@ -48,7 +48,9 @@ struct ControlSectionView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 ForEach([80, 70, 60], id: \.self) { preset in
-                    Button("\(preset)%") {
+                    // B7-3：预设标题走 NumberFormatter percent 通路（禁 LocalizedStringKey
+                    // 手拼 "%"——数值 formatter 单一出口）。
+                    Button(CellarNumericFormat.percent(preset)) {
                         upperLimit = Double(preset)   // 预设 = 设值 + 排程（§7.1）
                         scheduleApplyLimits()
                     }
@@ -65,7 +67,8 @@ struct ControlSectionView: View {
             HStack {
                 Text(theme.word(.limitLabel))
                 Spacer()
-                Text("\(Int(upperLimit))%")
+                // B7-3：百分数走 NumberFormatter percent 通路（禁手拼 "%"）。
+                Text(CellarNumericFormat.percent(Int(upperLimit)))
                     .monospacedDigit()
             }
             // §7.1：松手（onEditingChanged(false)）→ 防抖 300ms → applyLimits

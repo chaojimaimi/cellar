@@ -152,11 +152,13 @@ public struct PowerFlowView: View {
     }
 
     /// 功率数字（0.19.4 §1.3 同源决策：batteryEdgeW 已由模型层收敛阈值/nil——
-    /// 组件零判定，holding 恒 nil 不显示；充电 +N W / 放电向 −N W，%+.0f 格式沿用）。
+    /// 组件零判定，holding 恒 nil 不显示；充电 +N W / 放电向 −N W，%+.0f 格式沿用；
+    /// B7-3：单位词走 dashboard.unit.watt key，禁手拼）。
     private func powerText(for kind: FlowDiagramKind) -> String? {
         guard let batteryEdgeW else { return nil }
         let watts = abs(batteryEdgeW)
-        return String(format: "%+.0f W", kind == .charging ? watts : -watts)
+        return String(format: "%+.0f", kind == .charging ? watts : -watts)
+            + " " + CellarL10n.s("dashboard.unit.watt")
     }
 
     private func axLabel(for kind: FlowDiagramKind) -> String {

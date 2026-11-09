@@ -1888,6 +1888,23 @@
         }
       }
     },
+    "dashboard.unit.rpm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "rpm"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "rpm"
+          }
+        }
+      }
+    },
     "dashboard.unit.watt": {
       "extractionState": "manual",
       "localizations": {

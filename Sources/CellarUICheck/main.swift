@@ -166,6 +166,9 @@ private func wrap(
     let theme = CellarTheme.resolve(style: style, scheme: scheme)
     return content()
         .environment(\.cellarTheme, theme)
+        // B7-2：风格同点注入（Sub80StatusView 横幅字色 (style, scheme) 直调通路
+        // ——与生产 ThemeProvider 同形，快照消费面与生产一致）。
+        .environment(\.cellarStyle, style)
         .tint(theme.accent)
         .environment(\.colorScheme, scheme)
         .environment(\.layoutDirection, .leftToRight)

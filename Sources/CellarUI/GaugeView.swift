@@ -152,6 +152,7 @@ public struct GaugeView: View {
     }
 
     private var centerText: String {
-        state.percent.map { "\($0)" } ?? "--"
+        // B7-3：占位符统一 common.nodata（「--」手拼形态退役）。
+        state.percent.map { "\($0)" } ?? CellarL10n.s("common.nodata")
     }
 }

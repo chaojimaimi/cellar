@@ -13,7 +13,9 @@ extension DashboardView {
 
     var batteryVoltageText: String {
         guard let snapshot else { return CellarL10n.s("common.nodata") }
-        return String(format: "%.1f V", Double(snapshot.voltageMV) / 1000)
+        // B7-3：单位词走 dashboard.unit.volt key，禁手拼。
+        return String(format: "%.1f", Double(snapshot.voltageMV) / 1000)
+            + " " + CellarL10n.s("dashboard.unit.volt")
     }
 
     /// 适配器副行：telemetry 在场 → 实时+协商复合（适配器节点卡实时 W，v1.11 T1

@@ -481,6 +481,10 @@ struct Main {
         // Stepper 标签 + 选中态 trait + 四曲线卡 combine·a11y 值 + catalog 新 key
         // 双语——AccessibilityDomain）。
         runAccessibilityDomainScenarios()
+        // 0.23.15 B7 对比度矩阵 + 字面量源钉场景域（方案 §2.2/§2.3/§5.2：WCAG
+        // 纯函数 + 钉表全组合 ≥4.5:1 + 横幅双口径 + hex 钉值 + 百分号 formatter/
+        // 单位 key 通路源钉——ContrastDomain）。
+        runContrastDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)

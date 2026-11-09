@@ -131,8 +131,9 @@ struct ActionSectionView: View {
         let current = statusController.batterySnapshot?.percent
             ?? statusController.daemonStatus?.lastPercent
         let target = statusController.action?.targetPercent
-        let currentText = current.map { "\($0)%" } ?? "--"
-        let targetText = target.map { "\($0)%" } ?? "--"
+        // B7-3：百分数走 NumberFormatter percent 通路；「--」占位统一 common.nodata。
+        let currentText = current.map { CellarNumericFormat.percent($0) } ?? CellarL10n.s("common.nodata")
+        let targetText = target.map { CellarNumericFormat.percent($0) } ?? CellarL10n.s("common.nodata")
         return CellarL10n.s("panel.action.dischargeProgress", currentText, targetText)
     }
 
