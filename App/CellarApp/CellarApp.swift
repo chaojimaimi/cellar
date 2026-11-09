@@ -12,7 +12,12 @@ struct CellarApp: App {
     // 组合根提升（规格 §2.8）：控制器常驻 App 层——面板视图重建不断供数据源；
     // App 启动即刷新注册态，图标新鲜度不依赖面板首开。
     @StateObject private var installer = DaemonInstaller()
-    @StateObject private var statusController = StatusController()
+    // 0.23.16 B8-1：StatusController 单例化（StatusController.shared，构造私有化
+    // ——NotificationService.shared B1-3 先例形态）。动机：NSStatusItem 宿主
+    //（StatusItemController，AppKit 域）需要 App-observable 无关的稳定引用，绕开
+    // @StateObject init 临时实例陷阱（0.23.6 deinit 尸体链教训）；观察语义不变
+    // ——@EnvironmentObject 消费方观察对象本身，单例 App 常驻 = 生命周期等价。
+    // 视图消费面（@EnvironmentObject）零改动，仅注入源换 .shared。
     @StateObject private var loginItems = LoginItemController(store: CellarApp.sharedConfigStore)
     // WP5：暂存步属主（引导进度视图重建不丢；与 WP4 三控制器同构）。
     @StateObject private var onboarding = OnboardingController(store: CellarApp.sharedConfigStore)
@@ -22,13 +27,18 @@ struct CellarApp: App {
     // v1.11 M2 T2：显示设置控制器（AppConfig 第四写者；自 MenuBarSettingsController
     // 改名扩位——menuBarPercentageVisible / menuBarBatteryIconVisible 双字段统一宿主）
     // ——load 在自身 init 自标定（App.init 早期访问 @StateObject 临时实例陷阱，
-    // StyleController 同款）；MenuBarExtra label 闭包 + 面板页脚 Toggle + 主窗口
-    // 通用页 Toggle 多消费源。
+    // StyleController 同款）；菜单栏图标（StatusItemIconRoot，0.23.16 B8 自
+    // MenuBarExtra label 闭包迁形态）+ 面板页脚 Toggle + 主窗口通用页 Toggle
+    // 多消费源。
     @StateObject private var displaySettings = DisplaySettingsController(store: CellarApp.sharedConfigStore)
     /// 0.18 T5 D-5a：CPU 表面温度/双风扇采样器（panelVisible 门控经
     /// StatusController.setPanelVisible 转发——弱引用回填点在 PanelView.panelAppeared；
     /// @Published 直注 PanelView，不经 statusController 传播的 MenuBarIconLabel 教训）。
     @StateObject private var cpuFanMonitor = CpuFanMonitor()
+    // 0.23.16 B8-1（全仓首个 AppDelegate）：didFinishLaunching 组装 StatusItem
+    // shell（图标启动即出现；六对象内容由下方 Window 内容 onAppear 锚点注入
+    // StatusItemController.shared.wire——@StateObject 真身安全传递点）。
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     // WP5 通知服务（0.23.6 B1-3）：`private let notifications` 存储属性退役——
     // NotificationService 单例化（NotificationService.shared，构造私有化），通知
     // 接线迁入各控制器 init 自标定（见 init 内登记注释）。
@@ -73,46 +83,19 @@ struct CellarApp: App {
     }
 
     var body: some Scene {
-        // ⚠️ 0.19.11 回退 0.19.10 WP-D 的 isInserted 形态（真机走查裁决）：
-        // `MenuBarExtra(isInserted: .constant(true))` + `.window` 样式在 macOS 27
-        // 运行时上「点击菜单栏项 → 系统开合面板写 isInserted → 常量 binding 不
-        // 吸收写入 → 系统侧认定插入被撤销 → 唯一场景移除 → App 干净退出」（无崩
-        // 溃报告，用户点击一次即退出实证）。spike 独立进程未点开面板故未暴露。
-        // 图标默认不渲染（首次点击才出现）的求值延迟症状随之回归——非致命，登记
-        // 待 CI macos-27 构建环境迁移后随 27 SDK 产物重验；勿在无状态 binding 下
-        // 重试 isInserted。
-        MenuBarExtra {
-            // WP3 §3.3：面板内容经 ThemeProvider 包裹——View 上下文取 colorScheme
-            // 解析注入 cellarTheme（spike S2/S3 验证点 = 使用点）。
-            ThemeProvider(style: styleController.style) {
-                PanelView()
-                    .environmentObject(installer)
-                    .environmentObject(statusController)
-                    .environmentObject(loginItems)
-                    .environmentObject(onboarding)
-                    .environmentObject(displaySettings)
-                    // 0.18 T5：面板观察增强采样器注入（@Published 直注——缺注入
-                    // 运行时 crash，照 displaySettings 既有纪律）。
-                    .environmentObject(cpuFanMonitor)
-            }
-        } label: {
-            // v1.10 M2：双观察源直注（StatusController 图标态 + DisplaySettingsController
-            // 百分比显隐——更新传播见 MenuBarIconLabel 注记）。
-            // 0.23.3 §2：label .task 启动更新检查挂点随 UpdateChecker 退役删除
-            //（每日自动检查改由 Sparkle 内部 scheduler 承担）。
-            MenuBarIconLabel(controller: statusController, settings: displaySettings)
-        }
-        .menuBarExtraStyle(.window)
+        // 0.23.16 B8-1：MenuBarExtra `.window` 场景整体退役（方案 B——NSStatusItem
+        // 迁移，§2.1 spike 定版）。0.19.11 isInserted 地雷与 `.window` 求值延迟
+        // 症状随场景删除自然消解；菜单栏图标/面板改由 StatusItemController 承载
+        // （AppKit 域），PanelView / MenuBarIconLabel 本体零改动。
         // Phase 5 v1.2 §2.1 主窗口（macOS 13+ Window scene）：ThemeProvider 全树
-        // 生效 + environmentObject 五对象注入（缺任一将运行时 crash）。M3.5
+        // 生效 + environmentObject 注入（缺任一将运行时 crash）。M3.5
         // 用户决策：**设置窗退役**——原 Settings scene 删除，设置内容并入侧栏
         // 路由（通用/外观/关于页，共享子视图随迁），本 scene 为唯一常驻窗口。
         // 默认 1080×720 / min 920×620（§2.1 工程裁定，与 mock 748 高度差异为
         // 浏览器留白）；仅带 .defaultSize——可调性由 windowResizability 默认值
         //（自由）保证。
         // ⚠️ **启动接线必须挂在本 scene 链尾**（P0-1 教训：接线挂在不打开的
-        // scene 上是死代码——Settings scene 退役后迁入此处；MenuBarExtra 链尾
-        // 不重复接线，面板侧接线已随面板自身 onChange 保留）。
+        // scene 上是死代码——Settings scene 退役后迁入此处）。
         // 0.18.1 T5：窗口标题去除（`Window("")`）——toolbar 不再重复「芯仓」，
         // 侧栏 brandHeader 为唯一品牌区；App 名菜单/Dock 显示走 Info.plist
         // CFBundleName 不受影响；id 不变保路由。
@@ -120,7 +103,7 @@ struct CellarApp: App {
             ThemeProvider(style: styleController.style) {
                 MainWindowView()
                     .environmentObject(installer)
-                    .environmentObject(statusController)
+                    .environmentObject(StatusController.shared)
                     .environmentObject(loginItems)
                     .environmentObject(onboarding)
                     .environmentObject(styleController)
@@ -140,12 +123,30 @@ struct CellarApp: App {
                     // 靠采样循环 weak-self 复查自熄（StatsSampler 注记）。
                     .environment(\.statsSampler, statsSampler)
             }
+            // 0.23.16 B8-1：StatusItem 内容装配锚点（唯一安全传递点）。五依赖
+            // 仍为 @StateObject——App.init 早期访问 = 被丢弃的临时实例（0.23.6
+            // 教训）；Window 内容闭包上下文 = 环境注入真身同域（上方
+            // environmentObject 链实测真身），onAppear 在真身安装后触发。
+            // 幂等；didFinishLaunching 先行时 shell 已在位（install 幂等），
+            // wire 只补图标/面板内容。
+            // ⚠️ 真机验证点：主窗口内容若不随启动具象化（LSUIElement 形态差异），
+            // 图标将只有空 shell——图标含百分比文字随启动呈现 = wire 已触发。
+            .onAppear {
+                StatusItemController.shared.wire(
+                    installer: installer,
+                    loginItems: loginItems,
+                    onboarding: onboarding,
+                    displaySettings: displaySettings,
+                    cpuFanMonitor: cpuFanMonitor,
+                    styleController: styleController
+                )
+            }
         }
         .defaultSize(width: 1080, height: 720)
         // §2.8 启动接线：registration → StatusController（连接态语义判定依据）+
         // OnboardingController（收尾规则/安装接续，幂等）。
         .onChange(of: installer.registration) {
-            statusController.registrationChanged(installer.registration)
+            StatusController.shared.registrationChanged(installer.registration)
             onboarding.registrationChanged(installer.registration)
         }
         // P1-3：loaded 置位（首次回包）时补一次引导判定——已注册用户启动瞬间
@@ -153,5 +154,14 @@ struct CellarApp: App {
         .onChange(of: installer.loaded) {
             onboarding.registrationChanged(installer.registration)
         }
+    }
+}
+
+// 0.23.16 B8-1（全仓首个 AppDelegate）：NSStatusItem 迁移宿主锚点（§2.1 B 必验
+// 面②）。职责单一——启动时装配 StatusItem shell（图标启动即出现）；NSStatusItem
+// 的强引用由 StatusItemController.shared 进程生存期持有，本 delegate 不持有状态。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        StatusItemController.shared.install()
     }
 }

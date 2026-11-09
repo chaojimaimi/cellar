@@ -8142,6 +8142,57 @@
           }
         }
       }
+    },
+    "panel.menu.capPercent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cap %lld%%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限 %lld%%"
+          }
+        }
+      }
+    },
+    "panel.menu.openPanel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Panel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开面板"
+          }
+        }
+      }
+    },
+    "panel.menu.presets": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quick limit — set fixed cap (≠ charge to full once)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速限充——设为固定上限（≠充满一次）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

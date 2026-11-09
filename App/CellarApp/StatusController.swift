@@ -13,6 +13,14 @@ import os
 @MainActor
 final class StatusController: ObservableObject {
 
+    /// 进程级单例（0.23.16 B8-1；照 0.23.6 B1-3 NotificationService.shared 先例）：
+    /// NSStatusItem 宿主（StatusItemController，AppKit 域）需要 App-observable 无关
+    /// 的稳定引用——绕开 @StateObject init 临时实例陷阱（本类启动期自标定注释的
+    /// deinit 尸体链实锤即同一教训）。迁移前全库唯一构造点为 CellarApp 的
+    /// @StateObject（grep 实证零外部构造），构造私有化防临时实例复发。观察语义
+    /// 不变：@EnvironmentObject 消费方观察对象本身，单例 App 常驻 = 生命周期等价。
+    static let shared = StatusController()
+
     @Published private(set) var daemonStatus: DaemonStatus?
     @Published private(set) var connection: ConnectionState = .unknown
     @Published private(set) var busy = false
@@ -188,7 +196,8 @@ final class StatusController: ObservableObject {
     /// 静默失效）。修法 = WP3 StyleController 同款：自标定在自身 init 完成，
     /// **幸存实例诞生即自带**后台轮询档 + IOPS 即时化订阅；临时实例同样自装
     /// 随析构自摘（install 幂等 + deinit 摘源，无害）。
-    init() {
+    /// 构造私有化（0.23.16 B8-1 单例化——唯一合法入口 = `shared`，见上注）。
+    private init() {
         // 双表面初值全不可见 → 轮询 60s 档 + 遥测停（refreshCadence 统一裁决）。
         refreshCadence()
         powerSourceMonitor.controller = self

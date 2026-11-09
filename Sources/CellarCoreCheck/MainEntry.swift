@@ -485,6 +485,11 @@ struct Main {
         // 纯函数 + 钉表全组合 ≥4.5:1 + 横幅双口径 + hex 钉值 + 百分号 formatter/
         // 单位 key 通路源钉——ContrastDomain）。
         runContrastDomainScenarios()
+        // 0.23.16 B8 菜单栏图标快捷预设批场景域（方案 §2.2/§2.3：MenuPresetModel
+        // 判定纯函数直测六值/✓ 归属/禁用矩阵四门 + 组装薄层源钉（六注入逐项/
+        // ThemeProvider 双包裹/host 强引用/左右键分流复位/动作链）+ 面板零改动
+        // 反镜像钉——MenuPresetDomain）。
+        runMenuPresetDomainScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
