@@ -275,14 +275,18 @@ func runFullChargeAutoRestoreDomainScenarios() {
             let startAt = body.range(of: "startCalibrationLocked(\n                    initiator: .auto")
             let routeAt = body.range(of: "topoffConvergenceRouteLocked(now: now, snapshot: snapshot, events: &events)")
             // 安全解包（code-review P3——窗钉-1 同款形态）。
+            // B7-5：startAt.lowerBound < routeAt.lowerBound 增强断言（源码顺序已核实
+            // schedule:57 → arm:99 → start:105 → route:149——27 调度臂校准启动在
+            // topoff 路由前），同时消费 startAt 消「未使用」警告；原 startAt != nil
+            // 恒真比较随解包作用域消除。
             if let scheduleAt, let armAt, let startAt, let routeAt {
                 check(armAt.lowerBound < routeAt.lowerBound
-                          && scheduleAt.lowerBound < armAt.lowerBound,
-                      "校27-5", "27 调度臂挂点：日程转移后、topoff 路由前（calibrationAutoStartReady → startCalibrationLocked(.auto)——26 执法段调度臂的观测段镜像）")
+                          && scheduleAt.lowerBound < armAt.lowerBound
+                          && startAt.lowerBound < routeAt.lowerBound,
+                      "校27-5", "27 调度臂挂点：日程转移后、topoff 路由前（calibrationAutoStartReady → startCalibrationLocked(.auto)——26 执法段调度臂的观测段镜像；startAt < routeAt 源码顺序增强断言在位）")
             } else {
                 check(false, "校27-5", "27 调度臂挂点：四个锚点文本须全部在位（某锚点缺席 = 钉面红）")
             }
-            check(startAt != nil, "校27-5", "调度臂启动调用在位（startCalibrationLocked(.auto)）")
             check(body.contains("rejection == .persistenceFailed")
                       && body.contains("自动校准启动失败")
                       && body.contains("自动校准未启动"),

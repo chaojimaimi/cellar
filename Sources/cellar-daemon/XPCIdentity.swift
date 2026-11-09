@@ -42,13 +42,18 @@ enum ClientAnchor: Sendable {
 /// 2) 读 <appPath>/Contents/Info.plist 的 CFBundleExecutable（缺席 fallback =
 ///    bundle 名）拼期望可执行路径；Info.plist 读取失败 → 降级 .legacy + 一次性
 ///    error 日志（锚定解析失败是环境异常非攻击面：保持可用性，诚实降级不静默）；
-/// 3) 成功 → .pinned(PinnedClientIdentity) + info 日志。
+/// 3) 成功 → .pinned(PinnedClientIdentity) + notice 日志。
+/// B7-4 落盘：三分支 os_log 行邻位追加 DaemonCore.persistLog 同语义行（文件通道
+/// ——os_log info 级不落盘不进文件，B6 冒烟实测 daemon.log grep 永远查不到；
+/// persistLog static 无实例依赖 + 自带锁 + 目录自举，main.swift:219 遗言同款先例；
+/// 装配段调用时 core 已构造、仅此一次，无刷屏面）。
 func resolveClientAnchor(executablePath: String?) -> ClientAnchor {
     // R4：Bundle.main.executableURL 在 launchd 环境形态异常 → nil → legacy 降级
     // （不阻断 daemon 启动；纯函数层不依赖 Bundle API——入参直测）。
     guard let executablePath,
           let appPath = appBundleAnchor(fromDaemonExecutablePath: executablePath) else {
         identityLog.notice("CLI-route 部署——客户端身份钉扎不可用（无可信锚），变更命令维持 admin 组门")
+        DaemonCore.persistLog("CLI-route 部署——客户端身份钉扎不可用（无可信锚），变更命令维持 admin 组门")
         return .legacy
     }
     let infoPlistURL = URL(fileURLWithPath: appPath)
@@ -57,6 +62,7 @@ func resolveClientAnchor(executablePath: String?) -> ClientAnchor {
           let raw = try? PropertyListSerialization.propertyList(from: infoData, options: [], format: nil),
           let info = raw as? [String: Any] else {
         identityLog.error("客户端身份锚定解析失败（\(appPath, privacy: .public)/Contents/Info.plist 读取失败）——降级 legacy 维持 admin 组门（环境异常非攻击面，诚实降级不静默）")
+        DaemonCore.persistLog("客户端身份锚定解析失败（\(appPath)/Contents/Info.plist 读取失败）——降级 legacy 维持 admin 组门（环境异常非攻击面，诚实降级不静默）")
         return .legacy
     }
     // bundle 名 fallback = 锚点目录名去 .app 后缀（macOS bundle 命名约定 <Name>.app
@@ -67,7 +73,10 @@ func resolveClientAnchor(executablePath: String?) -> ClientAnchor {
         bundleIdentifier: ClientIdentity.appBundleIdentifier,
         appPath: appPath,
         executablePath: appPath + "/Contents/MacOS/" + executableName)
-    identityLog.info("客户端身份钉扎启用：期望 App \(appPath, privacy: .public)（可执行 \(expected.executablePath, privacy: .public)）")
+    // B7-4：.info → .notice（info 级不落盘、不进文件通道——notice 可 `log show`
+    // 检索；三分支文案不变，仅级别升档 + persistLog 文件通道追加）。
+    identityLog.notice("客户端身份钉扎启用：期望 App \(appPath, privacy: .public)（可执行 \(expected.executablePath, privacy: .public)）")
+    DaemonCore.persistLog("客户端身份钉扎启用：期望 App \(appPath)（可执行 \(expected.executablePath)）")
     return .pinned(expected)
 }
 

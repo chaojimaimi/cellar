@@ -7,7 +7,9 @@
 // - commit 2（B6-2）：钉扎-13..17+ 源钉（authorize 序钉/getStatus 零触及/
 //   fail-closed 注记与专属错误消息字面量/bundle ID 常量对 pbxproj 一致性/
 //   行为零变化反钉）；
-// - commit 3（B6-3）：钉扎-18 hardened 源钉（pbxproj ENABLE_HARDENED_RUNTIME）。
+// - commit 3（B6-3）：钉扎-18 hardened 源钉（pbxproj ENABLE_HARDENED_RUNTIME）；
+// - 0.23.15 B7-4：钉扎-19 锚点解析落盘源钉（resolveClientAnchor 三分支
+//   persistLog 文件通道 + pinned 分支 .info→.notice）。
 
 import CellarCore
 import Foundation
@@ -292,4 +294,22 @@ func runXPCPinningDomainScenarios() {
     let hardenedPbxprojSrc = source("App/CellarApp.xcodeproj/project.pbxproj")
     check(!hardenedPbxprojSrc.contains("ENABLE_HARDENED_RUNTIME"),
           "钉扎-18", "pbxproj 零 ENABLE_HARDENED_RUNTIME 命中（0.23.14 真机实证回退——ad-hoc + hardened 库验证杀 Sparkle 框架加载；再引入须先修嵌入签名链）")
+
+    // ---- 钉扎-19：锚点解析落盘源钉（0.23.15 B7-4）——resolveClientAnchor 三分支
+    // （legacy 无锚 / 解析失败降级 / pinned 启用）os_log 行邻位各追加
+    // DaemonCore.persistLog 同语义行（文件通道：stderr + daemon.log），pinned 分支
+    // os_log 级别 .info → .notice（B6 冒烟实测：info 级不落盘不进文件 =
+    // daemon.log grep 永远查不到）。persistLog 为 static 无实例依赖 + 自带锁 +
+    // 目录自举（main.swift:219 遗言路径同款先例）；装配段调用时序成立（core 已
+    // 构造后调用，仅启动一次无刷屏面）。三分支文案不变反钉：落盘为追加通道，
+    // 既有文案（含「锚定解析失败」身份语义词）逐字原样。
+    check(xpcIdentitySrc.components(separatedBy: "DaemonCore.persistLog(").count - 1 == 3,
+          "钉扎-19", "persistLog 三分支标记恰三处（legacy 无锚 / 解析失败降级 / pinned 启用——锚点解析结果同步落 daemon.log 文件通道）")
+    check(xpcIdentitySrc.contains("identityLog.notice(\"客户端身份钉扎启用：期望 App")
+            && !xpcIdentitySrc.contains("identityLog.info"),
+          "钉扎-19", "pinned 分支 os_log 级别 .notice（.info 升档——落盘可 log show 检索；零 identityLog.info 残留）")
+    check(xpcIdentitySrc.contains("CLI-route 部署——客户端身份钉扎不可用（无可信锚），变更命令维持 admin 组门")
+            && xpcIdentitySrc.contains("客户端身份锚定解析失败（\\(appPath)/Contents/Info.plist 读取失败）")
+            && xpcIdentitySrc.contains("客户端身份钉扎启用：期望 App \\(appPath)（可执行 \\(expected.executablePath)）"),
+          "钉扎-19", "三分支文案不变反钉（落盘追加通道不改语义行——验收 grep 词「身份」对解析失败分支「锚定解析失败」文案成立）")
 }

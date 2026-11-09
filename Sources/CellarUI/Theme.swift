@@ -259,7 +259,7 @@ public struct CellarTheme: Sendable, Equatable {
     // Swift 6 非 isolated 可变全局须 nonisolated(unsafe)（cellar-daemon 先例）；
     // 全部访问点持 cacheLock（lock→读/写→unlock，无持锁跨 await——本函数同步）。
     nonisolated(unsafe) private static var resolveCache: [ResolveCacheKey: CellarTheme] = [:]
-    nonisolated(unsafe) private static let cacheLock = NSLock()   // let 引用不可变；unsafe 限于声明面
+    private static let cacheLock = NSLock()   // NSLock 为 Sendable——let 声明面无需 nonisolated(unsafe)（B7-5 警告清理；unsafe 限于 261 行 var 缓存）
 
     public static func resolve(style: PanelStyle, scheme: ColorScheme) -> CellarTheme {
         let key = ResolveCacheKey(style: style, scheme: scheme)
