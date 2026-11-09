@@ -276,4 +276,14 @@ func runXPCPinningDomainScenarios() {
     check(xpcServerSrc.contains("guard peer.euid == 0 || isAdminGroupMember(euid: peer.euid) else {")
             && xpcServerSrc.contains("需要管理员权限（admin 组）才能执行 "),
           "钉扎-17", "legacy admin 门调用点 + 拒绝消息原文逐字在位（第三段行为零变化）")
+
+    // ---- 钉扎-18：hardened runtime 源钉（方案 §2.4，随 B6-3 落地）----
+
+    // 钉扎-18：pbxproj 两处 build configuration（Debug+Release）ENABLE_HARDENED_RUNTIME
+    // = YES 在位（堵「注入钉扎宿主 App」的洞——库验证随 hardened 默认启用（无
+    // disable-library-validation entitlement）→ 阻断同用户进程 DYLD 注入；ad-hoc +
+    // hardened 合法组合；单开关独立可回滚 R3）。
+    let hardenedPbxprojSrc = source("App/CellarApp.xcodeproj/project.pbxproj")
+    check(hardenedPbxprojSrc.components(separatedBy: "ENABLE_HARDENED_RUNTIME = YES").count - 1 == 2,
+          "钉扎-18", "pbxproj ENABLE_HARDENED_RUNTIME = YES 恰两处（Debug+Release——注入宿主洞堵死，漏一处即 Debug/Release 态差异面）")
 }
