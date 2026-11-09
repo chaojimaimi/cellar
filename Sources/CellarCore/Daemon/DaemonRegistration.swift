@@ -199,3 +199,96 @@ extension DaemonRegistration {
         return nil
     }
 }
+
+// MARK: - XPC 客户端身份钉扎（0.23.13 B6-1 纯判定层；与 helperSourceRoot 同文件
+// 同域——连接期/安装期路径与身份纪律自然归属；CellarCoreCheck 直测可达，先例
+// 照 B5-5 helperSourceRoot 下沉）
+
+/// App bundle 标识符单一真相常量（0.23.13 B6：客户端身份钉扎期望身份源）。
+/// 与 App/CellarApp.xcodeproj/project.pbxproj 内 `PRODUCT_BUNDLE_IDENTIFIER =
+/// com.cellar.app` 的一致性由 XPCPinningDomain 源钉断言（钉扎-16 随 B6-2 落地
+/// ——防两处漂移）。
+public enum ClientIdentity {
+    public static let appBundleIdentifier = "com.cellar.app"
+}
+
+/// daemon 可执行路径 → 期望 App bundle 锚点（App-route）。
+/// 判定：路径含 "/Contents/" 分量 → 取首个 "/Contents/" 前缀为 App bundle，
+/// 且前缀末段须以 ".app" 结尾（语义标记：macOS bundle 布局约定，非层数硬编码
+/// ——0.23.12 教训：勿对工具链/安装布局硬编码层数）。否则 nil = CLI-route（无锚）。
+///
+/// 两条独立守卫（归因注释分离——各自独立可测，是互为对照的覆盖证据）：
+/// - **守卫一（子串存在性）**："/Contents/" 子串缺席 → nil（"/Contents 测试" 这类
+///   恰好共享前缀字符的目录名不构成该分量——两侧斜杠俱全才算语义子串）；
+/// - **守卫二（.app 收尾）**：前缀末段非 ".app" 收尾 → nil（防非 bundle 目录恰好
+///   含 Contents 子目录被误判为 App bundle，如 `/Users/x/Contents/...`）。
+public func appBundleAnchor(fromDaemonExecutablePath executablePath: String?) -> String? {
+    guard let executablePath else { return nil }
+    // 守卫一："/Contents/" 子串存在性（缺席 → 无锚）。
+    guard let contentsRange = executablePath.range(of: "/Contents/") else { return nil }
+    let prefix = String(executablePath[..<contentsRange.lowerBound])
+    // 守卫二：前缀末段 .app 收尾（语义标记命中才算 App bundle）。
+    guard prefix.hasSuffix(".app") else { return nil }
+    return prefix
+}
+
+/// 提取面事实（daemon glue 从 SecCode 信息产出；nil = 提取失败/缺失——诚实缺席）。
+public struct ClientIdentityFacts: Equatable, Sendable {
+    /// SecCodeCheckValidity（identifier requirement）通过与否。
+    public var validityPassed: Bool
+    /// kSecCodeInfoIdentifier（签名标识符）。
+    public var identifier: String?
+    /// 主可执行路径（B6-2 extractClientIdentity 自签名信息字典提取）。
+    public var executablePath: String?
+
+    public init(validityPassed: Bool, identifier: String?, executablePath: String?) {
+        self.validityPassed = validityPassed
+        self.identifier = identifier
+        self.executablePath = executablePath
+    }
+}
+
+/// 期望身份（pinned 模式；**legacy 模式不构成本类型**——无锚形态在 daemon 侧走
+/// .legacy 分支维持既有 admin 门，本判定路径对其不存在）。
+public struct PinnedClientIdentity: Equatable, Sendable {
+    /// 期望 bundle 标识符（常量 ClientIdentity.appBundleIdentifier——单一真相，
+    /// 源钉对 pbxproj）。
+    public var bundleIdentifier: String
+    /// 锚点（daemon 自身所在 App bundle，appBundleAnchor 派生）。
+    public var appPath: String
+    /// appPath + "/Contents/MacOS/" + 可执行名（daemon 启动期读锚 Info.plist
+    /// CFBundleExecutable，缺席 fallback = bundle 名——B6-2 resolveClientAnchor）。
+    public var executablePath: String
+
+    public init(bundleIdentifier: String, appPath: String, executablePath: String) {
+        self.bundleIdentifier = bundleIdentifier
+        self.appPath = appPath
+        self.executablePath = executablePath
+    }
+}
+
+/// 判定结果（deny reason 进 daemon 日志，不上 wire——wire 仅专属错误消息）。
+public enum ClientIdentityVerdict: Equatable, Sendable {
+    case match
+    case deny(reason: String)
+}
+
+/// 客户端身份判定（纯函数，全矩阵直测）。
+/// 判定序（每条 deny reason 独立可测；多字段同坏取首个 reason）：
+/// **路径精确相等（承重墙）优先于标识符/签名**（信息最可信、最难共谋）。
+public func evaluateClientIdentity(_ facts: ClientIdentityFacts, expected: PinnedClientIdentity) -> ClientIdentityVerdict {
+    // 1) executablePath 缺失/不等于期望 → deny("路径不符")——nil 同走本臂
+    //    （诚实缺席 fail-closed：提取失败绝不静默放行）。
+    guard let path = facts.executablePath, path == expected.executablePath else {
+        return .deny(reason: "路径不符")
+    }
+    // 2) identifier 缺失/不等 → deny("标识符不符")。
+    guard let identifier = facts.identifier, identifier == expected.bundleIdentifier else {
+        return .deny(reason: "标识符不符")
+    }
+    // 3) validityPassed == false → deny("签名校验未通过")。
+    guard facts.validityPassed else {
+        return .deny(reason: "签名校验未通过")
+    }
+    return .match
+}
