@@ -278,9 +278,14 @@ extension PowerFlowDiagramView {
     // MARK: - 可访问性摘要（整图单元素：中文语义摘要）
 
     /// 电量文本投影（P3-2：percent 缺席 → 「—」，禁止造 0%；格式参数随
-    /// flow.ax.* / flow.batterySubline 的 %@ 串）。
+    /// flow.ax.* / flow.batterySubline 的 %@ 串）。0.23.16 B8-2：百分号走
+    /// CellarNumericFormat.percent 通路（B7-3 单一出口纪律收口——B7 评审
+    /// P3-1 登记的本文件手拼 "%" 残留，同渲染面 regen 序列顺手收口）。
+    /// 消费面均在主线程（Canvas 绘制 / accessibilityLabel）——@MainActor
+    /// formatter 通路无隔离违例（Canvas renderer 闭包在本仓 SDK 实测可调用，
+    /// 见 swift build 门禁）。
     var batteryPercentText: String {
-        batteryPercent.map { "\($0)%" } ?? CellarL10n.s("common.nodata")
+        batteryPercent.map { CellarNumericFormat.percent($0) } ?? CellarL10n.s("common.nodata")
     }
 
     var axSummary: String {

@@ -179,6 +179,9 @@ func runContrastDomainScenarios() {
     let statusLineSrc = source("Sources/CellarUI/StatusLineView.swift")
     let fanSrc = source("Sources/CellarUI/FanSectionView.swift")
     let gaugeSrc = source("Sources/CellarUI/GaugeView.swift")
+    // 0.23.16 B8-2：B7 评审 P3-1 登记的手拼 "%" 残留面（PowerFlowDiagramNodes）
+    // 一并纳入反钉覆盖——源钉缺口随批闭。
+    let powerFlowNodesSrc = source("Sources/CellarUI/PowerFlowDiagramNodes.swift")
 
     check(panelSectionsSrc.contains("CellarNumericFormat.percent($0)")
               && panelSectionsSrc.components(separatedBy: "CellarL10n.s(\"common.nodata\")").count - 1 >= 2
@@ -198,6 +201,9 @@ func runContrastDomainScenarios() {
     check(gaugeSrc.contains("CellarL10n.s(\"common.nodata\")")
               && !gaugeSrc.contains("?? \"--\""),
           "字面量-2", "GaugeView 中心占位 common.nodata（:155 同步——「--」手拼形态清零）")
+    check(powerFlowNodesSrc.contains("CellarNumericFormat.percent($0)")
+              && !powerFlowNodesSrc.contains(#""\($0)%"#),
+          "字面量-2", "功率流电量文本 percent formatter（PowerFlowDiagramNodes batteryPercentText——B7 评审 P3-1 手拼残留收口，0.23.16 B8-2）")
 
     // ---- 字面量-3：单位 key 通路 + °C 带空格统一源钉----
 
