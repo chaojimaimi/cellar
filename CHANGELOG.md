@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.18-alpha]
+
+> 背景：产品增量第二批「多 Profile」+ 三随批（0.23.17 评审登记收口两项 + BTM 锚点漂移事故教训横幅）。上游调研 docs/plans/research-health-trend-profiles.md Part B（决策点全按建议锁定：九类旋钮全含 + diff 跳过 / v1「当前设置另存为」编辑形态 / 菜单预设区与 profile 区并存）。方案 plan-reviewer 两轮审至放行（首轮 2 P1：LED 链步 ControlAttempt case 已于 v1.10 M2 退役需恢复 + 失败清链无回调落点需 onFailure 钩子；二轮新引 P1 = 方案伪代码收敛守卫 defer 时序崩溃路径 + l10n 键数三处矛盾）；code-reviewer 落地前全审 **REQUEST CHANGES**（1 P1 编排器守卫二次序——八步满序链必误报「未收敛」+ 1 P2 dayString 非公历历法等价性失实 + 2 P3）随批收口（de178e0）后复核 **APPROVE**（0 P0 / 0 P1，八步满序链 FINISH 实证）。**App-only 批——wire schema 零变化、daemon 代码零变化、daemonVersion 常量不动（0.23.16-alpha）：升级零重装**。门禁：1000→**1020 场景全绿**（+20：方案-1..11 / 随批-1..2 / 源钉-1..8）、golden 失败集合 384=384 逐条零差异、l10n 491→511（+21 −1 双语全查绿）、打包产物启动实证、三断言。登记项：LED 隔离纪律偏离如实登记（轻路径 UI 直调面不写 lastAttempt 不变，仅 profile 链内 LED 步走 runControl 通道承载重试/横幅/单槽语义）；CFBundleVersion 2318 无历史碰撞（0.23.17 §2.7 键碰撞教训闭环自愈）。
+
+### Added
+
+- **多 Profile 整包切换（主项）**：App 侧参数快照集（九类旋钮：mode 总开关 / 上限+滞回 / 热保护 / 风扇 / 充电日程 / 校准调度 / MagSafe LED / CHIE 迟滞），切换 = 快照经既有命令**链式串行下发**——策略唯一真相仍在 daemon（policy.json 零触及），wire 零 schema 变化。**诚实 ✓ 语义**：活动标注由 daemon 读回匹配派生（非本地意图镜像——部分应用态不点亮 ✓，防意图漂移）；每步以最新读回重推导剩余计划 + 同值旋钮 diff 跳过（整链重做代价极小）+ 双收敛守卫（紧邻同型步中止 + executed ≥ 步型总数振荡中止，CellarCore 纯函数向量直测）。失败即停：链步失败落既有横幅三态（daemon 原文/stale 比对/连接态）、清链、重试钮重试失败步。八行模式转移矩阵与 daemon setLimits「恒切 active」语义逐行咬合（disabled→disabled 限值异值 = setLimits→disable 双步，亚秒级瞬态 active 执法窗如实登记）。入口三面（管理页列表行 / 菜单栏右键 profile 区〔与六档预设并存、空整区省略〕）；新建 = 当前设置另存为；删除两步确认；首启静默迁移捕获「默认」方案。语义边界如实呈现：日程窗内切换 = 临时覆盖（管理页提示行）；切换可能取消在轨一次性动作（入口禁用矩阵 busy+动作在轨双门）；切换触发日程边沿通知照常（知情信号）。
+- **BTM 锚点漂移检出行（真机事故教训）**：「守护进程已启用 ∧ 路线未知 ∧ XPC 失联」特征态（0.23.17 事故形态——BTM 锚点被翻转到临时副本 bundle 后重启失联）现于面板守护进程节呈「疑似漂移」引导行，指引面板重装守护进程换锚。launchctl print 瞬态失败可能误报（行级提示如实登记，重开面板 refresh 自纠）。
+
+### Changed
+
+- **面板版本行三口径**：原「daemon 回报版本 · 期望协议」二元行被三次误读为 App 版本——改为三口径「daemon 协议 X · App Y · 握手态」，握手态词（已连接/失联/未知）随连接态变化；App 版本 About 页口径不变。
+- **聚合核 DateFormatter 热路径退役（0.23.17 登记项收口）**：StatsTrend dayString/dayStringFromOrdinal 每样本新建 DateFormatter（滚动路径 ~87µs/次、迁移事务内 ~3.7s 放大）改 dateComponents 派生；**历法恒公历**（传入日历仅取时区——佛教历/和历等非公历系统用户 daily_health 日键制不漂移，行为面佛教历注入直测钉死）。
+
 ## [0.23.17-alpha]
 
 > 背景：B1-B8 修复路标收官后产品增量第一批（调研 docs/plans/research-health-trend-profiles.md 三线证据：数据链/策略通路行号级调研 + 本机 42,017 行真实数据体检；五个设计决策点全按建议锁定）。方案 plan-reviewer 三轮审至 PASS（首轮 P0 = CFBundleVersion 派生算术错误 23017→如实 2317 且与本机调试键同键碰撞分析反转；二轮 = 图表扩档中段洞 105-179 天标签溢出 + 真机迁移验收被 dev 构建先行消费）；code-reviewer 落地前全审 **APPROVE WITH NITS**（0 P0 / 0 P1 / 1 P2 登记 / 4 P3 随批收 3）。**App-only 批——daemon 行为/协议零变更，daemonVersion 常量不动：升级零重装**（本批起纪律显式化，见 Changed）。门禁：969→**1000 场景全绿**（+31：统计40-63 / 医生-21..26 / 医生-源钉-1）、golden 失败集合 384=384、l10n 482→491（+9 `stats.trend.*`）、coverage 92.07%、打包产物启动实证、三断言。登记项：聚合核 formatter 热路径开销与 l10n 文案内嵌门槛常量双源随 0.23.18 收口；图表标签 ≥421 天地平线归 0.23.18（≥420→60 天步 + 扫描域扩 1-800）。
