@@ -5526,6 +5526,159 @@
         }
       }
     },
+    "stats.trend.a11y.summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Health trend: %lld days accumulated, latest weekly median %.1f%%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "健康趋势：积累 %lld 天，最新周中位数 %.1f%%"
+          }
+        }
+      }
+    },
+    "stats.trend.band.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accumulating trend (%lld/90 days)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "趋势积累中（%lld/90 天）"
+          }
+        }
+      }
+    },
+    "stats.trend.chart.band": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly min–max band"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周最小–最大带"
+          }
+        }
+      }
+    },
+    "stats.trend.chart.median": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly median"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周中位数"
+          }
+        }
+      }
+    },
+    "stats.trend.cycle.eta": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ", reaching the 1000-cycle threshold in ≈%.1f months"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，预计 %.1f 个月后到达 1000 循环阈值"
+          }
+        }
+      }
+    },
+    "stats.trend.cycle.rate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At ≈%.1f cycles/month"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按当前约 %.1f 循环/月"
+          }
+        }
+      }
+    },
+    "stats.trend.cycle.reached": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cycle count has reached the threshold"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "循环数已达阈值"
+          }
+        }
+      }
+    },
+    "stats.trend.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Caliber: nominal / design capacity · weekly median and cycle projection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "口径：标称满充容量 / 设计容量 · 周桶中位数与循环外推"
+          }
+        }
+      }
+    },
+    "stats.trend.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Health Trend"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "健康趋势"
+          }
+        }
+      }
+    },
     "stats.unit.celsius": {
       "extractionState": "manual",
       "localizations": {

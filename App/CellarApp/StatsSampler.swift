@@ -2,6 +2,31 @@ import CellarCore
 import Foundation
 import os
 
+/// 策略上下文盒（0.23.17 §2.2）：NSLock 保护的最新上限读数——StatusController.
+/// ingest 写 / StatsSampler.tick 读，跨隔离域单值传递（FailureCounter @unchecked
+/// Sendable + NSLock 先例）。status == nil（daemon 失联）时盒置 nil——陈旧限值
+/// 不喂当日众数直方图（评审 P2 修正）；不动 DaemonStatus/wire（红线）。
+final class PolicyContextBox: @unchecked Sendable {
+    /// 进程级单例（写读双方各自单例化形态下的确定性汇合点——B1-3 NotificationService.
+    /// shared 先例）。
+    static let shared = PolicyContextBox()
+
+    private let lock = NSLock()
+    private var latestUpperLimit: Int?
+
+    private init() {}
+
+    /// 写入最新上限（nil = daemon 失联清盒）。
+    func set(_ value: Int?) {
+        lock.withLock { latestUpperLimit = value }
+    }
+
+    /// 读出最新上限（nil = 无上下文——直方图本跳不累计）。
+    func latest() -> Int? {
+        lock.withLock { latestUpperLimit }
+    }
+}
+
 /// 统计采样器（方案 §2.4）：60s Task 常驻循环，把电池快照周期落库。
 ///
 /// - **与表面可见性解耦**（UD-2）：统计的历史价值恰恰在「没人看的时候也在记」
@@ -35,6 +60,14 @@ actor StatsSampler {
     /// 累加器比对前值（上一跳采样整体留存——acc 四元组 + ts 同源；actor 内存态
     /// 跨启动失效 = 首跳只建前值的天然实现）。
     private var previousSample: StatsSample?
+
+    /// 当日上限读数直方图（[上限: 计数]，策略上下文盒喂入；跨日重置）。跨重启
+    /// 丢失 = upper_mode 退化为「自本次启动」语义——覆盖写如实，钩子字段 0.23.18
+    /// 用法定型时可再深化（评审 P3 登记）。
+    private var upperHistogram: [Int: Int] = [:]
+    /// 直方图所属本地日串（日界检测——变化即重置直方图自然开新行；时钟回拨日 =
+    /// 当日行重算覆盖，历史行不受影响——INSERT OR REPLACE 幂等）。
+    private var histogramDay: String?
 
     /// 自标定：构造即启动循环（@StateObject 早期访问陷阱教训——自标定在自身
     /// init，CellarApp.init 不触碰；actor 同步构造器本身 nonisolated，Task 在
@@ -82,6 +115,24 @@ actor StatsSampler {
         instrument(previous: previousSample, current: sample)
         previousSample = sample
         await store?.insert(sample)
+        await recordDailyHealth()
+    }
+
+    /// 当日滚动聚合（0.23.17 §2.2 顺带写入）：本地日串变化 → 重置直方图（跨日
+    /// 重置自然开新行）→ 策略上下文盒读数非 nil 才入直方图（失联日无读数如实，
+    /// upper_mode = NULL）→ upsertDailyHealth 当日行全量重算。日界用
+    /// DailyHealthRollup.dayString（Calendar.startOfDay 派生——**禁 86400 乘法**，
+    /// DST 日 23/25 小时由 Calendar 承接，评审 P2 修正）。
+    private func recordDailyHealth() async {
+        let day = DailyHealthRollup.dayString(for: Date())
+        if histogramDay != day {
+            upperHistogram = [:]
+            histogramDay = day
+        }
+        if let upperLimit = PolicyContextBox.shared.latest() {
+            upperHistogram[upperLimit, default: 0] += 1
+        }
+        await store?.upsertDailyHealth(day: day, upperHistogram: upperHistogram)
     }
 
     /// 累加器仪器化（0.22.0 §2.3）：与前跳比对（共享分类器——聚合与日志同一
@@ -145,5 +196,12 @@ actor StatsSampler {
     func latestSample() async -> StatsSample? {
         guard let store else { return nil }
         return await store.latest()
+    }
+
+    /// 每日健康行透传（0.23.17 §2.4 趋势卡数据源；actor 透传——query 先例，
+    /// 主线程零 SQLite 红线不变）。
+    func queryDailyHealth() async -> [DailyHealthRow] {
+        guard let store else { return [] }
+        return await store.dailyHealth()
     }
 }

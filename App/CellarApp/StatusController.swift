@@ -482,6 +482,10 @@ final class StatusController: ObservableObject {
             : .connected
         statusFailure = status.flatMap(StatusFailureKind.init)
         action = status?.action
+        // 0.23.17 §2.2：策略上下文盒写入（趋势卡 upper_mode 钩子数据源）——
+        // status == nil（daemon 失联）时盒置 nil，陈旧限值不喂当日众数直方图
+        // （评审 P2 修正）；不动 DaemonStatus/wire（红线）。
+        PolicyContextBox.shared.set(status?.upperLimit)
         // **0.23.1 编排退役**：原 ingest 末尾「编排 pending 消费挂点」（v0.19.20
         // WP-2——consumeOrchestrationPending detached 执行 + reportOrchestration
         // 回报）随 App 执行链删除——daemon 域承载单通道，App 无 pending 消费面。

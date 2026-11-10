@@ -37,6 +37,32 @@ extension StatsPageView {
         return energy.buckets.contains { $0.systemMWh > 0 || $0.dischargeMWh > 0 }
     }
 
+    /// 趋势卡门控（0.23.17 §2.4）：三态 .insufficient 卡不渲染（决策点 1 锁定；
+    /// 门槛常量单源 StatsTrend，禁散落魔法数），且需 ≥1 完整周带——缺席机型
+    /// （nominal/design 恒缺席 → daily_health 全 NULL → 零带）不渲染空卡，
+    /// R-6 不造数同款诚实语义。
+    var trendShowsCard: Bool {
+        trendState != .insufficient && !StatsTrend.weeklyBands(daily: dailyHealthRows).isEmpty
+    }
+
+    /// 趋势三态（§2.3.4 门槛 presentationState 单源；daysOfData = 跨日数口径，
+    /// crossDayCount 派生——禁以日行数冒充，评审 P2 修正）。
+    var trendState: TrendPresentation {
+        guard let days = trendDaysOfData else { return .insufficient }
+        return StatsTrend.presentationState(
+            daysOfData: days,
+            weeklyBucketCount: StatsTrend.weeklyBands(daily: dailyHealthRows).count
+        )
+    }
+
+    /// 趋势跨日数（首日 → 今天的日历天数；nil = 无数据）。
+    var trendDaysOfData: Int? {
+        guard let firstDay = dailyHealthRows.first?.day else { return nil }
+        return StatsTrend.crossDayCount(
+            firstDay: firstDay, today: DailyHealthRollup.dayString(for: Date())
+        )
+    }
+
     /// 能耗卡：柱图（系统耗电，小时/日柱随 range）+ 摘要行（总耗电/日均/电池
     /// 放电）+ 今日 SOC 区间行 + 脚注（估算口径 + 复位计数——「如实呈现」纪律）。
     var energyCard: some View {
@@ -571,6 +597,7 @@ struct StatsCapacityCard: View {
     }
 }
 
+
 // MARK: - 共享投影与容器（0.23.8 B3-2：自 StatsPageView extension 收敛文件级）
 
 /// 面板卡（DashboardView.panel 同款：surface 底 + 描边 + 圆角 18 + 小标题行；
@@ -578,8 +605,10 @@ struct StatsCapacityCard: View {
 /// 退役删除——重构后全部消费点（四卡 + energyCard）收敛本文件，布局落文件级
 /// 共享 helper，参数显式加 theme（卡 struct 不回读页 environment）；
 /// StatsPageView.swift 一侧零剩余消费点。DashboardView/AutomationPageView/
-/// CalibrationPageView 三处独立 panel 实现**零触及**（方案 §0.2-4）。
-private func statsPanel(
+/// CalibrationPageView 三处独立 panel 实现**零触及**（方案 §0.2-4）。0.23.17
+/// 起 internal（文件级 private 退役）——StatsTrendCard 独立文件消费（本文件
+/// 达 800 行硬上限按分区拆文件，DashboardViewCards 先例）。
+func statsPanel(
     theme: CellarTheme,
     title: String,
     subtitle: String? = nil,
@@ -705,7 +734,9 @@ private struct StatsChartAxisTheme: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
+    /// internal（0.23.17 起文件级 private 退役）——StatsTrendCard 独立文件消费
+    /// （statsPanel 同款拆文件纪律）。
     func chartAxisTheme(_ theme: CellarTheme, xStride: Calendar.Component, xStrideCount: Int) -> some View {
         modifier(StatsChartAxisTheme(theme: theme, xStride: xStride, xStrideCount: xStrideCount))
     }

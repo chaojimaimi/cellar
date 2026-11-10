@@ -190,8 +190,8 @@ public enum StatsTrend {
     public static let cycleThreshold = 1000
     /// 月均天数（365.25/12——外推统一口径）。
     static let daysPerMonth = 30.44
-    /// 周桶窗宽（天）。
-    static let windowDays = 7
+    /// 周桶窗宽（天；趋势卡 hover 桶径与跨空窗断笔判据同源——禁散落魔法数）。
+    public static let windowDays = 7
 
     /// 呈现门槛（§2.3.4）：输入 daysOfData 口径钉死 = **跨日数**（首日 → 今天的
     /// 日历天数，非日行数——与「积累时长」语义一致，断档运行的机器不虚高，评审

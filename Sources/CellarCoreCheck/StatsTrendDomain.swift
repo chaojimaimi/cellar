@@ -431,6 +431,152 @@ func runStatsTrendDomainScenarios() async {
                   && StatsTrend.localMidnight(forDay: "2026-01") == nil,
               "统计59", "非法日串 → nil")
     }
+    // MARK: 源钉（方案 §4 源钉清单——照 MenuPresetDomain 形态，源文件读取零渲染零进程）
+
+    // 统计60：趋势卡三态门槛常量单源反钉——门槛常量（14/90/13）只存在于
+    // StatsTrend.swift 单源，UI 侧一律经 StatsTrend 函数消费（禁散落魔法数）。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Sources/CellarCoreCheck
+            .deletingLastPathComponent()   // Sources
+            .deletingLastPathComponent()   // 仓库根
+        func source(_ relativePath: String) -> String {
+            let url = repoRoot.appendingPathComponent(relativePath)
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else {
+                check(false, "统计60", "源文件读取失败：\(relativePath)（结构钉面依赖仓库布局）")
+                return ""
+            }
+            return text
+        }
+        let trendSrc = source("Sources/CellarCore/Stats/StatsTrend.swift")
+        check(trendSrc.contains("public static let bandMinDays = 14")
+                  && trendSrc.contains("public static let numericMinDays = 90")
+                  && trendSrc.contains("public static let numericMinBuckets = 13")
+                  && trendSrc.contains("public static let cycleThreshold = 1000"),
+              "统计60", "三态门槛 + cycle 阈值常量单源在位（StatsTrend.swift——调研决策点 2 锁定值）")
+        let pageSrc = source("App/CellarApp/StatsPageView.swift")
+        let cardsSrc = source("App/CellarApp/StatsPageViewCards.swift")
+        let cardSrc = source("App/CellarApp/StatsTrendCard.swift")
+        check(pageSrc.contains("if trendShowsCard {")
+                  && pageSrc.contains("StatsTrendCard(theme: theme, dailyRows: dailyHealthRows)"),
+              "统计60", "趋势卡装配在位（容量卡之后 + trendShowsCard 门控——StatsPageView body）")
+        let uiSrc = pageSrc + cardsSrc + cardSrc
+        check(uiSrc.contains("StatsTrend.presentationState(")
+                  && uiSrc.contains("StatsTrend.crossDayCount(")
+                  && uiSrc.contains("StatsTrend.weeklyBands(daily:"),
+              "统计60", "UI 门槛/跨日数/周桶全经 StatsTrend 函数消费（零本地复算）")
+        check(!uiSrc.contains("< 14") && !uiSrc.contains("< 90") && !uiSrc.contains(">= 13"),
+              "统计60", "UI 侧零散落魔法数（14/90/13 门槛只在 CellarCore 单源——反钉缺席面）")
+        check(cardSrc.contains("Double(StatsTrend.windowDays) * 86_400"),
+              "统计60", "hover 桶径 = 窗宽常量派生（禁 7×86400 字面量——windowDays 单源）")
+    }
+
+    // 统计61：StatsTrend import 闭包恰 Foundation（纯函数无 IO——无 SQLite/UI/
+    // os 通路；聚合不藏 SQL 红线的结构面）。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = repoRoot.appendingPathComponent("Sources/CellarCore/Stats/StatsTrend.swift")
+        guard let data = try? Data(contentsOf: url),
+              let trendSrc = String(data: data, encoding: .utf8) else {
+            check(false, "统计61", "StatsTrend.swift 读取失败（结构钉面依赖仓库布局）")
+            return
+        }
+        let imports = trendSrc.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("import ") }
+        check(imports == ["import Foundation"],
+              "统计61", "StatsTrend import 闭包恰 = Foundation（零 SQLite/CellarUI/os 通路）")
+    }
+
+    // 统计62：catalog 新键双语直读 + 键数增量登记（482 → 491 有意增量 9——§3）。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
+        if let data = try? Data(contentsOf: catalogURL),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let strings = root["strings"] as? [String: Any] {
+            let expectations: [String: (zh: String, en: String)] = [
+                "stats.trend.title": ("健康趋势", "Health Trend"),
+                "stats.trend.subtitle": ("口径：标称满充容量 / 设计容量 · 周桶中位数与循环外推",
+                                         "Caliber: nominal / design capacity · weekly median and cycle projection"),
+                "stats.trend.band.hint": ("趋势积累中（%lld/90 天）", "Accumulating trend (%lld/90 days)"),
+                "stats.trend.cycle.rate": ("按当前约 %.1f 循环/月", "At ≈%.1f cycles/month"),
+                "stats.trend.cycle.eta": ("，预计 %.1f 个月后到达 1000 循环阈值",
+                                          ", reaching the 1000-cycle threshold in ≈%.1f months"),
+                "stats.trend.cycle.reached": ("循环数已达阈值", "Cycle count has reached the threshold"),
+                "stats.trend.chart.median": ("周中位数", "Weekly median"),
+                "stats.trend.chart.band": ("周最小–最大带", "Weekly min–max band"),
+                "stats.trend.a11y.summary": ("健康趋势：积累 %lld 天，最新周中位数 %.1f%%",
+                                             "Health trend: %lld days accumulated, latest weekly median %.1f%%"),
+            ]
+            func localized(_ key: String, _ locale: String) -> String? {
+                if let entry = strings[key] as? [String: Any],
+                   let localizations = entry["localizations"] as? [String: Any],
+                   let unit = (localizations[locale] as? [String: Any])?["stringUnit"] as? [String: Any] {
+                    return unit["value"] as? String
+                }
+                return nil
+            }
+            var allPresent = true
+            for (key, expected) in expectations {
+                if localized(key, "zh-Hans") != expected.zh || localized(key, "en") != expected.en {
+                    allPresent = false
+                }
+            }
+            check(allPresent, "统计62", "catalog 新键九项双语在位（stats.trend.* §3 清单逐字）")
+            expectEqual(strings.count, 491, "统计62", "键数增量登记 482 → 491（+9 有意增量）")
+        } else {
+            check(false, "统计62", "catalog 键结构缺席（双语源钉红）")
+        }
+    }
+
+    // 统计63：PolicyContextBox + tick 滚动聚合接线源钉（§2.2）——NSLock 单值盒 /
+    // 失联置 nil / 直方图跨日重置 / upsert 接线 / 日界 Calendar 纪律（禁 86400
+    // 乘法）/ ingest 写盒。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        func source(_ relativePath: String) -> String {
+            let url = repoRoot.appendingPathComponent(relativePath)
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else {
+                check(false, "统计63", "源文件读取失败：\(relativePath)（结构钉面依赖仓库布局）")
+                return ""
+            }
+            return text
+        }
+        let samplerSrc = source("App/CellarApp/StatsSampler.swift")
+        let statusSrc = source("App/CellarApp/StatusController.swift")
+        check(samplerSrc.contains("final class PolicyContextBox: @unchecked Sendable")
+                  && samplerSrc.contains("private let lock = NSLock()")
+                  && samplerSrc.contains("func set(_ value: Int?)")
+                  && samplerSrc.contains("func latest() -> Int?")
+                  && samplerSrc.contains("static let shared = PolicyContextBox()"),
+              "统计63", "PolicyContextBox 在位（NSLock 单值盒 + 单例——StatusController 写 / StatsSampler 读跨隔离域传递）")
+        check(samplerSrc.contains("upperHistogram[upperLimit, default: 0] += 1")
+                  && samplerSrc.contains("if histogramDay != day {")
+                  && samplerSrc.contains("await store?.upsertDailyHealth(day: day, upperHistogram: upperHistogram)")
+                  && samplerSrc.contains("await store?.insert(sample)\n        await recordDailyHealth()"),
+              "统计63", "tick 顺带滚动聚合接线在位（insert 后 recordDailyHealth：直方图累计 + 跨日重置 + 当日 upsert）")
+        check(samplerSrc.contains("DailyHealthRollup.dayString(for: Date())")
+                  && !samplerSrc.contains("* 86400") && !samplerSrc.contains("/ 86400")
+                  && !samplerSrc.contains("* 86_400") && !samplerSrc.contains("/ 86_400"),
+              "统计63", "日界 = dayString（Calendar.startOfDay 派生）——零 86400 乘除（禁令纪律，评审 P2 修正）")
+        check(samplerSrc.contains("func queryDailyHealth() async -> [DailyHealthRow]")
+                  && samplerSrc.contains("return await store.dailyHealth()"),
+              "统计63", "queryDailyHealth actor 透传在位（趋势卡数据源——主线程零 SQLite）")
+        check(statusSrc.contains("PolicyContextBox.shared.set(status?.upperLimit)"),
+              "统计63", "ingest 写盒在位（status == nil 置 nil——陈旧限值不喂直方图，评审 P2 修正）")
+    }
 }
 
 

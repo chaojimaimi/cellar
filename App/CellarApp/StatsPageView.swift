@@ -101,6 +101,9 @@ struct StatsPageView: View {
     /// 最新采样（0.22.0 §3.3 今日 SOC 区间行——dailyMin/MaxSoc 系统键消费源；
     /// 跨文件 internal 同 buckets 先例，StatsPageViewCards 消费）。
     @State var latestSample: StatsSample?
+    /// 每日健康行（0.23.17 §2.4 趋势卡数据源——daily_health 全表 day ≤ 今天；
+    /// 跨文件 internal 同 buckets 先例，StatsTrendCard 消费）。
+    @State var dailyHealthRows: [DailyHealthRow] = []
     /// 当前范围（断档判定需读 bucketSeconds——StatsPageViewCards 投影消费）。
     @State var rangeWindow: RangeWindow = .hours24
     @State private var isLoading = true
@@ -134,6 +137,11 @@ struct StatsPageView: View {
                     }
                     if capacityPoints.count >= 2 {
                         StatsCapacityCard(theme: theme, capacityPoints: capacityPoints)
+                    }
+                    // 健康趋势卡（0.23.17 §2.4，容量卡之后——既有 ≥2 点门控同位置
+                    // 模式；三态门槛 .insufficient 卡不渲染——决策点 1 锁定）。
+                    if trendShowsCard {
+                        StatsTrendCard(theme: theme, dailyRows: dailyHealthRows)
                     }
                 }
             }
@@ -170,10 +178,13 @@ struct StatsPageView: View {
             range: range, bucketSeconds: rangeWindow.energyBucketSeconds
         )
         let latest = await sampler?.latestSample()
+        // 每日健康行（0.23.17 §2.4 趋势卡——daily_health 全表读经 actor 透传）。
+        let dailyRows = await sampler?.queryDailyHealth() ?? []
         // 范围快速切换：被取消的旧任务在恢复主线程后放弃写态，防旧结果覆盖新范围。
         if Task.isCancelled { return }
         energy = energySummary
         latestSample = latest
+        dailyHealthRows = dailyRows
         firstSampleDate = overviewBuckets.first?.start
         // 口径（v1.8 走查批 F5）：健康度 = 标称满充容量 / 设计容量——MaxCapacity
         // 键在部分 macOS 版本恒 100（语义漂移，BatterySnapshot 注记），旧口径已
