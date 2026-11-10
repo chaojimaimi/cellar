@@ -233,6 +233,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(item)
         }
 
+        // 0.23.18 §2.4：profile 区（预设区之后、开面板项之前）。profiles 空 →
+        // **整区省略**（菜单形态对无 profile 用户零变化）；非空 → separator +
+        // section header（panel.menu.profiles）+ 逐项（representedObject = id——
+        // id 非 Int，preset 的 tag 通路不适用；state .on = activeMatch 读回派生
+        // 命中 ✓）。**MenuPresetModel.Section 不扩 enum**（profile 项独立模型
+        // MenuProfileModel 独立数组，不与六预设混列表——语义不同不合并；对调研
+        // B4「扩 Section enum」建议的偏离，理由见 MenuProfileModel 文件头）。
+        // 禁用矩阵在模型（status nil / busy / actionActive；mode disabled 不禁用
+        // ——§2.3 同理由）。
+        let profileItems = MenuProfileModel.items(
+            profiles: ProfileController.shared.profiles,
+            status: controller.daemonStatus,
+            busy: controller.busy,
+            actionActive: controller.action != nil
+        )
+        if !profileItems.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(.sectionHeader(title: CellarL10n.s("panel.menu.profiles")))
+            for profileItem in profileItems {
+                let item = NSMenuItem(
+                    title: profileItem.name,
+                    action: #selector(applyProfileClicked(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = profileItem.id
+                item.state = profileItem.isSelected ? .on : .off
+                item.isEnabled = profileItem.enabled
+                menu.addItem(item)
+            }
+        }
+
         menu.addItem(.separator())
         menu.addItem(menuItem(title: CellarL10n.s("panel.menu.openPanel"), action: #selector(openPanelClicked)))
         menu.addItem(menuItem(title: quitWord, action: #selector(quitClicked)))
@@ -275,6 +307,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             return
         }
         controller.applyLimits(upperLimit: sender.tag, hysteresis: hysteresis)
+    }
+
+    /// 方案切换（0.23.18 §2.4）：representedObject 取 id → payload → **LimitPolicy
+    /// 式预检不适用**（整包下发无单值预检）→ 直接 ProfileController.shared.switchTo
+    /// （三门/收敛守卫/失败停链全在编排器）。禁用矩阵（items enabled）已把
+    /// status nil / busy / actionActive 拦在菜单层——此处 guard status/payload 为
+    /// 防御兜底（非静默面在编排器入口三门）。
+    @objc private func applyProfileClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let current = StatusController.shared.daemonStatus,
+              let payload = ProfileController.shared.profiles.first(where: { $0.id == id })
+        else { return }
+        ProfileController.shared.switchTo(payload, current: current)
     }
 
     /// 打开面板 = togglePopover（同左键）。

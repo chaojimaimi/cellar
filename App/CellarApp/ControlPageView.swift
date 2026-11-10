@@ -36,6 +36,10 @@ struct ControlPageView: View {
                 if statusController.daemonStatus != nil {
                     ControlSectionView()
                     Divider()
+                    // 0.23.18 §2.5：方案节（整包控制语义邻接单旋钮控制与一次性动作
+                    // 之间——方案 §2.5 定位；面板 PanelView 零改动，仅主窗页接入）。
+                    ProfileSectionView()
+                    Divider()
                     ActionSectionView()
                 }
             }

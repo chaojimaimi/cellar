@@ -524,4 +524,79 @@ func runProfileDomainScenarios() {
     } else {
         check(false, "源钉-7", "catalog 键结构缺席（双语源钉红）")
     }
+
+    // ---- 方案-9：MenuProfileModel.items 判定矩阵（commit 3 模型配套直测）----
+
+    let menuCurrent = fullStatus()
+    let menuHit = ProfileModel.capture(from: menuCurrent)!
+    var menuMiss = ProfileModel.capture(from: menuCurrent)!
+    menuMiss.upperLimit = 60
+    let menuProfiles = [menuMiss, menuHit]
+
+    // status 直入：✓ 派生在模型内部经 activeMatch——签名无意图参数（结构性杜绝
+    // 调用方误接 activeProfileID，评审 P2-3）。
+    let menuNormal = MenuProfileModel.items(profiles: menuProfiles, status: menuCurrent, busy: false, actionActive: false)
+    check(menuNormal.map(\.id) == [menuMiss.id, menuHit.id]
+              && menuNormal.map(\.name) == [menuMiss.name, menuHit.name],
+          "方案-9", "两方案全量投影（顺序 = 列表序；name 原样）")
+    check(menuNormal.filter(\.isSelected).map(\.id) == [menuHit.id]
+              && menuNormal.allSatisfy(\.enabled),
+          "方案-9", "✓ 读回派生恰一（miss 限值漂移不点亮）+ 正常态全 enabled")
+    check(MenuProfileModel.items(profiles: [], status: menuCurrent, busy: false, actionActive: false).isEmpty,
+          "方案-9", "空表 → 空数组（组装层整区省略——菜单形态对无 profile 用户零变化）")
+    check(MenuProfileModel.items(profiles: menuProfiles, status: nil, busy: false, actionActive: false)
+              .allSatisfy { !$0.enabled && !$0.isSelected },
+          "方案-9", "status nil：全禁用 + 全无 ✓（linkLost 内部派生——activeMatch 无 current 无命中）")
+    check(MenuProfileModel.items(profiles: menuProfiles, status: menuCurrent, busy: true, actionActive: false)
+              .allSatisfy { !$0.enabled },
+          "方案-9", "busy：全禁用（整包切换不接受排队，R6）")
+    check(MenuProfileModel.items(profiles: menuProfiles, status: menuCurrent, busy: false, actionActive: true)
+              .allSatisfy { !$0.enabled },
+          "方案-9", "actionActive：全禁用（setLimits 隐式取消在轨动作入口禁用面，R4）")
+    let menuDisabledCurrent = fullStatus(mode: "disabled")
+    let disabledHit = ProfileModel.capture(from: menuDisabledCurrent)!
+    let menuDisabled = MenuProfileModel.items(profiles: [disabledHit], status: menuDisabledCurrent, busy: false, actionActive: false)
+    check(menuDisabled.first?.enabled == true && menuDisabled.first?.isSelected == true,
+          "方案-9", "mode disabled：放行 + ✓ 保留（切换到 active 方案正是从 disabled 走出的合法路径——§2.3 同理由）")
+
+    // ---- 源钉-4：菜单组装 + 管理页接入源钉（源文件读取）----
+
+    let statusItemSrc3 = source("App/CellarApp/StatusItemController.swift")
+    check(statusItemSrc3.contains("MenuProfileModel.items(")
+              && statusItemSrc3.contains("profiles: ProfileController.shared.profiles,")
+              && statusItemSrc3.contains("status: controller.daemonStatus,")
+              && statusItemSrc3.contains("busy: controller.busy,")
+              && statusItemSrc3.contains("actionActive: controller.action != nil"),
+          "源钉-4", "菜单组装 items(status:) 直入四参（模型内派生 ✓——意图镜像无通路）")
+    check(statusItemSrc3.contains("if !profileItems.isEmpty {")
+              && statusItemSrc3.contains("item.representedObject = profileItem.id")
+              && statusItemSrc3.contains("item.state = profileItem.isSelected ? .on : .off")
+              && statusItemSrc3.contains("item.isEnabled = profileItem.enabled")
+              && statusItemSrc3.contains("#selector(applyProfileClicked(_:))")
+              && statusItemSrc3.contains("sender.representedObject as? String"),
+          "源钉-4", "菜单 profile 区（空整区省略 / representedObject = id / state .on 读回命中 / applyProfileClicked id→payload→switchTo）")
+    let menuPresetSrc = source("Sources/CellarCore/Control/MenuPresetModel.swift")
+    check(menuPresetSrc.contains("case quickLimit")
+              && !menuPresetSrc.contains("case profile"),
+          "源钉-4", "MenuPresetModel.Section 不扩 enum（profile 项独立模型独立数组——对调研 B4 的偏离钉死）")
+    let controlPageSrc = source("App/CellarApp/ControlPageView.swift")
+    let controlRange = controlPageSrc.range(of: "ControlSectionView()")
+    let profileRange = controlPageSrc.range(of: "ProfileSectionView()")
+    let actionRange = controlPageSrc.range(of: "ActionSectionView()")
+    check(controlRange != nil && profileRange != nil && actionRange != nil
+              && controlRange!.lowerBound < profileRange!.lowerBound
+              && profileRange!.lowerBound < actionRange!.lowerBound,
+          "源钉-4", "ControlPageView 接入序（ControlSectionView → ProfileSectionView → ActionSectionView——整包控制居单旋钮控制与一次性动作之间）")
+    let panelViewSrc3 = source("App/CellarApp/PanelView.swift")
+    check(!panelViewSrc3.contains("ProfileSectionView"),
+          "源钉-4", "面板 PanelView 零改动（profile 节仅主窗充电控制页——方案 §2.5）")
+    let sectionViewSrc = source("App/CellarApp/ProfileSectionView.swift")
+    check(sectionViewSrc.contains("ProfileModel.activeMatch(profiles: profileController.profiles, current: current) == profile.id")
+              && sectionViewSrc.contains("@ObservedObject private var profileController = ProfileController.shared")
+              && sectionViewSrc.contains("ProfileModel.isValidName(renameDraft)")
+              && sectionViewSrc.contains("control.profile.nameInvalid")
+              && sectionViewSrc.contains("deletePendingID = profile.id")
+              && sectionViewSrc.contains("control.profile.empty")
+              && sectionViewSrc.contains("ProfileModel.capture(from: status) != nil"),
+          "源钉-4", "管理页面（✓ activeMatch 读回派生 / ProfileController.shared 直注非第七注入 / 行内红字命名校验 / 删除两步确认 / 空态引导 / 新建 capture 预检）")
 }
