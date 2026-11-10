@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.16-alpha]
+
+> 背景：修复路标 B8「菜单栏图标快捷预设批」——深审 2026-11-07 产品侧最大缺口收口（深审 P2 全部闭账）。方案经 plan-reviewer 两轮审核至 PASS（方案 A「contextMenu 挂 label」真机证伪——macOS 27 右键不呈现，方案 B（NSStatusItem 原生分流）定版）；落地期真机三连败收口（wire 锚点死代码 / 图标渲染管道 / 退出误杀，各随修随验）。959→969 场景全绿（+10：菜单预设-1..7 / 菜单源钉-1..3）；l10n 479→482 双语同步（+3 key：panel.menu.presets/capPercent/openPanel）；golden 失败集合 384=384 逐条零差异；coverage 92.07%。**App-only 批——daemon 本体逻辑零变化**，但四方版本联动使版本握手门生效：升级后控制指令需先在面板重装守护进程（只读监测不受影响）。**⚠️ 升级注意（0.23.16 真机实证）**：Sparkle/dmg 覆盖安装后守护进程二进制 cdhash 变化，BTM 锚定记录随之失效——若面板出现「BTM 记录损坏」横幅（守护进程反复 spawn 失败 / EX_CONFIG），按横幅指引在面板卸载→重新安装即可，无需 sfltool resetbtm（换锚重注册即愈，真机实证）。
+
+### Added
+
+- **菜单栏右键快捷预设菜单（B8 主项）**：状态栏图标右键弹出六档固定上限（60/70/75/80/90/100%）——当前值 ✓ 标注、section header「快速限充——设为固定上限（≠充满一次）」语义尾注、分隔线、「打开面板」「退出」；MenuPresetModel 模型层（CellarCore，禁用矩阵全判定：mode disabled ∨ actionActive ∨ busy 三门叠加；90/75/100 菜单专属不镜像面板——面板零改动纪律）；LimitPolicy 预检照面板先例（60 地板红线一致防御），预检失败经面板横幅上屏不静默；真机实测右键 75% → 主面板充电限制同步更新。
+
+### Changed
+
+- **菜单栏宿主迁移：MenuBarExtra `.window` 场景整体退役 → AppKit NSStatusItem + NSPopover**（macOS 27 上 SwiftUI contextMenu 挂状态项不呈现——方案 A spike 真机证伪）。左键 popover 面板与退役 MenuBarExtra 链逐项等价注入（六对象）；右键分流 = sendAction 双注册 + NSApp.currentEvent 判型 + menu 生命周期闭环。全仓首个 AppDelegate（@NSApplicationDelegateAdaptor，didFinishLaunching 装配）+ 六控制器单例化（StatusController/OnboardingController/LoginItemController/DisplaySettingsController/StyleController/CpuFanMonitor 同批 static shared，B1-3 NotificationService.shared 先例完成形态；AppConfigStore.shared 随批）+ DaemonInstaller registration/loaded didSet 自转发（接线挂点迁出主窗口内容链——LSUIElement 形态该链永不具象化，真机实证死代码）。
+- **图标渲染管道重写：button.image/title 系统管道**——电池位图（isTemplate 走 NSStatusBarButton cell 自适应明暗；低电量红非模板实绘保留）+ 百分比 title + 失联 ⚠ 符号，双源订阅（daemonStatus 1Hz + 百分比显隐）重挂；替代 NSHostingView 子视图形态（两连败实证：variableLength 自适应只询问 button cell → 约束子视图 16pt 视口裁剪图标隐形；SwiftUI 模板渲染跟随 hosting effectiveAppearance 而非状态栏管道恒白 → 浅色外观深色壁纸黑上加黑）。MainWindowView/StatusItemPanelRoot 主题观察内移（App body 不再观察控制器）。
+- PowerFlowDiagramNodes batteryPercentText 手拼 `%` → CellarNumericFormat.percent 通路（B7-3 单一出口纪律收口；字面量反钉随批覆盖该文件）。
+
+### Fixed
+
+- **App 静默退出（B8 真机回归，两案同判）**：删除 MenuBarExtra 场景后 SwiftUI 场景账本失锚——AppKit「最后窗口关闭→自动退出」排程检查（`_scheduleCheckForTerminateAfterLastWindowClosed`）判「无窗口无可见场景」（NSStatusItem 对 SwiftUI 场景记账不可见）→ terminate 干净退出、无崩溃报告：安装授权弹窗抢焦点关闭面板后 3ms 一案、面板关闭后 83s 排程延迟一案。死亡相机装具（applicationShouldTerminate 全栈留痕 + 信号/atexit 三路）一次复现定案；0.19.11「无场景即退出」同机制家族。修法 = `applicationShouldTerminateAfterLastWindowClosed` 恒 false（菜单栏应用标准消防出口——只关「关窗自动退出」路，显式退出不受影响）。真机三路验证：面板开关 + 150s 静置存活 / BTM 审批注册翻转存活 / 卸载全链路（死亡序列完整重放）存活。
+- **右键快捷菜单收起后残留左键误弹面板**：menuDidClose 复位 `statusItem.menu = nil` 后 performClick 返回路径上残留的 leftMouseUp 会再触发一次分流（左键分支 togglePopover）→ 面板意外弹开。修法 = 0.35s 残留左键吞除窗（真机实证）。
+- **图标空壳回归（wire 锚点死代码）**：B8 初版接线挂主窗口内容链 onAppear——LSUIElement 形态主窗口永不打开 = 内容闭包永不具象化，真机实证图标空壳 0×33、触发日志零命中。修法 = 六控制器单例化 + didSet 自转发（@Published 赋值必经路径零时序依赖）+ didFinishLaunching 逐一点火（见 Changed 单例化条）。
+
 ## [0.23.15-alpha]
 
 > 背景：修复路标 B7「打磨无障碍批」——深审修复路标最后一批。方案经 plan-reviewer 两轮审核至 PASS（第一轮 1×P1+2×P2+3×P3：横幅字色本地常量违反 CellarUI G2 单落点成文纪律、startAt 增强断言方向与源码实际顺序相反、degraded 横幅无 tint 背景；第二轮 4×P3 全折入）；code-reviewer 落地前全审 **APPROVE WITH NITS**（P0–P2 零，4×P3 登记型，其中 2 条随批收口）；对比度 20+ 比值经两轮独立重算零误差。959 场景全绿（942→959，+17：钉扎-19/a11y-1..6/对比度-1..6/字面量-1..4）；l10n 477→479 双语同步（+2 key）；coverage 92.01%；全量重编译零警告（两处登记警告清零）。**golden 基线预期漂移批**：失败集合 384→390，新增 6 条全部归因 GaugeHero tertiaryText 消费点（对比度修复的渲染面），零不可归因项——发版后走 CI `snapshot-regen` 权威流程重定基线。**daemon 逻辑变更（钉扎行落盘）——升级需重装守护进程**；wire 零 schema 变化。
