@@ -597,7 +597,6 @@ struct StatsCapacityCard: View {
     }
 }
 
-
 // MARK: - 共享投影与容器（0.23.8 B3-2：自 StatsPageView extension 收敛文件级）
 
 /// 面板卡（DashboardView.panel 同款：surface 底 + 描边 + 圆角 18 + 小标题行；

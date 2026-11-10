@@ -56,7 +56,7 @@ func runStatsTrendDomainScenarios() async {
     // 统计41：v2→v3 迁移 + 一次性回填——跨多日 v2 fixture（16 列 samples）打开后
     // user_version=3，daily_health 逐行对账（cycle max / 健康度厘百分点截断 max /
     // 计数；期望硬编码——与聚合核互为第二双眼睛）。健康度基准：7616×10000/8694
-    // = 8760（整数截断）、7612×10000/8694 = 8755；日值取 max → 8759。
+    // = 8760（整数截断）、7612×10000/8694 = 8755；日值取 max → 8760。
     do {
         let dir = makeStatsTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
