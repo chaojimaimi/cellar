@@ -531,7 +531,7 @@ func runStatsTrendDomainScenarios() async {
                 }
             }
             check(allPresent, "统计62", "catalog 新键九项双语在位（stats.trend.* §3 清单逐字）")
-            expectEqual(strings.count, 491, "统计62", "键数增量登记 482 → 491（+9 有意增量）")
+            expectEqual(strings.count, 507, "统计62", "键数增量登记 491 → 507（0.23.18 commit 2：control.profile.* 15 + panel.menu.profiles，+16 有意增量——本域九键 482 → 491 断言值随批推进）")
         } else {
             check(false, "统计62", "catalog 键结构缺席（双语源钉红）")
         }

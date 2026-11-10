@@ -20,6 +20,20 @@ import Foundation
 
 /// 0.23.18 多 Profile 批场景域入口（Main.main 调用）。
 func runProfileDomainScenarios() {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // Sources/CellarCoreCheck
+        .deletingLastPathComponent()   // Sources
+        .deletingLastPathComponent()   // 仓库根
+    func source(_ relativePath: String) -> String {
+        let url = repoRoot.appendingPathComponent(relativePath)
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else {
+            check(false, "Profile-0", "源文件读取失败：\(relativePath)（结构钉面依赖仓库布局）")
+            return ""
+        }
+        return text
+    }
+
     // ---- fixture：全旋钮读回完备的 DaemonStatus（UD-7 恒填形态）----
     // FanStatus 字段全 let → 扰动经工厂参数重建（零共享可变面）。
 
@@ -304,4 +318,210 @@ func runProfileDomainScenarios() {
     check(ProfileModel.isValidName(String(repeating: "甲", count: 41)) == false, "方案-8", "41 字符非法（上限 40）")
     check(ProfileModel.isValidName("  " + String(repeating: "甲", count: 40)) == true,
           "方案-8", "trim 后恰 40 字符合法（计数对 trim 后生效）")
+
+    // ---- 方案-10：chainGuardShouldAbort 向量表（commit 2 源码面配套直测）----
+
+    let steps: [ProfileApplyStep] = [
+        .setLimits(upperLimit: 80, hysteresis: 2), .setFan(FanWire()), .setThermal(ThermalWire()),
+        .setChargeSchedule(json: "{}"), .setCalibrationSchedule(CalibrationScheduleWire()),
+        .setChHysteresisEnabled(true), .disable, .setMagSafeLed(1),
+    ]
+    check(steps.map { ProfileModel.applyStepCaseCount(of: $0) } == [Int](repeating: 8, count: 8),
+          "方案-10", "applyStepCaseCount 穷举计数恒 8（八 case 全实例驱动——新增 case 编译期强制同步点）")
+    check(ProfileModel.chainGuardShouldAbort(lastStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                             nextStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                             executed: 1),
+          "方案-10", "守卫一：紧邻同型步（lastStep == nextStep）→ 中止（重推导未收敛）")
+    check(!ProfileModel.chainGuardShouldAbort(lastStep: .setFan(FanWire()),
+                                              nextStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                              executed: 2),
+          "方案-10", "守卫一：非紧邻同型（lastStep .setFan / nextStep .setLimits——计划内 setLimits 二次出现）→ 放行")
+    check(!ProfileModel.chainGuardShouldAbort(lastStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                              nextStep: .setFan(FanWire()),
+                                              executed: 7),
+          "方案-10", "守卫二边界：executed 7 < 8 → 放行（七发后仍有第八步合法）")
+    check(ProfileModel.chainGuardShouldAbort(lastStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                             nextStep: .setFan(FanWire()),
+                                             executed: 8),
+          "方案-10", "守卫二边界：executed 8 ≥ 8 → 中止（步型全发仍未收敛 = 振荡）")
+    check(!ProfileModel.chainGuardShouldAbort(lastStep: nil, nextStep: nil, executed: 0)
+              && !ProfileModel.chainGuardShouldAbort(lastStep: .disable, nextStep: nil, executed: 1),
+          "方案-10", "nextStep nil（发起前判定语境）仅查守卫二：executed 0/1 → 放行")
+    check(ProfileModel.chainGuardShouldAbort(lastStep: nil, nextStep: nil, executed: 8),
+          "方案-10", "nextStep nil ∧ executed ≥ 8 → 中止（守卫二单查语义）")
+    check(!ProfileModel.chainGuardShouldAbort(lastStep: nil,
+                                              nextStep: .setLimits(upperLimit: 80, hysteresis: 2),
+                                              executed: 0),
+          "方案-10", "链首发起（lastStep nil / nextStep 首步）→ 放行")
+
+    // ---- 方案-11：applyPlan 空 ⇔ activeMatch 命中互证（同一比较域结构性证明——
+    // 评审 P3；wire 契约域 mode ∈ "active"|"disabled" 上成立，比较 helper 单源）----
+
+    let pairs: [(profile: ProfilePayload, current: DaemonStatus)] = {
+        var result: [(ProfilePayload, DaemonStatus)] = []
+        for mode in ["active", "disabled"] {
+            for upper in [80, 70] {
+                let current = fullStatus(mode: mode, upperLimit: upper)
+                let identical = ProfileModel.capture(from: current)!
+                result.append((identical, current))   // 全同 → 空 ⇔ 命中
+                var limits = ProfileModel.capture(from: current)!
+                limits.upperLimit = 60
+                result.append((limits, current))      // 限值异 → 非空 ⇔ 不命中
+                var schedule = ProfileModel.capture(from: current)!
+                schedule.scheduleJson = #"{"enabled":true,"entries":[]}"#
+                result.append((schedule, current))    // 日程异 → 非空 ⇔ 不命中
+                var modeFlip = ProfileModel.capture(from: current)!
+                modeFlip.mode = mode == "active" ? "disabled" : "active"
+                result.append((modeFlip, current))    // 模式异 → 非空 ⇔ 不命中（四组合全覆盖）
+                var fan = ProfileModel.capture(from: current)!
+                fan.fan?.enabled = false
+                result.append((fan, current))         // fan 异 → 非空 ⇔ 不命中
+                var led = ProfileModel.capture(from: current)!
+                led.magSafeLedMode = MagSafeLEDMode.system.rawValue
+                result.append((led, current))         // LED 异 → 非空 ⇔ 不命中
+            }
+        }
+        return result.map { (profile: $0.0, current: $0.1) }
+    }()
+    var mutual = true
+    for (payload, current) in pairs {
+        let planEmpty = ProfileModel.applyPlan(profile: payload, current: current).isEmpty
+        let matched = ProfileModel.activeMatch(profiles: [payload], current: current) == payload.id
+        if planEmpty != matched { mutual = false }
+    }
+    check(mutual && pairs.count == 24,
+          "方案-11", "24 对（mode²×limits²×六类扰动——全同/限值/日程/模式翻转/fan/LED）：applyPlan 空 ⇔ activeMatch 命中（同比较域互证）")
+    // 双方案列表形态：匹配者居后仍命中（与方案-7 首匹配语义一致）。
+    let listCurrent = fullStatus()
+    let miss = ProfileModel.capture(from: listCurrent)!
+    var driftedMiss = miss
+    driftedMiss.upperLimit = 60
+    let hit = ProfileModel.capture(from: listCurrent)!
+    check(ProfileModel.activeMatch(profiles: [driftedMiss, hit], current: listCurrent) == hit.id
+              && ProfileModel.applyPlan(profile: hit, current: listCurrent).isEmpty
+              && !ProfileModel.applyPlan(profile: driftedMiss, current: listCurrent).isEmpty,
+          "方案-11", "列表形态互证：miss 非空不命中 / hit 空且命中（两函数同判）")
+
+    // ---- 源钉（源文件读取——照 MenuPresetDomain source() 先例）----
+
+    // 源钉-1：AppConfig 双字段 decode/encodeIfPresent 在位。
+    let appSideSrc = source("Sources/CellarCore/Daemon/AppSide.swift")
+    check(appSideSrc.contains("case profiles")
+              && appSideSrc.contains("case activeProfileID")
+              && appSideSrc.contains("profiles = try container.decodeIfPresent([ProfilePayload].self, forKey: .profiles)")
+              && appSideSrc.contains("activeProfileID = try container.decodeIfPresent(String.self, forKey: .activeProfileID)")
+              && appSideSrc.contains("try container.encodeIfPresent(profiles, forKey: .profiles)")
+              && appSideSrc.contains("try container.encodeIfPresent(activeProfileID, forKey: .activeProfileID)"),
+          "源钉-1", "AppConfig 双字段四位同步（CodingKeys + decodeIfPresent ×2 + encodeIfPresent ×2——nil 缺席零键增量）")
+
+    // 源钉-2：runControl 三改造（internal widening + String? 反馈 + onFailure 钩子）。
+    let statusControllerSrc = source("App/CellarApp/StatusController.swift")
+    check(statusControllerSrc.contains("    func runControl(")
+              && !statusControllerSrc.contains("private func runControl("),
+          "源钉-2", "runControl private → internal（链扩展文件驱动单槽通道——R2 P1-A widening 先例）")
+    check(statusControllerSrc.contains("let successFeedback: String?")
+              && statusControllerSrc.contains("successFeedback: String?,")
+              && statusControllerSrc.contains("if let feedback = successFeedback {"),
+          "源钉-2", "successFeedback String?（QueuedControlCall + runControl 形参 + finishControl nil 分支单点 if let——链步静默仅链尾聚合）")
+    check(statusControllerSrc.contains("onFailure: (@MainActor (DaemonClientError) -> Void)? = nil")
+              && statusControllerSrc.contains("onFailure: (@MainActor (DaemonClientError) -> Void)?,")
+              && statusControllerSrc.contains("onFailure?(error)")
+              && statusControllerSrc.contains("onFailure: queued.onFailure,"),
+          "源钉-2", "onFailure 钩子（默认 nil 参数 + finishControl 形参 + 失败分支 classifyControlFailure 之后调用 + 队列补发透传）")
+    check(statusControllerSrc.contains("profile 链扩展文件")
+              && statusControllerSrc.contains("横幅串击")
+              && statusControllerSrc.contains("失败链残留非 nil 状态"),
+          "源钉-2", "WHY 三条齐（internal widening / String? 串击 / onFailure 清链落点——评审 P1-2）")
+    check(statusControllerSrc.contains("ProfileController.shared.maybeCaptureDefault(status)"),
+          "源钉-2", "ingest 尾部迁移挂点（首启静默捕获——幂等单发守卫在 ProfileController）")
+    check(statusControllerSrc.contains("var profileChain: ProfileChainState?"),
+          "源钉-2", "链状态存储槽在主类（extension 无存储属性——LED internal setter 同款先例）")
+
+    // 源钉-3：编排器面（链存续守卫/守卫二发起前/每步重推导/穷举映射/补偿/nil 反馈/清链/fan 注记）。
+    let profileApplySrc = source("App/CellarApp/StatusController+ProfileApply.swift")
+    let advanceSegment = profileApplySrc.components(
+        separatedBy: "private func advanceProfileChain").dropFirst().first ?? ""
+    check(advanceSegment.contains("guard let chain = profileChain else { return }")
+              && advanceSegment.range(of: "guard let chain = profileChain")?.lowerBound
+                  ?? advanceSegment.startIndex
+                  < advanceSegment.range(of: "chainGuardShouldAbort")?.lowerBound ?? advanceSegment.endIndex,
+          "源钉-3", "链存续守卫入口判定（guard let chain 先于一切链状态访问——评审 P1 时序防御）")
+    check(advanceSegment.contains("nextStep: nil, executed: chain.executed")
+              && advanceSegment.range(of: "nextStep: nil")?.lowerBound
+                  ?? advanceSegment.startIndex
+                  < advanceSegment.range(of: "ProfileModel.applyPlan")?.lowerBound ?? advanceSegment.endIndex,
+          "源钉-3", "收敛守卫二发起前判定（nextStep nil 形态先于 applyPlan 重推导——严禁 defer 出口，评审 P1）")
+    check(advanceSegment.contains("ProfileModel.applyPlan(profile: chain.payload, current: status)")
+              && advanceSegment.contains("ProfileModel.chainGuardShouldAbort("),
+          "源钉-3", "每步重推导（applyPlan 在 advance 内——评审 P2-2）+ 守卫经 ProfileModel.chainGuardShouldAbort 纯函数")
+    check(profileApplySrc.contains("case .setLimits(let upperLimit, let hysteresis):")
+              && profileApplySrc.contains("case .setFan(let wire):")
+              && profileApplySrc.contains("case .setThermal(let wire):")
+              && profileApplySrc.contains("case .setChargeSchedule(let json):")
+              && profileApplySrc.contains("case .setCalibrationSchedule(let wire):")
+              && profileApplySrc.contains("case .setChHysteresisEnabled(let enabled):")
+              && profileApplySrc.contains("case .disable:")
+              && profileApplySrc.contains("case .setMagSafeLed(let raw):"),
+          "源钉-3", "编排器 exhaustive switch 八 case（新增 case 编译期强制同步）")
+    check(profileApplySrc.components(separatedBy: "successFeedback: nil,").count - 1 == 8,
+          "源钉-3", "链步成功反馈 nil 恰八处（横幅串击根除——B3-4，仅链尾 control.profile.applied 聚合）")
+    check(profileApplySrc.components(separatedBy: "onFailure: { _ in self.profileChain = nil }").count - 1 == 8,
+          "源钉-3", "onFailure 清链恰八处（失败即停——评审 P1-2）")
+    check(profileApplySrc.contains("self.reconcileShutdownResidualNow()")
+              && profileApplySrc.contains("advanceProfileChain(from: status)"),
+          "源钉-3", ".disable 步补偿（toggleCharging(false) 同款 reconcileShutdownResidualNow——LimitExecution:56 internal 零改动）+ onSuccess 续链")
+    check(profileApplySrc.contains("field: .strategy 取形注记")
+              && profileApplySrc.contains(".setFan(wire, .strategy)")
+              && profileApplySrc.contains("guard let mode = MagSafeLEDMode(rawValue: raw)"),
+          "源钉-3", "fan 步 field 取形注记 + .strategy 取值 + LED raw 白名单防御（非法 raw 永不收敛 → abortChain）")
+
+    // 源钉-3b：ControlModels `.setMagSafeLed` case 恢复（双臂 + 隔离偏离登记）。
+    let controlModelsSrc = source("App/CellarApp/ControlModels.swift")
+    check(controlModelsSrc.contains("case setMagSafeLed(MagSafeLEDMode)")
+              && controlModelsSrc.contains("status.summary.setMagSafeLed")
+              && controlModelsSrc.contains("两通道并存、互不渗透"),
+          "源钉-3b", "ControlAttempt .setMagSafeLed case 恢复 + summary 臂（status.summary.setMagSafeLed 键已在 catalog 零增量）+ 轻路径隔离偏离登记注记")
+    check(statusControllerSrc.contains("applyLedStepDirect(mode)")
+              && profileApplySrc.contains("func applyLedStepDirect(_ mode: MagSafeLEDMode)")
+              && profileApplySrc.contains("attempt: .setMagSafeLed(mode)"),
+          "源钉-3b", "retryLastAttempt 臂经 applyLedStepDirect 单步重发（回 runControl 同一通道——不照抄旧轻路径臂；成功反馈复用 status.summary.setMagSafeLed 键）")
+
+    // 源钉-7：catalog 新键逐字直读 + 键数精确断言（commit 2 后 491+16=507）。
+    let catalogURL = repoRoot.appendingPathComponent("Sources/CellarUI/Resources/Localizable.xcstrings")
+    if let data = try? Data(contentsOf: catalogURL),
+       let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let strings = root["strings"] as? [String: Any] {
+        check(strings.count == 507,
+              "源钉-7", "catalog 键数精确断言 507（491 + 16：control.profile.* 15 + panel.menu.profiles）")
+        let expectations: [String: String] = [
+            "control.profile.title": "充电方案",
+            "control.profile.empty": "暂无方案。从当前设置创建第一个方案。",
+            "control.profile.duplicateSuffix": "%@ 副本",
+            "control.profile.defaultName": "默认",
+            "control.profile.deleteConfirm": "确认删除「%@」？",
+            "control.profile.nameInvalid": "名称不能为空且不超过 40 个字符",
+            "control.profile.captureUnavailable": "无法捕获当前设置（守护进程版本过旧）",
+            "control.profile.limitReached": "方案数已达上限（%lld）",
+            "control.profile.applied": "已应用方案「%@」",
+            "control.profile.notConverged": "方案「%@」中止：守护进程读回未收敛，已停止切换",
+            "panel.menu.profiles": "充电方案",
+        ]
+        var allPresent = true
+        for (key, zh) in expectations {
+            func localized(_ locale: String) -> String? {
+                if let entry = strings[key] as? [String: Any],
+                   let localizations = entry["localizations"] as? [String: Any],
+                   let unit = (localizations[locale] as? [String: Any])?["stringUnit"] as? [String: Any] {
+                    return unit["value"] as? String
+                }
+                return nil
+            }
+            if localized("zh-Hans") != zh || localized("en") == nil || localized("en")?.isEmpty == true {
+                allPresent = false
+            }
+        }
+        check(allPresent, "源钉-7", "catalog 新键逐字直读（zh-Hans 抽样 11 键逐字 + en 双语齐——extractionState manual 单一门面）")
+    } else {
+        check(false, "源钉-7", "catalog 键结构缺席（双语源钉红）")
+    }
 }

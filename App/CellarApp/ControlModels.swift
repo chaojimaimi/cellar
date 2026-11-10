@@ -54,8 +54,15 @@ enum ControlAttempt: Equatable {
     // `.setOrchestration` case 已退役（0.23.1 编排退役——App 发送端/通用页编排节
     // 随批删除；旧 App 混装窗的 setOrchestration XPC 命令兼容由 daemon 冻结偏好
     // 照写面承接）。
-    // .setMagSafeLed case 已退役（v1.10 M2：LED 切换外迁独立轻路径，不写
-    // lastAttempt——失败重试 = 用户重选 Picker，构造点随 runControl 迁出消失）。
+    /// 0.23.18：`.setMagSafeLed` case 恢复（对形 v1.10 M2 退役前 git 原形
+    /// `case setMagSafeLed(MagSafeLEDMode)`——profile 链步需要 attempt 语义支撑
+    /// 重试/横幅/单槽，链步走 runControl 通道）。**偏离登记（方案 §2.3）**：v1.10
+    /// M2 隔离纪律（LED 不写 lastAttempt）仅对 LED **轻路径 UI 直调面保持不变**
+    /// ——StatusController+LEDControl.swift setMagSafeLed 独立轻路径原样（不写
+    /// lastAttempt 不写全局横幅）；链内 LED 步经 runControl 写 lastAttempt =
+    /// 链语义固有面，两通道并存、互不渗透。retryLastAttempt 臂经链扩展文件
+    /// internal helper applyLedStepDirect 单步重发（不照抄旧轻路径臂）。
+    case setMagSafeLed(MagSafeLEDMode)
 
     /// 横幅摘要文案（上次动作是什么）。
     var summary: String {
@@ -90,6 +97,10 @@ enum ControlAttempt: Equatable {
             return CellarL10n.s("status.summary.restoreLimit")
         case .setChHysteresisEnabled:
             return CellarL10n.s("status.summary.setChHysteresis")
+        case .setMagSafeLed:
+            // 键已在 catalog（status.summary.setMagSafeLed——LEDControl.swift:62 在用），
+            // 零 catalog 增量（评审 P3：勿破坏键数账）。
+            return CellarL10n.s("status.summary.setMagSafeLed")
         }
     }
 }

@@ -37,13 +37,21 @@ final class StatusController: ObservableObject {
     /// runControl 单槽排队（latest-wins，深度恒 1——fan fanQueuedApply 同构）：
     /// busy 期收到新提交 → 暂存整笔调用（attempt/operation/feedback/onSuccess），
     /// 回包收尾后自动补发。0.23.7 B2-3：修「busy 期点击静默丢弃」。
+    /// 0.23.18：successFeedback 收窄 String?（链步传 nil 静默）+ 新增 onFailure
+    /// 钩子（与 onSuccess 同形随队补发——失败臂清链回调落点）。
     private struct QueuedControlCall {
         let attempt: ControlAttempt
         let operation: @Sendable () throws -> DaemonStatus
-        let successFeedback: String
+        let successFeedback: String?
+        let onFailure: (@MainActor (DaemonClientError) -> Void)?
         let onSuccess: (@MainActor (DaemonStatus) -> Void)?
     }
     private var queuedControlCall: QueuedControlCall?
+    /// profile 切换链在飞态（0.23.18 §2.3；存储槽在主类声明——extension 不能声明
+    /// 存储属性，LED magSafeLedPending internal setter 同款拆分先例；读写面在
+    /// StatusController+ProfileApply.swift）。nil = 无链；非 nil = 切换链在飞
+    /// （busy 门常态先拦——applyProfile 入口兜底死链防御）。⚠️ 非 private：跨文件读写。
+    var profileChain: ProfileChainState?
     @Published private(set) var controlFeedback: ControlFeedback?
     /// MagSafe LED 独立轻路径状态槽（v1.10 M2）：pending = LED 在途（不进全局 busy，防通用页全节闪灰）；
     /// feedback = 组件内轻提示（成功 5s 清 / 失败常驻，不写全局 controlFeedback——横幅归属隔离）。
@@ -486,6 +494,12 @@ final class StatusController: ObservableObject {
         // status == nil（daemon 失联）时盒置 nil，陈旧限值不喂当日众数直方图
         // （评审 P2 修正）；不动 DaemonStatus/wire（红线）。
         PolicyContextBox.shared.set(status?.upperLimit)
+        // 0.23.18 §2.2 首启静默迁移挂点（B2）：profiles 缺席（未迁移）∧ 现值读回
+        // 完备 → 落「默认」方案（幂等单发守卫在 ProfileController.maybeCaptureDefault
+        // 内——capture 失败保持未迁移，下次 ingest 重试，一次性成功即止）。
+        if let status {
+            ProfileController.shared.maybeCaptureDefault(status)
+        }
         // **0.23.1 编排退役**：原 ingest 末尾「编排 pending 消费挂点」（v0.19.20
         // WP-2——consumeOrchestrationPending detached 执行 + reportOrchestration
         // 回报）随 App 执行链删除——daemon 域承载单通道，App 无 pending 消费面。
@@ -494,7 +508,11 @@ final class StatusController: ObservableObject {
     /// success 反馈设置 + 5s 自动消退（真机验收修正 2026-09-02：成功类横幅
     /// 常驻面板——成功无需用户处理，展示即撤离；失败/告警类常驻不清）。
     /// 新 success 重置计时；失败反馈到达时取消计时（常驻语义）。
-    private func setSuccessFeedback(_ message: String) {
+    /// ⚠️ 0.23.18 private → internal——WHY：写入面在外迁 extension 文件
+    /// StatusController+ProfileApply.swift（profile 链尾唯一聚合反馈
+    /// control.profile.applied——链步反馈全 nil 静默），private 跨文件只读不可调
+    /// （R2 P1-A internal widening 先例——LED extension 同款）。
+    func setSuccessFeedback(_ message: String) {
         successFeedbackClearTask?.cancel()
         controlFeedback = .success(message)
         successFeedbackClearTask = Task { [weak self] in
@@ -886,6 +904,12 @@ final class StatusController: ObservableObject {
             restoreChargeLimit()
         case .setChHysteresisEnabled(let enabled):
             setChHysteresisEnabled(enabled)
+        case .setMagSafeLed(let mode):
+            // 0.23.18：链步重试必须回同一通道（runControl 单步重发——链扩展文件
+            // internal helper applyLedStepDirect）——**不照抄 v1.10 M2 旧轻路径臂**
+            //（旧臂 setMagSafeLed(mode) 走独立轻路径不写 lastAttempt，链步重试
+            // 需要 attempt 语义支撑；两通道并存互不渗透，方案 §2.3 偏离登记）。
+            applyLedStepDirect(mode)
         }
     }
 
@@ -1002,10 +1026,26 @@ final class StatusController: ObservableObject {
     /// ——0.23.7 B2-3 前为静默丢弃（原注释自称「非静默」失实）+ XPC 后台 +
     /// 结果回主 actor。lastAttempt 在入口记录（分支① 重试依据），成功清除
     /// （成功反馈自动清横幅）。
-    private func runControl(
+    ///
+    /// 0.23.18 三改造（方案 §2.3，评审 P1-2 定版）：
+    /// 1. **private → internal**——WHY：profile 链扩展文件
+    ///    （StatusController+ProfileApply.swift）需驱动单槽通道下发链步（R2 P1-A
+    ///    internal widening 先例——LED extension 同款）。
+    /// 2. **successFeedback String → String?**——WHY：profile 链内 7-8 笔各自成功
+    ///    反馈 = 横幅串击（B3-4），链步传 nil 静默、**仅链尾一笔聚合反馈**
+    ///    （control.profile.applied 含方案名）；既有 14 处调用表达式
+    ///    String→String? 隐式提升零改动（编译期验证）。finishControl 内
+    ///    `if let feedback` 才 setSuccessFeedback——nil 静默单点。
+    /// 3. **新增 onFailure 钩子**（默认 nil，既有调用点零改动）——WHY：失败即停的
+    ///    「清链」必须有回调落点，只有 onSuccess 时失败链残留非 nil 状态，后续
+    ///    applyProfile 被 guard 永久静默吞掉（评审 P1-2）。finishControl **失败
+    ///    分支** classifyControlFailure 之后调用（成功分支不调）；横幅本体由
+    ///    classifyControlFailure 既有三态落位——onFailure 不重复落横幅。
+    func runControl(
         attempt: ControlAttempt,
         operation: @escaping @Sendable () throws -> DaemonStatus,
-        successFeedback: String,
+        successFeedback: String?,
+        onFailure: (@MainActor (DaemonClientError) -> Void)? = nil,
         onSuccess: (@MainActor (DaemonStatus) -> Void)? = nil
     ) {
         guard !busy else {
@@ -1019,6 +1059,7 @@ final class StatusController: ObservableObject {
                 attempt: attempt,
                 operation: operation,
                 successFeedback: successFeedback,
+                onFailure: onFailure,
                 onSuccess: onSuccess
             )
             return
@@ -1037,27 +1078,37 @@ final class StatusController: ObservableObject {
                 result = .failure(.daemonError(String(describing: error)))
             }
             await MainActor.run {
-                self?.finishControl(result: result, successFeedback: successFeedback, onSuccess: onSuccess)
+                self?.finishControl(
+                    result: result, successFeedback: successFeedback,
+                    onFailure: onFailure, onSuccess: onSuccess
+                )
             }
         }
     }
 
     /// 控制结果处理（主 actor）：成功 → ingest + 反馈 + lastAttempt 清除（§4.1 R1 P1-2）；失败三态走
     /// 公共分型 helper classifyControlFailure（v1.10 M2 抽取，落位 sink = 全局横幅——对既有控制零变化）。
+    /// 0.23.18：successFeedback nil = 静默（链步——反馈由链尾聚合，见 runControl 注 2）；
+    /// 失败分支末尾 onFailure?(error)（链清钩子，见 runControl 注 3）。
     private func finishControl(
         result: Result<DaemonStatus, DaemonClientError>,
-        successFeedback: String,
+        successFeedback: String?,
+        onFailure: (@MainActor (DaemonClientError) -> Void)?,
         onSuccess: (@MainActor (DaemonStatus) -> Void)?
     ) {
         busy = false
         switch result {
         case .success(let status):
             ingest(status: status)
-            setSuccessFeedback(successFeedback)
+            if let feedback = successFeedback {
+                setSuccessFeedback(feedback)
+            }
             lastAttempt = nil
             onSuccess?(status)
         case .failure(let error):
             classifyControlFailure(error) { self.controlFeedback = $0 }
+            // 失败钩子在分型落位之后（横幅本体不重复；链侧只清状态）。
+            onFailure?(error)
         }
         // 0.23.7 B2-3 单槽补发（fan finishFanApply 同构）：补发经**完整 runControl
         // 入口** ≡ 用户回包后手动直发一笔——lastAttempt 重记录 + controlFeedback
@@ -1072,6 +1123,7 @@ final class StatusController: ObservableObject {
                 attempt: queued.attempt,
                 operation: queued.operation,
                 successFeedback: queued.successFeedback,
+                onFailure: queued.onFailure,
                 onSuccess: queued.onSuccess
             )
         }
