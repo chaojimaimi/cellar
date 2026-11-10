@@ -95,6 +95,44 @@ public struct VersionMatrix: Equatable, Sendable {
     }
 }
 
+/// 版本序比较结果（`M.m.p[-后缀]` 三元组按数值序；后缀不参与序）。
+public enum VersionOrderResult: Equatable, Sendable {
+    /// lhs < rhs（语义化落后）。
+    case lower
+    /// 数值三元组相等（后缀差异不计——0.23.17 起 App-only 批 App/CLI 同基线常态）。
+    case equal
+    /// lhs > rhs（App-only 批常态：App 超前于 daemon 协议常量）。
+    case higher
+    /// 任一形态非法（非 M.m.p[-后缀] 三段整数）——调用方如实降级 info，不误报。
+    case unparseable
+}
+
+/// 版本序比较纯函数（0.23.17 §2.5）：解析 `M.m.p[-后缀]` 三元组按数值比较；
+/// 后缀不参与序（形态同即等——alpha/beta/rc 一律同序位，不引入 pre-release
+/// 语义——本仓版本串后缀恒 alpha，比较需求只在「三方是否同基线」）。
+public enum VersionOrder {
+    public static func compare(_ lhs: String, _ rhs: String) -> VersionOrderResult {
+        guard let left = parse(lhs), let right = parse(rhs) else { return .unparseable }
+        if left == right { return .equal }
+        return left.lexicographicallyPrecedes(right) ? .lower : .higher
+    }
+
+    /// "M.m.p[-后缀]" → [M, m, p]（首个 "-" 起为后缀剥除不参与序；任一段非纯
+    /// 十进制整数或段数 ≠ 3 → nil。前导零/正负号拒绝——形态严格性，String(value)
+    /// 回写比对承收）。
+    private static func parse(_ version: String) -> [Int]? {
+        let core = version.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        let parts = core.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3 else { return nil }
+        var triple: [Int] = []
+        for part in parts {
+            guard let value = Int(part), value >= 0, String(value) == part else { return nil }
+            triple.append(value)
+        }
+        return triple
+    }
+}
+
 // MARK: - 检查 11 放电能力
 
 /// 放电能力探测输入（检查 11；CHIE 值与后端协议同源，见 Discharge.adapterState）。
@@ -238,7 +276,12 @@ extension DoctorReportGenerator {
     }
 
     /// 检查 10：版本矩阵。daemon 缺席 → INFO（无从比对）；daemon≠CLI → FAIL（stale
-    /// 既有语义）；App≠其他 → WARN；App 缺席 → INFO；三方一致 → PASS。
+    /// 既有语义分支不动）；App 侧方向修正（0.23.17 §2.5——App-only 批起 App 版本
+    /// 必然超前于协议常量，原 `!=` 即 WARN 且文案反向）：VersionOrder 四分支——
+    /// App < CLI → WARN（滞后指引原语义保留）/ App > CLI → PASS（App 超前 =
+    /// App-only 批常态，无需重装守护进程）/ 相等 → PASS（三方一致原文案）/
+    /// 形态非法 → INFO（不误报）。文案形态钉死硬编码中文字面量（doctor 全部检查
+    /// 同形态先例；CellarCore 不可 import CellarL10n——不新增 l10n 键）。
     static func versionMatrixCheck(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard let matrix = inputs.versionMatrix else { return nil }
         guard let daemonVersion = matrix.daemonVersion else {
@@ -253,13 +296,25 @@ extension DoctorReportGenerator {
         guard let appVersion = matrix.appVersion else {
             return DoctorCheck(name: "版本矩阵", status: .info, detail: "App 未安装（/Applications/Cellar.app 缺席）")
         }
-        if appVersion != matrix.cliVersion {
+        switch VersionOrder.compare(appVersion, matrix.cliVersion) {
+        case .lower:
             return DoctorCheck(
                 name: "版本矩阵", status: .warn,
                 detail: "App \(appVersion) ≠ CLI/daemon \(matrix.cliVersion)——App 版本滞后，替换 /Applications/Cellar.app 后重启"
             )
+        case .higher:
+            return DoctorCheck(
+                name: "版本矩阵", status: .pass,
+                detail: "daemon 协议 \(matrix.cliVersion) · App \(appVersion)（App 超前——App-only 批常态，无需重装守护进程）"
+            )
+        case .equal:
+            return DoctorCheck(name: "版本矩阵", status: .pass, detail: "CLI/daemon/App 三方一致（\(matrix.cliVersion)）")
+        case .unparseable:
+            return DoctorCheck(
+                name: "版本矩阵", status: .info,
+                detail: "App 版本形态无法比对（\(appVersion)）"
+            )
         }
-        return DoctorCheck(name: "版本矩阵", status: .pass, detail: "CLI/daemon/App 三方一致（\(matrix.cliVersion)）")
     }
 
     /// 检查 11：放电能力（判定表见方案 §2.1，逐字；0.20 M1a 扩 27 控制面臂）：

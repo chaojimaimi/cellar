@@ -9,9 +9,10 @@ struct Cellar: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cellar",
         abstract: "macOS 电池管理工具（限充管理 + 诊断；App 菜单栏面板见项目主页）",
-        // WP2' L1：与 DaemonXPC.daemonVersion 同步——**随发版必更**（0.20.1 起
-        // 漏更停在 0.20.0，0.22.1 批修正；防 CLI 对 stale daemon 诊断混淆，评审
-        // F-3 同款核对依据）。
+        // WP2' L1：与 DaemonXPC.daemonVersion 同步——**随 daemonVersion 同步——
+        // 仅 daemon 行为/协议变更时 bump（0.23.17 起纪律显式化，App-only 批
+        // 不动）**（0.20.1 起漏更停在 0.20.0，0.22.1 批修正；防 CLI 对 stale
+        // daemon 诊断混淆，评审 F-3 同款核对依据）。
         version: "0.23.16-alpha",
         subcommands: [
             StatusCommand.self,

@@ -609,4 +609,108 @@ func runDoctorExtendedDomainScenarios() {
         check(topoffCheck?.name == "topoff 域" && topoffCheck?.status == .info,
               "医生-20", "检查 18 渲染 info（不抬退出码——展示/残留诊断定位）")
     }
+
+    // ---- 0.23.17 §2.5：检查 10 方向修正（VersionOrder 四分支改型）----
+
+    // 医生-21：VersionOrder 落后/相等（数值三元组序；后缀不参与序——形态同即等，
+    // 不引入 pre-release 语义）。
+    check(VersionOrder.compare("0.3.0-alpha", "0.3.1-alpha") == .lower,
+          "医生-21", "落后（minor 位）")
+    check(VersionOrder.compare("0.23.16-alpha", "0.23.17-alpha") == .lower,
+          "医生-21", "落后（patch 位）")
+    check(VersionOrder.compare("0.23.16", "0.23.16-alpha") == .equal
+              && VersionOrder.compare("0.23.16-alpha", "0.23.16-beta") == .equal,
+          "医生-21", "后缀不参与序（无后缀/异后缀同三元组皆 equal）")
+    check(VersionOrder.compare("1.2.3-alpha", "1.2.3-alpha") == .equal,
+          "医生-21", "全等")
+
+    // 医生-22：VersionOrder 超前（App-only 批常态形态——App 0.23.17 对协议 0.23.16）。
+    check(VersionOrder.compare("0.23.17-alpha", "0.23.16-alpha") == .higher,
+          "医生-22", "超前（patch 位）")
+    check(VersionOrder.compare("1.0.0-alpha", "0.99.99-alpha") == .higher,
+          "医生-22", "超前（major 位跨档）")
+    check(VersionOrder.compare("0.3.10-alpha", "0.3.9-alpha") == .higher,
+          "医生-22", "数值序非字典序（10 > 9）")
+
+    // 医生-23：VersionOrder 形态非法（unparseable 如实降级，不误报）。
+    check(VersionOrder.compare("", "0.3.1-alpha") == .unparseable, "医生-23", "空串")
+    check(VersionOrder.compare("abc", "0.3.1-alpha") == .unparseable, "医生-23", "非整数段")
+    check(VersionOrder.compare("1.2", "0.3.1-alpha") == .unparseable, "医生-23", "两段")
+    check(VersionOrder.compare("01.2.3", "0.3.1-alpha") == .unparseable, "医生-23", "前导零拒绝（形态严格性）")
+    check(VersionOrder.compare("0.3.1-alpha", "garbage") == .unparseable,
+          "医生-23", "rhs 非法同样 unparseable（对称）")
+    check(VersionOrder.compare("1.2.3-rc.1", "1.2.3") == .equal,
+          "医生-23", "多段后缀剥除（首个 - 起不参与序）")
+
+    // 医生-24：检查 10 四分支——App < CLI → WARN（滞后指引原语义保留）。
+    do {
+        let lagging = versionCheck(versionInputs(daemon: "0.3.1-alpha", app: "0.3.0-alpha"))
+        check(lagging.status == .warn && lagging.detail.contains("App 版本滞后")
+                  && lagging.detail.contains("替换 /Applications/Cellar.app"),
+              "医生-24", "App < CLI → WARN（滞后原语义——文案逐字保留）")
+    }
+
+    // 医生-25：App > CLI → PASS 新文案（App-only 批常态——daemon == CLI 同协议
+    // 版本、App marketing 版本超前；升级免重装验收形态）。
+    do {
+        let aheadInputs = DoctorInputs(
+            isRoot: true, smcConnected: true,
+            probe: .detected(name: "tahoe", keyNames: ["CHTE"]),
+            chargingEnabled: false, chargingError: nil,
+            snapshot: snapshot, snapshotError: nil,
+            conflict: ConflictScanResult(exact: [], generic: []),
+            daemonStatus: DaemonStatus(version: "0.23.16-alpha", mode: "active", upperLimit: 80, hysteresis: 2),
+            daemonProbeAttempted: true,
+            versionMatrix: VersionMatrix(
+                cliVersion: "0.23.16-alpha", daemonVersion: "0.23.16-alpha", appVersion: "0.23.17-alpha"
+            )
+        )
+        let ahead = versionCheck(aheadInputs)
+        check(ahead.status == .pass
+                  && ahead.detail.contains("daemon 协议 0.23.16-alpha · App 0.23.17-alpha")
+                  && ahead.detail.contains("App 超前——App-only 批常态，无需重装守护进程"),
+              "医生-25", "App > CLI → PASS（App 超前新文案——§2.5 逐字）")
+    }
+
+    // 医生-26：相等 → PASS 原文案 + 形态非法 → INFO。
+    do {
+        let aligned = versionCheck(versionInputs(daemon: "0.3.1-alpha", app: "0.3.1-alpha"))
+        check(aligned.status == .pass && aligned.detail.contains("三方一致"),
+              "医生-26", "相等 → PASS（三方一致原文案）")
+        let malformed = versionCheck(versionInputs(daemon: "0.3.1-alpha", app: "future"))
+        check(malformed.status == .info && malformed.detail.contains("App 版本形态无法比对（future）"),
+              "医生-26", "形态非法 → INFO（不误报——文案逐字）")
+    }
+
+    // 医生-源钉-1：daemonVersion 常量字面量反钉（本批 App-only 红线——防顺手
+    // bump；打包脚本 DAEMON_VERSION 行锚提取唯一匹配的同源前提）+ CLI 字面量 ==
+    // daemonVersion 同步钉 + 纪律段/0.23.16 条目纠错/CLI 注释纠偏在位（§2.6）。
+    do {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Sources/CellarCoreCheck
+            .deletingLastPathComponent()   // Sources
+            .deletingLastPathComponent()   // 仓库根
+        func source(_ relativePath: String) -> String {
+            let url = repoRoot.appendingPathComponent(relativePath)
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else {
+                check(false, "医生-源钉-1", "源文件读取失败：\(relativePath)（结构钉面依赖仓库布局）")
+                return ""
+            }
+            return text
+        }
+        let daemonXPCSrc = source("Sources/CellarCore/Daemon/DaemonXPC.swift")
+        let cliSrc = source("Sources/CellarCLI/Cellar.swift")
+        let constantLines = daemonXPCSrc.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("public static let daemonVersion = ") }
+        check(constantLines.count == 1 && constantLines[0].contains("\"0.23.16-alpha\""),
+              "医生-源钉-1", "daemonVersion 常量唯一且为 0.23.16-alpha（App-only 批零变更）")
+        check(cliSrc.contains("version: \"0.23.16-alpha\","),
+              "医生-源钉-1", "CLI version 字面量 == daemonVersion（同为协议版本口径——App-only 批不动）")
+        check(daemonXPCSrc.contains("0.23.17 起显式化") && daemonXPCSrc.contains("App-only 批不再 bump 常量"),
+              "医生-源钉-1", "版本史纪律段 + 0.23.16 条目纠错在位（§2.6 原文照落）")
+        check(!cliSrc.contains("随发版必更") && cliSrc.contains("仅 daemon 行为/协议变更时 bump"),
+              "医生-源钉-1", "CLI 注释纠偏在位（「随发版必更」退役——随 daemonVersion 同步新语义，字面量本体不动）")
+    }
 }

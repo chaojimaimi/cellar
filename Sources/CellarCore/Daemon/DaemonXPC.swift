@@ -346,6 +346,12 @@ public enum DaemonClientError: Error, Equatable, Sendable {
 /// 同步回传对 CLI 天然友好（评审 E-4：reply_sync 无超时参数，客户端自行信号量限时）。
 public enum DaemonXPC {
     public static let machServiceName = "com.cellar.daemon"
+    // 版本史纪律段（0.23.17 起显式化——此前 App-only 批随版本矩阵同步 bump 的
+    // 隐式惯例由此反转为明文规则）：daemonVersion 常量只在 **daemon 行为/协议变更**
+    // 时 bump；App-only 批只 bump App marketing 版本（Info.plist CFBundle* / 打包
+    // 脚本 VERSION），常量不动 → stale 门（version ≠ 常量即拦）保持绿，升级免重装。
+    // doctor 检查 10 同步方向修正（App 超前 = PASS）。CLI 侧 Cellar.swift 版本
+    // 字面量随 daemonVersion 同步（同为协议版本口径），App-only 批同样不动。
     // install 后与 getStatus 的 version 核对（评审 F-3）；与 App/CLI 版本串一致
     // ——daemon 行为有变更必须 bump（WP2' 扩 dischargeToLimit 协议 + ActionState
     // 扩展 + capabilities 字段，行为变更第三次破例）：0.3.0 已发布于 WP2 面板卸载
@@ -403,7 +409,7 @@ public enum DaemonXPC {
     // 0.23.12-alpha（2026-11-09）：B5-5 热修——仓库根推导 walk-up 找 Package.swift 标记（三级硬编码上溯对 SwiftPM 新布局 .build/out/Products 少算层级，真机实证）；daemon 本体逻辑零变化（helperSourceRoot 仅 CLI 消费），但 0.23.11 的 B5 daemon 变更随本次重装一并落地（0.23.11 安装被本 bug 挡下）→ **升级仍需重装守护进程**；wire 零 schema 变化。
     // 0.23.13-alpha（2026-11-09）：B6 XPC 客户端身份钉扎——变更命令门升级「euid==0 ∨（admin 组 ∧ 代码身份钉扎命中）」（App-route 下 daemon 从自身可执行路径自锚 App bundle + 消息绑定 SecCode 取证：路径精确相等承重墙 + 标识符 + 有效签名；CLI-route 无锚诚实降级维持 admin 门）+ App hardened runtime（堵注入钉扎宿主）+ getStatus 鉴权面零触及；**daemon + CLI 逻辑变更——升级需重装守护进程**；wire 零 schema 变化（钉扎为连接/鉴权层，命令集零新增）。
     // 0.23.14-alpha（2026-11-09）：0.23.13 真机回归热修——0.23.13 启用的 App hardened runtime 的库验证对「ad-hoc 主程序 + SPM 引入的 Sparkle.framework（官方签名不同 Team ID）」在 dyld 加载期直接拒绝（SIGABRT 秒死，崩溃报告 DYLD "different Team IDs" 实证）→ 回退 pbxproj 两行（R3 既定回滚路径）；钉扎-18 场景反转为缺席断言防再引入；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化。
-    // 0.23.16-alpha（2026-11-09）：B8 菜单栏图标快捷预设批——MenuBarExtra `.window` 场景整体退役 → AppKit NSStatusItem + NSPopover 迁移（图标右键快捷预设菜单 60/70/75/80/90/100 + 打开面板 + 退出；NSStatusItem 强引用单例宿主 + 左右键分流 + LimitPolicy 预检 → applyLimits 全链）+ StatusController 单例化 + B8-2 percent 补遗（PowerFlowDiagramNodes batteryPercentText 手拼残留收口）；**零 daemon 变更（App-only 批）——升级无需重装守护进程**；wire 零 schema 变化。
+    // 0.23.16-alpha（2026-11-09）：B8 菜单栏图标快捷预设批——MenuBarExtra `.window` 场景整体退役 → AppKit NSStatusItem + NSPopover 迁移（图标右键快捷预设菜单 60/70/75/80/90/100 + 打开面板 + 退出；NSStatusItem 强引用单例宿主 + 左右键分流 + LimitPolicy 预检 → applyLimits 全链）+ StatusController 单例化 + B8-2 percent 补遗（PowerFlowDiagramNodes batteryPercentText 手拼残留收口）；**零 daemon 变更（App-only 批）；但本批随版本矩阵 bump 了 daemonVersion 常量 → stale 门因此要求升级后重装守护进程方可下发控制指令（真机实证 0.23.16 App 对 0.23.15 daemon 变更命令被拦）——0.23.17 起纪律修正：App-only 批不再 bump 常量**；wire 零 schema 变化。
     // 0.23.15-alpha（2026-11-09）：B7 打磨无障碍批——a11y 标签全缺口收口（删除钮/滑杆九根/Stepper 两根标签 + 选中态 trait 三处 + 四曲线卡 a11y 值）+ WCAG AA 对比度钉表（tertiaryText 四主题实色化 + amberLight secondaryText + 警示横幅字色双口径）+ 字面量/单位格式统一（百分号 NumberFormatter 通路/单位 dashboard.unit.* key/°C 带空格统一/「--」占位换 common.nodata）+ 钉扎行落盘（resolveClientAnchor 三分支 persistLog + .notice——B6 冒烟缺憾闭环）+ 两登记警告清理（Theme.swift cacheLock nonisolated(unsafe) / FullChargeAutoRestoreDomain startAt）；**daemon 逻辑变更（B7-4 锚点解析落盘）——升级需重装守护进程**；wire 零 schema 变化。
     public static let daemonVersion = "0.23.16-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
