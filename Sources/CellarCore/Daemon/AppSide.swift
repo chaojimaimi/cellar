@@ -209,19 +209,31 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// decodeIfPresent 兼容为 nil。v1.11 windowBatteryIconVisible 退役：手写
     /// Codable 删字段——旧配置文件中的该键被新解码自动忽略，零迁移）。
     public var menuBarBatteryIconVisible: Bool?
+    /// 多 Profile 方案集（0.23.18 §2.2 第五写者；nil = 未迁移过——首启静默捕获
+    /// 后落库，ProfileController.maybeCaptureDefault）。读写全部经
+    /// AppConfigStore.shared.update()（actor RMW 单实例不可交错）。
+    public var profiles: [ProfilePayload]?
+    /// 活动方案 UX 意图镜像（**✓ 标注不以它为准**——✓ 由
+    /// ProfileModel.activeMatch 读回匹配派生，本地意图 ≠ daemon 现值时如实不
+    /// 点亮；本字段只承载「用户最后点了哪个」的 UI 意图）。
+    public var activeProfileID: String?
 
     public init(
         launchAtLogin: Bool = false,
         style: String? = nil,
         onboardingCompleted: Bool = false,
         menuBarPercentageVisible: Bool? = nil,
-        menuBarBatteryIconVisible: Bool? = nil
+        menuBarBatteryIconVisible: Bool? = nil,
+        profiles: [ProfilePayload]? = nil,
+        activeProfileID: String? = nil
     ) {
         self.launchAtLogin = launchAtLogin
         self.style = style
         self.onboardingCompleted = onboardingCompleted
         self.menuBarPercentageVisible = menuBarPercentageVisible
         self.menuBarBatteryIconVisible = menuBarBatteryIconVisible
+        self.profiles = profiles
+        self.activeProfileID = activeProfileID
     }
 
     public static let `default` = AppConfig()
@@ -235,6 +247,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case onboardingCompleted
         case menuBarPercentageVisible
         case menuBarBatteryIconVisible
+        case profiles
+        case activeProfileID
     }
 
     /// 自定义 decode：新键可缺席（旧文件兼容）——decodeIfPresent ?? false；
@@ -246,10 +260,13 @@ public struct AppConfig: Codable, Equatable, Sendable {
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
         menuBarPercentageVisible = try container.decodeIfPresent(Bool.self, forKey: .menuBarPercentageVisible)
         menuBarBatteryIconVisible = try container.decodeIfPresent(Bool.self, forKey: .menuBarBatteryIconVisible)
+        profiles = try container.decodeIfPresent([ProfilePayload].self, forKey: .profiles)
+        activeProfileID = try container.decodeIfPresent(String.self, forKey: .activeProfileID)
     }
 
     /// 自定义 encode：onboardingCompleted 恒写（前向兼容）；style / menuBarPercentageVisible
-    /// / menuBarBatteryIconVisible 沿用 encodeIfPresent（nil 缺席，与旧合成编码一致）。
+    /// / menuBarBatteryIconVisible / profiles / activeProfileID 沿用 encodeIfPresent
+    /// （nil 缺席，与旧合成编码一致——未迁移用户的配置文件零键增量）。
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(launchAtLogin, forKey: .launchAtLogin)
@@ -257,6 +274,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         try container.encode(onboardingCompleted, forKey: .onboardingCompleted)
         try container.encodeIfPresent(menuBarPercentageVisible, forKey: .menuBarPercentageVisible)
         try container.encodeIfPresent(menuBarBatteryIconVisible, forKey: .menuBarBatteryIconVisible)
+        try container.encodeIfPresent(profiles, forKey: .profiles)
+        try container.encodeIfPresent(activeProfileID, forKey: .activeProfileID)
     }
 }
 
