@@ -12,8 +12,27 @@ set -euo pipefail
 # 仓库根（脚本位于仓库根 Tools/，与 m0 脚本同层）。
 cd "$(dirname "$0")/.."
 
-# 版本号单变量：zip/dmg 文件名由此派生；发布时与 App/CLI/daemon 版本串保持一致。
-VERSION=0.23.16-alpha
+# 版本号单变量：zip/dmg 文件名由此派生；发布时与 App marketing 版本保持一致
+# （0.23.17 §2.7 双版本模型——daemon 协议版本常量另由 DAEMON_VERSION 承载，
+# App-only 批二者必然不同：App 0.23.17-alpha vs daemonVersion 0.23.16-alpha）。
+VERSION=0.23.17-alpha
+
+# daemon 协议版本（0.23.17 §2.7）：从 DaemonXPC.swift 行锚提取
+# `public static let daemonVersion = "…"` 字面量——0.23.17 起常量只在 daemon
+# 行为/协议变更时 bump（DaemonXPC.swift 版本史纪律段），二进制版本串 ≠ App
+# VERSION 为常态，原单变量断言必败 → 双版本适配。⚠️ 空哨兵初始化 + fail-closed：
+# 提取为空或非唯一匹配即中止（注释段不得引入第二匹配行——防静默错配）。
+DAEMON_VERSION=""
+DAEMON_VERSION_MATCHES="$(grep -cE '^[[:space:]]*public static let daemonVersion = "[^"]*"[[:space:]]*$' Sources/CellarCore/Daemon/DaemonXPC.swift || true)"
+if [ "$DAEMON_VERSION_MATCHES" != "1" ]; then
+    echo "❌ daemonVersion 提取匹配行数 ${DAEMON_VERSION_MATCHES:-0} ≠ 1（常量行漂移或注释段引入第二匹配行）——中止打包" >&2
+    exit 1
+fi
+DAEMON_VERSION="$(sed -n 's/^[[:space:]]*public static let daemonVersion = "\(.*\)"[[:space:]]*$/\1/p' Sources/CellarCore/Daemon/DaemonXPC.swift)"
+if [ -z "$DAEMON_VERSION" ]; then
+    echo "❌ daemonVersion 提取为空——中止打包（fail-closed，不静默错配）" >&2
+    exit 1
+fi
 
 PROJECT="App/CellarApp.xcodeproj"
 SCHEME="CellarApp"
@@ -40,11 +59,13 @@ echo "==> 1/8 SPM release 同步重建（CLI + daemon）"
 # xcodebuild 只经 App 的脚本相重建 daemon，CLI 会静默停在上一版——0.18.6 与
 # 0.19.3 两次踩坑：install 的版本核对拿 CLI 自身常量当期望值，半旧 CLI 会把它
 # 误报成「stale daemon？」，且异常级联成「daemon 启动校验失败」。此处统一重建
-# 两个 SPM 产物并断言版本串，把偏斜挡在打包之前。
+# 两个 SPM 产物并断言版本串，把偏斜挡在打包之前。0.23.17 §2.7：断言查
+# DAEMON_VERSION（协议版本常量——CLI version 字面量随 daemonVersion 同步，
+# 二进制内含同一串）；App 断言（步 2）照旧查 VERSION。
 swift build -c release
 for product in cellar cellar-daemon; do
-    if ! grep -aqF -- "$VERSION" ".build/release/$product"; then
-        echo "❌ .build/release/$product 版本串不含 ${VERSION}（半旧构建）——中止打包"
+    if ! grep -aqF -- "$DAEMON_VERSION" ".build/release/$product"; then
+        echo "❌ .build/release/$product 版本串不含 ${DAEMON_VERSION}（daemon 协议版本，半旧构建）——中止打包"
         exit 1
     fi
 done
