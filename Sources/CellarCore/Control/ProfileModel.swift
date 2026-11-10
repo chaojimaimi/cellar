@@ -329,21 +329,21 @@ public enum ProfileModel {
         }
     }
 
-    /// 收敛守卫（链推进双保险，全值输入输出）：
-    /// - **守卫二**：executed ≥ applyStepCaseCount = 步型全发仍未收敛 = 振荡 →
-    ///   中止（nextStep == nil 的发起前判定语境仅查本项）；
+    /// 收敛守卫（链推进单点保险，全值输入输出）：
     /// - **守卫一**：lastStep == nextStep = 紧邻同型步重推导 = 上一发步后读回未
-    ///   收敛（日程 JSON 归一化漂移等）→ 中止。
+    ///   收敛（日程 JSON 归一化漂移等）→ 中止；
+    /// - **守卫二**：executed ≥ applyStepCaseCount = 步型全发仍未收敛 = 振荡 →
+    ///   中止。
+    ///
+    /// 评审收口 P1（0.23.18 全审）：原「nextStep == nil 仅查守卫二」双语义入口
+    /// 随编排器链尾判定前置消除（唯一调用点 plan.first 判空先行 → nextStep 恒
+    /// 非 nil），签名收窄为非可选 nextStep 单语义——双参 Optional 形态退役。
     public static func chainGuardShouldAbort(
         lastStep: ProfileApplyStep?,
-        nextStep: ProfileApplyStep?,
+        nextStep: ProfileApplyStep,
         executed: Int
     ) -> Bool {
-        if executed >= applyStepCaseCount(of: witness) { return true }
-        // nextStep == nil（链尾/发起前语境）不查守卫一——lastStep 与 nil 的相等
-        // 无语义（nil lastStep = 链首，无从「紧邻同型」）。
-        guard let nextStep else { return false }
-        return lastStep == nextStep
+        lastStep == nextStep || executed >= applyStepCaseCount(of: witness)
     }
 
     // MARK: - 比较域（applyPlan diff-skip 与 activeMatch 单源——评审 P3 实现纪律）

@@ -115,6 +115,11 @@ struct ProfileSectionView: View {
                 // 三门——busy/actionActive/status nil 任一门开启即不动作，mode
                 // disabled 放行；编排器入口三门为第二道防线）。
                 .onTapGesture { switchTapped(profile) }
+                // 行禁用视觉（评审收口 P3）：三门命中行降低透明度——照
+                // ControlSectionView busy 置灰先例形态（行点击无自带 disabled 视觉，
+                // 静默无反馈补全 §2.5 禁用矩阵视觉语义）；CRUD 三钮功能保持（纯
+                // App 侧配置不设 busy 门——仅随行同降透明度）。
+                .opacity(switchDisabled ? 0.45 : 1)
                 if deletePendingID == profile.id {
                     deleteConfirmBlock(profile)
                 }
@@ -122,13 +127,19 @@ struct ProfileSectionView: View {
         }
     }
 
+    /// 切换禁用矩阵（§2.3 三门共源单点）：行点击门与行透明度视觉共用本判定
+    /// （评审收口 P3——视觉/功能单一真相，防两处判定漂移）。
+    private var switchDisabled: Bool {
+        statusController.daemonStatus == nil
+            || statusController.busy
+            || statusController.action != nil
+    }
+
     /// 切换（行点击唯一入口）：三门禁用矩阵（§2.3——busy ∨ actionActive ∨
     /// status nil 拒绝，不弹横幅不静默上屏——菜单/管理页禁用矩阵为第一道，编排器
     /// 入口三门 reportLocalRejection 为第二道）。
     private func switchTapped(_ profile: ProfilePayload) {
-        guard statusController.daemonStatus != nil,
-              !statusController.busy,
-              statusController.action == nil else { return }
+        guard !switchDisabled else { return }
         if let current = statusController.daemonStatus {
             profileController.switchTo(profile, current: current)
         }

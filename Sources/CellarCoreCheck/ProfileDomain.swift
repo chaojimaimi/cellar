@@ -319,7 +319,9 @@ func runProfileDomainScenarios() {
     check(ProfileModel.isValidName("  " + String(repeating: "甲", count: 40)) == true,
           "方案-8", "trim 后恰 40 字符合法（计数对 trim 后生效）")
 
-    // ---- 方案-10：chainGuardShouldAbort 向量表（commit 2 源码面配套直测）----
+    // ---- 方案-10：chainGuardShouldAbort 向量表（评审收口 P1 后单语义形态——
+    // nextStep 非可选：lastStep == nextStep ∨ executed ≥ 步型总数；「nextStep
+    // nil 仅查守卫二」双语义入口随编排器链尾判定前置消除）----
 
     let steps: [ProfileApplyStep] = [
         .setLimits(upperLimit: 80, hysteresis: 2), .setFan(FanWire()), .setThermal(ThermalWire()),
@@ -343,16 +345,15 @@ func runProfileDomainScenarios() {
     check(ProfileModel.chainGuardShouldAbort(lastStep: .setLimits(upperLimit: 80, hysteresis: 2),
                                              nextStep: .setFan(FanWire()),
                                              executed: 8),
-          "方案-10", "守卫二边界：executed 8 ≥ 8 → 中止（步型全发仍未收敛 = 振荡）")
-    check(!ProfileModel.chainGuardShouldAbort(lastStep: nil, nextStep: nil, executed: 0)
-              && !ProfileModel.chainGuardShouldAbort(lastStep: .disable, nextStep: nil, executed: 1),
-          "方案-10", "nextStep nil（发起前判定语境）仅查守卫二：executed 0/1 → 放行")
-    check(ProfileModel.chainGuardShouldAbort(lastStep: nil, nextStep: nil, executed: 8),
-          "方案-10", "nextStep nil ∧ executed ≥ 8 → 中止（守卫二单查语义）")
+          "方案-10", "守卫二边界：executed 8 ≥ 8 → 中止（步型全发仍未收敛 = 振荡；非紧邻同型形态表达——守卫二独立语义）")
+    check(ProfileModel.chainGuardShouldAbort(lastStep: nil,
+                                             nextStep: .setFan(FanWire()),
+                                             executed: 8),
+          "方案-10", "守卫二独立语义（lastStep nil 形态）：executed ≥ 8 → 中止")
     check(!ProfileModel.chainGuardShouldAbort(lastStep: nil,
                                               nextStep: .setLimits(upperLimit: 80, hysteresis: 2),
                                               executed: 0),
-          "方案-10", "链首发起（lastStep nil / nextStep 首步）→ 放行")
+          "方案-10", "链首发起（lastStep nil / nextStep 首步 / executed 0）→ 放行")
 
     // ---- 方案-11：applyPlan 空 ⇔ activeMatch 命中互证（同一比较域结构性证明——
     // 评审 P3；wire 契约域 mode ∈ "active"|"disabled" 上成立，比较 helper 单源）----
@@ -446,14 +447,12 @@ func runProfileDomainScenarios() {
                   ?? advanceSegment.startIndex
                   < advanceSegment.range(of: "chainGuardShouldAbort")?.lowerBound ?? advanceSegment.endIndex,
           "源钉-3", "链存续守卫入口判定（guard let chain 先于一切链状态访问——评审 P1 时序防御）")
-    check(advanceSegment.contains("nextStep: nil, executed: chain.executed")
-              && advanceSegment.range(of: "nextStep: nil")?.lowerBound
-                  ?? advanceSegment.startIndex
-                  < advanceSegment.range(of: "ProfileModel.applyPlan")?.lowerBound ?? advanceSegment.endIndex,
-          "源钉-3", "收敛守卫二发起前判定（nextStep nil 形态先于 applyPlan 重推导——严禁 defer 出口，评审 P1）")
     check(advanceSegment.contains("ProfileModel.applyPlan(profile: chain.payload, current: status)")
-              && advanceSegment.contains("ProfileModel.chainGuardShouldAbort("),
-          "源钉-3", "每步重推导（applyPlan 在 advance 内——评审 P2-2）+ 守卫经 ProfileModel.chainGuardShouldAbort 纯函数")
+              && advanceSegment.contains("ProfileModel.chainGuardShouldAbort(")
+              && advanceSegment.range(of: "ProfileModel.applyPlan")?.lowerBound
+                  ?? advanceSegment.startIndex
+                  < advanceSegment.range(of: "ProfileModel.chainGuardShouldAbort")?.lowerBound ?? advanceSegment.endIndex,
+          "源钉-3", "每步重推导（applyPlan 在 advance 内——评审 P2-2）+ 守卫经 ProfileModel.chainGuardShouldAbort 纯函数 + 守卫单点在重推导之后（评审收口 P1 次序）")
     check(profileApplySrc.contains("case .setLimits(let upperLimit, let hysteresis):")
               && profileApplySrc.contains("case .setFan(let wire):")
               && profileApplySrc.contains("case .setThermal(let wire):")
@@ -659,4 +658,43 @@ func runProfileDomainScenarios() {
               && statsTrendSrc.contains("String(format: \"%04d-%02d-%02d\", year, month, day)")
               && statsTrendSrc.components(separatedBy: "String(format: \"%04d-%02d-%02d\", year, month, day)").count - 1 == 2,
           "源钉-5", "StatsTrend DateFormatter 退役（dayString/dayStringFromOrdinal 双函数 dateComponents 派生恰二处——输出逐字节等价，统计40-63 既有场景即回归门）")
+
+    // ---- 源钉-8：评审收口（全审 1 P1 + 1 P2 + 2 P3 修正面源钉）----
+
+    // P1：链尾判定前置——plan.first 判空先于守卫判定（防「守卫二先行误杀满序链
+    // 收敛尾」回归）；nextStep: nil 双语义入口退役反钉。
+    let profileApplySrc2 = source("App/CellarApp/StatusController+ProfileApply.swift")
+    let advanceSegment2 = profileApplySrc2.components(
+        separatedBy: "private func advanceProfileChain").dropFirst().first ?? ""
+    let planFirstRange = advanceSegment2.range(of: "guard let step = plan.first else {")
+    let finishRange = advanceSegment2.range(of: "finishProfileChain()")
+    let guardRange = advanceSegment2.range(of: "ProfileModel.chainGuardShouldAbort(")
+    check(planFirstRange != nil && finishRange != nil && guardRange != nil
+              && planFirstRange!.lowerBound < guardRange!.lowerBound
+              && finishRange!.lowerBound < guardRange!.lowerBound,
+          "源钉-8", "P1 链尾判定前置（plan.first 判空 + finishProfileChain 先于收敛守卫——八步满序链 executed=8 回包经链尾 finish 不被守卫二误杀；守卫单点仍发步前）")
+    check(!advanceSegment2.contains("nextStep: nil, executed:")
+              && profileApplySrc2.contains("nextStep: step, executed: chain.executed"),
+          "源钉-8", "P1 nextStep: nil 双语义入口退役反钉（唯一调用形态 nextStep: step——chainGuardShouldAbort 签名收窄非可选单语义）")
+    let profileModelSrc = source("Sources/CellarCore/Control/ProfileModel.swift")
+    check(profileModelSrc.contains("nextStep: ProfileApplyStep,")
+              && !profileModelSrc.contains("nextStep: ProfileApplyStep?,\n        executed: Int\n    ) -> Bool {\n        if executed >="),
+          "源钉-8", "P1 纯函数签名收窄（nextStep 非可选单语义——lastStep == nextStep ∨ executed ≥ applyStepCaseCount）")
+    // P2：dayString 历法恒公历（非公历系统历法用户日键分裂防线）。
+    check(statsTrendSrc.contains("var gregorian = Calendar(identifier: .gregorian)")
+              && statsTrendSrc.contains("gregorian.timeZone = calendar.timeZone")
+              && statsTrendSrc.components(separatedBy: "Calendar(identifier: .gregorian)").count - 1 == 2,
+          "源钉-8", "P2 dayString 历法恒公历（传入日历仅取时区——佛教历/和历系统用户输出与旧 DateFormatter(en_US_POSIX) 逐字节等价恢复；.gregorian 恰二处：dayString + utcCalendar）")
+    // P2 行为面：非公历传入日历注入直测——输出仍公历形态（等价性非仅源钉）。
+    var buddhist = Calendar(identifier: .buddhist)
+    buddhist.timeZone = TimeZone(identifier: "Asia/Bangkok")!
+    var gregorianProbe = Calendar(identifier: .gregorian)
+    gregorianProbe.timeZone = TimeZone(identifier: "Asia/Bangkok")!
+    let probeDate = gregorianProbe.date(from: DateComponents(year: 2026, month: 11, day: 11, hour: 12))!
+    check(DailyHealthRollup.dayString(for: probeDate, calendar: buddhist) == "2026-11-11",
+          "源钉-8", "P2 行为面：佛教历传入日历注入 → 输出仍公历 2026-11-11（2570 形态根除——旧 DateFormatter(en_US_POSIX) 等价恢复直测）")
+    // P3：管理页行禁用视觉（三门命中行透明度——CRUD 三钮功能保持）。
+    check(sectionViewSrc.contains("switchDisabled")
+              && sectionViewSrc.contains(".opacity(switchDisabled ?"),
+          "源钉-8", "P3 管理页行禁用视觉（switchDisabled 三门共源 + 行条件透明度——busy 置灰先例形态，CRUD 三钮不动作保持）")
 }

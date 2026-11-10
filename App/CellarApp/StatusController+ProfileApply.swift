@@ -55,32 +55,37 @@ extension StatusController {
 
     // MARK: - 链推进（每步用最新读回重推导剩余计划——评审 P2-2 定版）
 
-    /// 推进一步：链存续守卫 → 守卫二发起前判定 → 重推导计划 → 守卫一 → 发步。
+    /// 推进一步：链存续守卫 → 重推导计划 → **链尾判定前置** → 收敛守卫单点 → 发步。
+    ///
+    /// 评审收口 P1（0.23.18 全审）次序修正：原实现守卫二（executed ≥ 步型总数）
+    /// 在 plan 重推导之前以 nextStep: nil 形态独立前置——八步满序链（disabled
+    /// 方案七旋钮全差异）第 8 步成功回包后 advance #9 时 executed=8，守卫二把
+    /// 「全旋钮已收敛、计划已空」误判为振荡中止 → 已生效整链弹「未收敛」假失败
+    /// + 跳过 applied 反馈与意图更新。修正：**plan 判空（链尾 finish）先于守卫**
+    /// ，守卫合并至 plan.first 之后的单点（守卫语义不变：仍在发步前——链存续
+    /// 守卫与 defer 时序防御不回退）；chainGuardShouldAbort 随之收窄单语义
+    /// （nextStep 非可选，「nextStep nil 仅查守卫二」双语义入口消除）。
     private func advanceProfileChain(from status: DaemonStatus) {
         // 链存续守卫（评审 P1 时序防御）：在飞步回包时链可能已被中止/失败清链——
         // 空转 return，杜绝强解包崩溃路径。**此守卫必须先于一切链状态访问**。
         guard let chain = profileChain else { return }
-        // 收敛守卫二（**入口发起前判定**——评审 P1：上限检查严禁放 defer 出口，
-        // 否则「已发起步 + defer 清链」组合下在飞回包续链 = 崩溃路径）：executed
-        // ≥ applyStepCaseCount = 步型全发仍未收敛 = 振荡中止。
-        guard !ProfileModel.chainGuardShouldAbort(
-            lastStep: chain.lastStep, nextStep: nil, executed: chain.executed
-        ) else {
-            abortChain()
-            return
-        }
         // 每步重推导（评审 P2-2 定版，消除链首陈旧 diff 输入）：以最新读回重算
         // 剩余计划——已生效旋钮自动跳过（diff-skip 廉价），整链重做 = 再点一次
         // 方案。计划空 ⇔ 全旋钮读回匹配（与 activeMatch 共用比较 helper——评审
         // P3 实现纪律钉死 + 方案-11 场景互证）。
         let plan = ProfileModel.applyPlan(profile: chain.payload, current: status)
+        // 链尾判定前置（评审收口 P1）：计划空 → 聚合反馈 + 意图更新 + 清链——
+        // **必须先于收敛守卫**（见函数头注：守卫二先行会误杀满序链的收敛尾）。
         guard let step = plan.first else {
             finishProfileChain()
             return
         }
-        // 收敛守卫一：紧邻同型步重推导 = daemon 读回未收敛（如日程 JSON 归一化
-        // 漂移）→ 中止上「未收敛」拒绝（R16；守卫纯函数在 CellarCore 可向量直测
-        // ——ProfileDomain 方案-10）。
+        // 收敛守卫（单点，**发步前**——评审 P1：上限检查严禁放 defer 出口，否则
+        // 「已发起步 + defer 清链」组合下在飞回包续链 = 崩溃路径；R16——守卫纯
+        // 函数在 CellarCore 可向量直测，ProfileDomain 方案-10）：守卫一 lastStep
+        // == nextStep = 紧邻同型步重推导 = daemon 读回未收敛（如日程 JSON 归一化
+        // 漂移）中止 + 守卫二 executed ≥ applyStepCaseCount = 步型全发仍未收敛 =
+        // 振荡中止。此处 nextStep 恒非 nil（plan.first 判空先行）。
         if ProfileModel.chainGuardShouldAbort(
             lastStep: chain.lastStep, nextStep: step, executed: chain.executed
         ) {

@@ -51,12 +51,18 @@ public enum DailyHealthRollup {
 
     /// 本地日串投影（'YYYY-MM-DD'）：dateComponents 派生（0.23.18 随批 3——
     /// DateFormatter 热路径退役：滚动路径每样本一次 87µs、迁移事务内 ~3.7s 放大
-    /// → 组件投影零 formatter 构造；输出与旧 en_US_POSIX "yyyy-MM-dd" 版逐字节
-    /// 等价——两位补零 + 4 位年由 %04d-%02d-%02d 承接，时区语义由 calendar 承接，
-    /// startOfDay 归一不再必要〔组件投影直达所属日〕）。DST 安全日界（23/25 小时
-    /// 日）由 Calendar 派生承接——**禁 86400 乘法**（评审 P2 修正）。
+    /// → 组件投影零 formatter 构造）。**历法恒公历（评审收口 P2）**：传入日历仅
+    /// 取其时区，组件投影改经固定 `.gregorian` 日历——若沿用传入日历 identifier，
+    /// 佛教历/和历等非公历系统历法用户会输出 2570-01-15 形态（旧
+    /// DateFormatter(en_US_POSIX) 恒公历），daily_health 日键随系统历法换键制
+    /// 分裂；公历 + 传入时区后与非公历用户旧版输出逐字节等价恢复。两位补零 +
+    /// 4 位年由 %04d-%02d-%02d 承接；startOfDay 归一不再必要〔组件投影直达所属
+    /// 日〕。DST 安全日界（23/25 小时日）由 Calendar 派生承接——**禁 86400 乘法**
+    /// （评审 P2 修正）。
     public static func dayString(for date: Date, calendar: Calendar = .current) -> String {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        let components = gregorian.dateComponents([.year, .month, .day], from: date)
         guard let year = components.year, let month = components.month, let day = components.day else {
             return ""
         }
