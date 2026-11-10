@@ -187,11 +187,13 @@ final class DaemonInstaller: ObservableObject {
     }
 
     func uninstall() {
+        NSLog("B8-DEBUG uninstall() entry, busy=\(busy)")
         guard !busy else { return }
         busy = true
         lastError = nil
         Task.detached { [weak self] in
             let outcome = Self.unregisterBlocking()
+            NSLog("B8-DEBUG unregisterBlocking done, outcome=\(outcome)")
             await MainActor.run { self?.handleUnregister(outcome) }
         }
     }
@@ -219,6 +221,7 @@ final class DaemonInstaller: ObservableObject {
     }
 
     private func handleUnregister(_ outcome: Result<Void, Error>) {
+        NSLog("B8-DEBUG handleUnregister, outcome=\(outcome)")
         busy = false
         switch outcome {
         case .success:

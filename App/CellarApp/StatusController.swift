@@ -375,6 +375,7 @@ final class StatusController: ObservableObject {
     /// 轮询**——XPC 应答即真相：手工路线 daemon 运行中就如实显示运行中；daemon 真
     /// 消失时 refreshOnce 失败自行驱动 connection/.unreachable 或 .unknown。
     func registrationChanged(_ registration: RegistrationStatus) {
+        NSLog("B8-DEBUG StatusController.registrationChanged \(registration)")
         lastKnownRegistration = registration
         guard registration != .enabled else { return }
         // 离开 .enabled：通知基线/失败横幅复位（重注册后首样本语义；防残留误导）。

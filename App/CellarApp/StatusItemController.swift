@@ -34,6 +34,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 依赖组装标记（wire 幂等守卫——组装锚点见 DaemonInstaller didSet 自转发 +
     /// AppDelegate didFinishLaunching 双触发注记）。
     private var wired = false
+    /// 右键菜单收起后的左键事件吞除窗（真机实证毛刺：menuDidClose 复位 menu=nil
+    /// 后，performClick 返回路径上残留的 leftMouseUp 会再触发一次 statusItemClicked
+    /// → 面板意外弹开。窗内左键一律吞掉；窗宽 0.35s 覆盖事件残留期）。
+    private var swallowLeftClickUntil = Date.distantPast
     /// 图标内容双源订阅（daemonStatus 1Hz 快照 + 百分比显隐——内容变化即重挂
     /// button.image/title）。低电量阈值同源引用（MenuBarIconLabel 既有常量）。
     private var iconSink: AnyCancellable?
@@ -66,6 +70,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 图标 + 面板内容装配（幂等）。六依赖全部 static shared 单例静态可达
     ///（StatusController.shared + 五控制器同批单例化），装配无时序前提。
     func wire() {
+        NSLog("B8-DEBUG wire fired, wired=\(wired)")
         guard !wired else { return }
         wired = true
         installIconContent()
@@ -163,6 +168,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - 左右键分流
 
     @objc private func statusItemClicked() {
+        // 残留左键吞除（毛刺修复）：右键菜单收起窗内的左键事件一律吞掉。
+        if NSApp.currentEvent?.type == .leftMouseUp, Date() < swallowLeftClickUntil {
+            NSLog("B8-DEBUG swallow residual left click")
+            return
+        }
         guard let button = statusItem.button else { return }
         // 溢出区（«）形态：系统展开后点击仍走本 action（spike 实证——溢出项点击
         // = 直接触发 item 行为，无需特殊处理）。
@@ -189,6 +199,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let menu = buildQuickMenu()   // 弹出即重建——防状态陈旧（§2.2 动态刷新条款）
         menu.delegate = self
         statusItem.menu = menu
+        swallowLeftClickUntil = Date().addingTimeInterval(0.35)   // 残留左键吞除窗（见属性注记）
         button.performClick(nil)
     }
 
@@ -256,6 +267,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// → applyLimits 全链（runControl 单槽队列承载连点）。hysteresis 取 daemon
     /// 真相（面板预设同语义）；`?? 2` 兜底在整区禁用门下不可达，防御性保留（§2.2）。
     @objc private func applyPreset(_ sender: NSMenuItem) {
+        NSLog("B8-DEBUG applyPreset fired, tag=\(sender.tag)")
         let controller = StatusController.shared
         let hysteresis = controller.daemonStatus?.hysteresis ?? 2
         do {
@@ -284,6 +296,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 菜单收起复位：statusItem.menu = nil——左键 togglePopover 通路恢复
     ///（menu 态残留会吞点击）。此为右键形态的生命周期闭环点。
     func menuDidClose(_ menu: NSMenu) {
+        NSLog("B8-DEBUG menuDidClose")
         statusItem.menu = nil
     }
 }

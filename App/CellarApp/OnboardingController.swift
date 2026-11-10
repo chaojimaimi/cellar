@@ -69,6 +69,7 @@ final class OnboardingController: ObservableObject {
     /// 注册态变化入口（App 组合根 onChange + 面板 onAppear，幂等）：
     /// 收尾规则（§2.1 P0-1）+ 安装步接续（授权完成转 enabled → step 4 + 通知授权）。
     func registrationChanged(_ registration: RegistrationStatus) {
+        NSLog("B8-DEBUG OnboardingController.registrationChanged \(registration)")
         guard completedLoaded else { return }
         // 收尾规则：已 enabled 且无暂存步 → 静默补写完成标志（现机升级 / CLI
         // 安装用户不触发引导；同时消除「老用户卸载 daemon 后被强制引导」）。
