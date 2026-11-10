@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.17-alpha]
+
+> 背景：B1-B8 修复路标收官后产品增量第一批（调研 docs/plans/research-health-trend-profiles.md 三线证据：数据链/策略通路行号级调研 + 本机 42,017 行真实数据体检；五个设计决策点全按建议锁定）。方案 plan-reviewer 三轮审至 PASS（首轮 P0 = CFBundleVersion 派生算术错误 23017→如实 2317 且与本机调试键同键碰撞分析反转；二轮 = 图表扩档中段洞 105-179 天标签溢出 + 真机迁移验收被 dev 构建先行消费）；code-reviewer 落地前全审 **APPROVE WITH NITS**（0 P0 / 0 P1 / 1 P2 登记 / 4 P3 随批收 3）。**App-only 批——daemon 行为/协议零变更，daemonVersion 常量不动：升级零重装**（本批起纪律显式化，见 Changed）。门禁：969→**1000 场景全绿**（+31：统计40-63 / 医生-21..26 / 医生-源钉-1）、golden 失败集合 384=384、l10n 482→491（+9 `stats.trend.*`）、coverage 92.07%、打包产物启动实证、三断言。登记项：聚合核 formatter 热路径开销与 l10n 文案内嵌门槛常量双源随 0.23.18 收口；图表标签 ≥421 天地平线归 0.23.18（≥420→60 天步 + 扫描域扩 1-800）。
+
+### Added
+
+- **统计页电池健康趋势卡**：每日健康下采样地基（stats.sqlite **schema v3** 新增 `daily_health` 表——当日循环数最大值 / 健康度日最大值（nominal/design 厘百分点，MaxCapacity 键恒 100 失真故不参与）/ 当日上限众数钩子 / 样本数；既有 samples 一次性回填，保留窗 35 天之外的历史从此积累）+ 周桶中位数趋势带可视化 + **循环数轴阈值外推**（按近期速率预测到达 Apple 1000 循环阈值的时间）。**诚实边界（调研信噪比实证）**：健康度瞬时值日内摆动 ±4.5pp 而真实衰减为月级 -0.1~0.5pp——数字预测仅开放给单调的循环数轴；健康度序列以平滑趋势带呈现、不做斜率数字宣称。三态门槛：<14 天不渲染、14-89 天趋势带（副标题「N/90 天」积累提示）、≥90 天且 ≥13 完整周桶开数字外推；健康读数恒缺席机型不渲染零数据空卡。旧统计（电量/温度/功耗/容量四卡）不受影响；本机 35 天历史迁移后即可见趋势带。
+
+### Changed
+
+- **daemonVersion 纪律显式化——升级零重装（体验修正）**：`daemonVersion` 常量从此只在 **daemon 行为/协议变更**时 bump；App-only 批只 bump App marketing 版本（Info.plist / 打包脚本）。stale 门（版本握手）保持绿 → **升级 App 后控制指令立即可用，无需重装守护进程**。教训入纪律：0.23.16（App-only 批）误 bump 常量，升级用户控制指令全被 stale 门拦截、被迫面板重装。配套：doctor「版本矩阵」检查方向修正（App 版本超前于 daemon 协议版本 = PASS 如实展示「daemon 协议 X · App Y」，不再误 WARN「App 版本滞后」）；0.23.16 历史注释纠错（原「升级无需重装」结论与 stale 门事实相悖，如实改记）。CLI --version 与 daemon 协议版本同口径（0.23.16-alpha），App 版本（0.23.17-alpha）自此分轨。
+
 ## [0.23.16-alpha]
 
 > 背景：修复路标 B8「菜单栏图标快捷预设批」——深审 2026-11-07 产品侧最大缺口收口（深审 P2 全部闭账）。方案经 plan-reviewer 两轮审核至 PASS（方案 A「contextMenu 挂 label」真机证伪——macOS 27 右键不呈现，方案 B（NSStatusItem 原生分流）定版）；落地期真机三连败收口（wire 锚点死代码 / 图标渲染管道 / 退出误杀，各随修随验）。959→969 场景全绿（+10：菜单预设-1..7 / 菜单源钉-1..3）；l10n 479→482 双语同步（+3 key：panel.menu.presets/capPercent/openPanel）；golden 失败集合 384=384 逐条零差异；coverage 92.07%。**App-only 批——daemon 本体逻辑零变化**，但四方版本联动使版本握手门生效：升级后控制指令需先在面板重装守护进程（只读监测不受影响）。**⚠️ 升级注意（0.23.16 真机实证）**：Sparkle/dmg 覆盖安装后守护进程二进制 cdhash 变化，BTM 锚定记录随之失效——若面板出现「BTM 记录损坏」横幅（守护进程反复 spawn 失败 / EX_CONFIG），按横幅指引在面板卸载→重新安装即可，无需 sfltool resetbtm（换锚重注册即愈，真机实证）。
