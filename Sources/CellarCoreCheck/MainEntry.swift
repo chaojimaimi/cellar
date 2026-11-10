@@ -364,6 +364,12 @@ struct Main {
         // OR REPLACE/NULL 容错/桶末态折叠——StatsStore + StatsBucketing 直测，
         // DB 全临时目录注入）。
         await runStatsDomainScenarios()
+        // 0.23.17 §2.1/§2.3：健康趋势外推批场景域（方案 §4 统计40+：schema v3
+        // daily_health 迁移三态/回填对账/dayRow 幂等/weeklyBands·cycleProjection·
+        // presentationState 向量表/ChartAxisStride 1-400 扫描 + upsert 滚动写入/
+        // 未来行过滤/localMidnight 出口——StatsTrendDomain，场景域每域一文件
+        // 注册先例；StatsDomain 已超 800 行硬上限）。
+        await runStatsTrendDomainScenarios()
         // Phase 5 v1.7 M1：原生限充检测器场景域（方案 §2.2 清单：平层归档解析/
         // CF$UID 包装/策略级异常丢弃/blockingPolicies/manualSocLimit 双口径/
         // detectorError 三态形态/位常量钉死/notChargingReason 提取——纯 Data

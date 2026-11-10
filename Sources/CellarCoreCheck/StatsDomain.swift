@@ -8,7 +8,7 @@
 //        isCharging 翻转，与 Amperage 自身符号无关——「Amperage 符号未定」纪律）
 // 统计5  retention prune（>35 天剔除、边界恰在 cutoff 保留）
 // 统计6  损坏重建（写坏文件 + 脏 sidecar → 三件套清理 → 重建成功可往返）
-// 统计7  user_version 迁移（0→2 直建，0.22.0 Schema v2 起；独立原始连接核验 + 幂等重开）
+// 统计7  user_version 迁移（0→3 直建，0.22.0 v2 基线 / 0.23.17 §2.1 起 v3 直达；独立核验 + 幂等重开）
 // 统计8  WAL 并发读写（同库双连接读写交错，零丢写）
 // 统计9  空库查询（buckets 空 + latest nil）
 // 统计10 同 ts OR REPLACE（后写胜出）
@@ -32,8 +32,9 @@ private func statsCheckNow() -> Int {
     Int(Date().timeIntervalSince1970)
 }
 
-/// 临时目录（每场景独立；defer 清理由调用方负责）。
-private func makeStatsTempDir() -> URL {
+/// 临时目录（每场景独立；defer 清理由调用方负责）。internal——场景域跨文件
+/// 调用（StatsTrendDomain 先例，MainEntry internal 助手同款纪律）。
+func makeStatsTempDir() -> URL {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("cellar-stats-check-\(UUID().uuidString)")
     // 创建失败由后续 StatsStore 打开路径兜底（其自带 createDirectory）。
@@ -42,7 +43,8 @@ private func makeStatsTempDir() -> URL {
 }
 
 /// 采样构造（默认值即 batteryProps 同源口径；测试只覆写关注的字段）。
-private func statsSample(
+/// internal——场景域跨文件调用（同 makeStatsTempDir）。
+func statsSample(
     ts: Int,
     percent: Int = 50,
     tempCenti: Int = 3030,
@@ -81,7 +83,8 @@ private func statsSample(
 }
 
 /// 存储构造（init 失败 = 场景失败而非 crash——统计域契约：故障可见化不入异常路径）。
-private func makeStatsStore(_ url: URL, scenario: String) -> StatsStore? {
+/// internal——场景域跨文件调用（同 makeStatsTempDir）。
+func makeStatsStore(_ url: URL, scenario: String) -> StatsStore? {
     do {
         return try StatsStore(url: url)
     } catch {
@@ -237,7 +240,8 @@ func runStatsDomainScenarios() async {
         check(latest?.percent == 86, "统计6", "二次打开同库健康（重建产物可持续）")
     }
 
-    // 统计7：user_version 迁移（0→2 直建——0.22.0 §2.2 新库全列建表）——独立原始连接核验；重开幂等。
+    // 统计7：user_version 迁移（0→3 直建——0.22.0 §2.2 全列建表，0.23.17 §2.1
+    // 起 v3 直达含 daily_health）——独立原始连接核验；重开幂等。
     do {
         let dir = makeStatsTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -256,7 +260,7 @@ func runStatsDomainScenarios() async {
             version = sqlite3_column_int64(statement, 0)
         }
         sqlite3_finalize(versionStatement)
-        expectEqual(version, 2, "统计7", "user_version 0→2（v2 直建，独立连接核验——新库含能耗六列）")
+        expectEqual(version, 3, "统计7", "user_version 0→3（v3 直建，独立连接核验——新库含能耗六列 + daily_health）")
         var countStatement: OpaquePointer?
         var rowCount: Int64 = -1
         if sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM samples", -1, &countStatement, nil) == SQLITE_OK,
@@ -265,7 +269,7 @@ func runStatsDomainScenarios() async {
         }
         sqlite3_finalize(countStatement)
         expectEqual(rowCount, 0, "统计7", "samples 表已建且为空（迁移即建表）")
-        check(makeStatsStore(url, scenario: "统计7") != nil, "统计7", "重开幂等（version=2 不再迁移不报错）")
+        check(makeStatsStore(url, scenario: "统计7") != nil, "统计7", "重开幂等（version=3 不再迁移不报错）")
     }
 
     // 统计8：WAL 并发读写——同库双连接（写者/读者各持句柄）读写交错，零丢写。
@@ -800,7 +804,7 @@ func runStatsDomainScenarios() async {
                     "统计34", "两对能量同桶累计（3.6e6 + 3.96e6 = 7.56e6 mW·s）")
     }
 
-    // 统计35：Schema v2 新库直建——user_version=2 + 16 列齐备 + 能耗六列读写回环。
+    // 统计35：Schema v3 新库直建（0.23.17 起 v0/v2 基线均直达 v3）——能耗六列读写回环。
     do {
         let dir = makeStatsTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -814,18 +818,19 @@ func runStatsDomainScenarios() async {
                 && latest?.accBatteryDischarge == 2_000_000 && latest?.accBatteryDischargeCount == 830
                 && latest?.dailyMinSoc == 25 && latest?.dailyMaxSoc == 90,
               "统计35", "新库直建 v2：能耗六列读写回环保真")
-        await StatsV2Helpers.verifySchemaV2(url: url, scenario: "统计35")
+        await StatsV2Helpers.verifySchemaV3(url: url, scenario: "统计35")
     }
 
-    // 统计36：Schema v2 v1 旧库升级——预置 v1 库（含旧行）打开 → user_version=2、
-    // 旧行新列 NULL（不参与能耗差分——配对要求两端非 NULL）、新行读写回环。
+    // 统计36：Schema v3 v1 旧库升级（逐步迁移 v1→v2→v3 一次打开直达）——预置 v1 库
+    // （含旧行）打开 → user_version=3、旧行新列 NULL（不参与能耗差分——配对要求
+    // 两端非 NULL）、新行读写回环。
     do {
         let dir = makeStatsTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("stats.sqlite")
         StatsV2Helpers.v1LegacyFixture(url: url, oldTs: Int64(now - 3600), percent: 70)
         guard let store = makeStatsStore(url, scenario: "统计36") else { return }
-        await StatsV2Helpers.verifySchemaV2(url: url, scenario: "统计36")
+        await StatsV2Helpers.verifySchemaV3(url: url, scenario: "统计36")
         // 旧行新列 NULL（latest 取新写入行；旧行经 query 验证 acc 列读回 nil）。
         await store.insert(statsSample(ts: now, percent: 86, accLoad: 5_000_000, accLoadCount: 4600))
         let rows = await store.query(
@@ -842,8 +847,8 @@ func runStatsDomainScenarios() async {
               "统计36", "新行能耗列读写回环（升级库立即可写）")
     }
 
-    // 统计37：Schema v2 迁移重入幂等——对已迁移库再开（version=2 不再迁移不报
-    // 错）+ 结果态双断言（user_version==2 ∧ 6 列齐备）复验。
+    // 统计37：迁移重入幂等——对已迁移库再开（version=3 不再迁移不报错）+ 结果
+    // 态断言（user_version==3 ∧ samples/daily_health 关键列齐备）复验。
     do {
         let dir = makeStatsTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -851,7 +856,7 @@ func runStatsDomainScenarios() async {
         StatsV2Helpers.v1LegacyFixture(url: url, oldTs: Int64(now - 60), percent: 60, scenario: "统计37")
         guard makeStatsStore(url, scenario: "统计37") != nil else { return }
         check(makeStatsStore(url, scenario: "统计37") != nil, "统计37", "已迁移库重开幂等（v1→v2 只走一次）")
-        await StatsV2Helpers.verifySchemaV2(url: url, scenario: "统计37")
+        await StatsV2Helpers.verifySchemaV3(url: url, scenario: "统计37")
     }
 
     // 统计38：StatsStore.energyBuckets 透传（聚合不藏 SQL 同构——DB 原始行 →
@@ -894,11 +899,12 @@ func runStatsDomainScenarios() async {
                   "统计39", "\(strideCase.days) 天跨度 → (.day, \(strideCase.strideCount))")
         }
     }
+
 }
 
 // MARK: - 0.22.0 Schema v2 场景助手（raw sqlite 直构与核验——统计7 独立连接先例）
 
-private enum StatsV2Helpers {
+enum StatsV2Helpers {
     /// 预置 Schema v1 旧库（统计36/37 fixture）：v1 十列表 + 一行旧行 +
     /// user_version=1（独立原始连接写入后关闭）。
     static func v1LegacyFixture(url: URL, oldTs: Int64, percent: Int, scenario: String = "统计36") {
@@ -927,8 +933,9 @@ private enum StatsV2Helpers {
         sqlite3_free(error)
     }
 
-    /// 结果态双断言（复核 P3-3）：user_version==2 ∧ 6 列齐备（独立原始连接核验）。
-    static func verifySchemaV2(url: URL, scenario: String) async {
+    /// 结果态断言（复核 P3-3 先例；0.23.17 起库恒迁至 v3）：user_version==3 ∧
+    /// samples 16 列齐备 ∧ daily_health 5 列齐备（独立原始连接核验）。
+    static func verifySchemaV3(url: URL, scenario: String) async {
         var raw: OpaquePointer?
         guard sqlite3_open(url.path, &raw) == SQLITE_OK, let raw else {
             check(false, scenario, "独立核验连接打开失败")
@@ -942,22 +949,25 @@ private enum StatsV2Helpers {
             version = sqlite3_column_int64(statement, 0)
         }
         sqlite3_finalize(versionStatement)
-        expectEqual(Int(version), 2, scenario, "user_version=2（独立连接核验）")
-        var columns: [String] = []
-        var tableStatement: OpaquePointer?
-        if sqlite3_prepare_v2(raw, "PRAGMA table_info(samples)", -1, &tableStatement, nil) == SQLITE_OK,
-           let statement = tableStatement {
-            while sqlite3_step(statement) == SQLITE_ROW {
-                if let c = sqlite3_column_text(statement, 1) {
-                    columns.append(String(cString: c))
+        expectEqual(Int(version), 3, scenario, "user_version=3（独立连接核验）")
+        for (table, required) in [("samples", ["acc_load", "acc_load_count", "acc_discharge",
+                                               "acc_discharge_count", "daily_min_soc", "daily_max_soc"]),
+                                  ("daily_health", ["day", "cycle_max", "health_centi_pct",
+                                                    "upper_mode", "sample_count"])] {
+            var columns: [String] = []
+            var tableStatement: OpaquePointer?
+            if sqlite3_prepare_v2(raw, "PRAGMA table_info(\(table))", -1, &tableStatement, nil) == SQLITE_OK,
+               let statement = tableStatement {
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    if let c = sqlite3_column_text(statement, 1) {
+                        columns.append(String(cString: c))
+                    }
                 }
             }
+            sqlite3_finalize(tableStatement)
+            check(required.allSatisfy { columns.contains($0) },
+                  scenario, "\(table) 关键列齐备（table_info 核验：\(columns.count) 列）")
         }
-        sqlite3_finalize(tableStatement)
-        let energyColumns = ["acc_load", "acc_load_count", "acc_discharge",
-                             "acc_discharge_count", "daily_min_soc", "daily_max_soc"]
-        check(energyColumns.allSatisfy { columns.contains($0) },
-              scenario, "能耗六列齐备（table_info 核验：\(columns.count) 列）")
     }
 
     /// 全行直读（独立连接，绕过 StatsStore——旧行 NULL 列核验用）。
