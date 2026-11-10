@@ -4421,19 +4421,19 @@
         }
       }
     },
-    "panel.versionLine": {
+    "panel.versionLine3": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Daemon version: %@ · Expected %@"
+            "value": "Daemon protocol %1$@ · App %2$@ · %3$@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "守护进程版本：%@ · 期望 %@"
+            "value": "守护进程协议 %1$@ · App %2$@ · %3$@"
           }
         }
       }
@@ -8615,6 +8615,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "充电方案"
+          }
+        }
+      }
+    },
+    "panel.handshake.connected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handshake OK"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "握手正常"
+          }
+        }
+      }
+    },
+    "panel.handshake.unreachable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handshake unreachable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "握手失联"
+          }
+        }
+      }
+    },
+    "panel.handshake.unknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handshake unknown"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "握手未知"
+          }
+        }
+      }
+    },
+    "panel.daemon.btmDrift": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon anchor drift suspected (registered, route unknown, unreachable) — reinstall the daemon from the Daemon section of the panel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "疑似守护进程锚点漂移（已注册但路线未知且失联）——建议打开面板守护进程节重装守护进程"
           }
         }
       }

@@ -157,10 +157,19 @@ struct ControlSectionView: View {
                 .disabled(statusController.daemonStatus == nil || statusController.busy || isActionActive)
             }
 
+            // 0.23.18 §2.6① 版本行三口径（随批 1）：daemon 协议 · App 版本 · 握手态
+            // ——panel.versionLine 两口径退役（用户三次误读为 App 版本的事故闭环；
+            // 键随批删除，catalog 净 +4）。daemon 协议串 = daemon 回报 version（失联
+            // 未知回退 common.unknown 既有语义）；App 串 = Bundle.main
+            // CFBundleShortVersionString（AboutSections.appVersion 同源通路）；握手词
+            // = statusController.connection 三态映射（handshakeWord 纯函数——词串经
+            // l10n 单一门面，CellarCore 不落串）。
             Text(CellarL10n.s(
-                "panel.versionLine",
+                "panel.versionLine3",
                 statusController.daemonStatus?.version ?? CellarL10n.s("common.unknown"),
-                DaemonXPC.daemonVersion
+                Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+                    ?? CellarL10n.s("common.unknown"),
+                handshakeWord(statusController.connection)
             ))
                 .font(.caption2)
                 .foregroundStyle(theme.tertiaryText)
@@ -276,6 +285,20 @@ struct ControlSectionView: View {
 
     private var isModeDisabled: Bool {
         statusController.daemonStatus?.mode == "disabled"
+    }
+
+    /// 握手态词（0.23.18 §2.6① 随批 1：版本行三口径第三口径——
+    /// statusController.connection 三态映射纯函数；词串经 l10n 单一门面。
+    /// ConnectionState 枚举本体在 CellarCore，词不落 Core——CellarCore 不可
+    /// import CellarL10n（Package.swift 单向依赖）。三态语义：connected = 最近
+    /// getStatus 成功；unreachable = 最近失败（已注册失联告警语义）；unknown =
+    /// 尚未刷新过/注册复位回落）。
+    private func handshakeWord(_ connection: ConnectionState) -> String {
+        switch connection {
+        case .connected: return CellarL10n.s("panel.handshake.connected")
+        case .unreachable: return CellarL10n.s("panel.handshake.unreachable")
+        case .unknown: return CellarL10n.s("panel.handshake.unknown")
+        }
     }
 
     // MARK: - 0.20 WP2 §3.4 sub80 状态

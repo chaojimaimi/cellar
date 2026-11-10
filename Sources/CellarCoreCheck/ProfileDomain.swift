@@ -491,8 +491,8 @@ func runProfileDomainScenarios() {
     if let data = try? Data(contentsOf: catalogURL),
        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let strings = root["strings"] as? [String: Any] {
-        check(strings.count == 507,
-              "源钉-7", "catalog 键数精确断言 507（491 + 16：control.profile.* 15 + panel.menu.profiles）")
+        check(strings.count == 511,
+              "源钉-7", "catalog 键数精确断言 511（491 + 16 profile 键 = 507〔commit 2〕+ 5 − 1 = 511〔commit 4：versionLine3/handshake 三键/btmDrift 入库、versionLine 退役〕——断言值随批推进）")
         let expectations: [String: String] = [
             "control.profile.title": "充电方案",
             "control.profile.empty": "暂无方案。从当前设置创建第一个方案。",
@@ -598,5 +598,65 @@ func runProfileDomainScenarios() {
               && sectionViewSrc.contains("deletePendingID = profile.id")
               && sectionViewSrc.contains("control.profile.empty")
               && sectionViewSrc.contains("ProfileModel.capture(from: status) != nil"),
-          "源钉-4", "管理页面（✓ activeMatch 读回派生 / ProfileController.shared 直注非第七注入 / 行内红字命名校验 / 删除两步确认 / 空态引导 / 新建 capture 预检）")
+          "源钉-4", "管理页面（✓ activeMatch 读回派生 / ProfileController.shared 直注非第七注入 / 行内红字命名校验 / 删除两步确认 / 空态引导 / 新建 capture 预检逐项）")
+
+    // ---- 随批-1..2：btmAnchorDriftSuspected 真值表（3³ 组合抽样钉边界行）----
+
+    // 全 3³ 组合逐点扫描（registration×route×connection 各三态）——命中行恰一：
+    // (enabled, unknown, unreachable)。
+    var driftHits: [String] = []
+    for registration in [RegistrationStatus.notRegistered, .pending, .enabled] {
+        for route in [DaemonRoute.appManaged, .manual, .unknown] {
+            for connection in [ConnectionState.connected, .unreachable, .unknown] {
+                if btmAnchorDriftSuspected(registration: registration, route: route, connection: connection) {
+                    driftHits.append("\(registration)/\(route)/\(connection)")
+                }
+            }
+        }
+    }
+    check(driftHits == ["enabled/unknown/unreachable"],
+          "随批-1", "3³ 全组合扫描：命中行恰一（enabled ∧ route unknown ∧ connection unreachable——BTM 事故特征态）")
+    // 边界行逐条（任一条件不成立即不报——防「已注册失联」常态误报为漂移）。
+    check(!btmAnchorDriftSuspected(registration: .enabled, route: .unknown, connection: .connected)
+              && !btmAnchorDriftSuspected(registration: .enabled, route: .unknown, connection: .unknown)
+              && !btmAnchorDriftSuspected(registration: .enabled, route: .appManaged, connection: .unreachable)
+              && !btmAnchorDriftSuspected(registration: .enabled, route: .manual, connection: .unreachable)
+              && !btmAnchorDriftSuspected(registration: .pending, route: .unknown, connection: .unreachable)
+              && !btmAnchorDriftSuspected(registration: .notRegistered, route: .unknown, connection: .unreachable),
+          "随批-1", "边界负臂：连接恢复/连接未刷新/路线已判明/未注册全不报（「未注册失联 = 常态」语义不误报）")
+
+    // ---- 源钉-5：三随批消费面（版本行三口径 + btmDrift 行 + versionLine 退役）----
+
+    let controlSectionSrc = source("App/CellarApp/ControlSectionView.swift")
+    check(controlSectionSrc.contains("\"panel.versionLine3\"")
+              && !controlSectionSrc.contains("\"panel.versionLine\",")
+              && controlSectionSrc.contains("Bundle.main.object(forInfoDictionaryKey: \"CFBundleShortVersionString\")")
+              && controlSectionSrc.contains("handshakeWord(statusController.connection)")
+              && controlSectionSrc.contains("case .connected: return CellarL10n.s(\"panel.handshake.connected\")")
+              && controlSectionSrc.contains("case .unreachable: return CellarL10n.s(\"panel.handshake.unreachable\")")
+              && controlSectionSrc.contains("case .unknown: return CellarL10n.s(\"panel.handshake.unknown\")"),
+          "源钉-5", "版本行三口径消费（versionLine3 三参 / App 串 = Bundle CFBundleShortVersionString / 握手词 = connection 三态映射经 l10n——versionLine 两口径退役）")
+    let daemonSectionSrc = source("App/CellarApp/DaemonSectionView.swift")
+    check(daemonSectionSrc.contains("btmAnchorDriftSuspected(")
+              && daemonSectionSrc.contains("registration: installer.registration,")
+              && daemonSectionSrc.contains("route: installer.route,")
+              && daemonSectionSrc.contains("connection: statusController.connection")
+              && daemonSectionSrc.contains("\"panel.daemon.btmDrift\""),
+          "源钉-5", "DaemonSectionView btmDrift 疑似行（btmCorrupted 行后同形态——registration/route/connection 三输入接线）")
+    let registrationSrc = source("Sources/CellarCore/Daemon/DaemonRegistration.swift")
+    check(registrationSrc.contains("public func btmAnchorDriftSuspected(")
+              && registrationSrc.contains("registration == .enabled && route == .unknown && connection == .unreachable"),
+          "源钉-5", "btmAnchorDriftSuspected 纯函数落 DaemonRegistration.swift（AppSide 445 行超 400 软限——按 400 行限择位）")
+    let catalogSrc = source("Sources/CellarUI/Resources/Localizable.xcstrings")
+    check(!catalogSrc.contains("\"panel.versionLine\"")
+              && catalogSrc.contains("\"panel.versionLine3\"")
+              && catalogSrc.contains("\"panel.handshake.connected\"")
+              && catalogSrc.contains("\"panel.handshake.unknown\"")
+              && catalogSrc.contains("\"panel.daemon.btmDrift\""),
+          "源钉-5", "catalog versionLine 键退役 + 四新键在位（净 +4：507 → 511——R9 隐藏消费者 grep 全仓实证唯一后退役）")
+    let statsTrendSrc = source("Sources/CellarCore/Stats/StatsTrend.swift")
+    check(!statsTrendSrc.contains("DateFormatter()")
+              && statsTrendSrc.contains("String(format: \"%04d-%02d-%02d\", year, month, day)")
+              && statsTrendSrc.components(separatedBy: "String(format: \"%04d-%02d-%02d\", year, month, day)").count - 1 == 2,
+          "源钉-5", "StatsTrend DateFormatter 退役（dayString/dayStringFromOrdinal 双函数 dateComponents 派生恰二处——输出逐字节等价，统计40-63 既有场景即回归门）")
 }

@@ -47,6 +47,21 @@ struct DaemonSectionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            // 0.23.18 §2.6② 随批 2：BTM 锚点漂移疑似行（btmCorrupted 行后同形态
+            // ——特征态 = 已启用 ∧ 路线未知 ∧ XPC 失联，btmAnchorDriftSuspected
+            // 纯函数在 CellarCore DaemonRegistration.swift；措辞「疑似」如实——
+            // launchctl print 瞬态失败可能误报，refresh 重开面板自纠，不做去抖）。
+            if btmAnchorDriftSuspected(
+                registration: installer.registration,
+                route: installer.route,
+                connection: statusController.connection
+            ) {
+                Text(CellarL10n.s("panel.daemon.btmDrift"))
+                    .font(.caption)
+                    .foregroundStyle(theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let error = installer.lastError {
                 Text(error)
                     .font(.caption)

@@ -11,7 +11,8 @@ import Foundation
 /// 的历史只有这里（1 行/天年增 365 行，永不 prune——永久保留即特性本体，调研 A3
 /// 约束 3）。
 public struct DailyHealthRow: Equatable, Sendable {
-    /// 本地日串（'YYYY-MM-DD'，en_US_POSIX 固定格式 + Calendar.current 时区）。
+    /// 本地日串（'YYYY-MM-DD'，dateComponents %04d-%02d-%02d 派生 + Calendar 时区
+    /// ——0.23.18 随批 3 formatter 退役）。
     public let day: String
     /// 当日 cycle 最大值。
     public let cycleMax: Int
@@ -48,15 +49,18 @@ public enum DailyHealthRollup {
         var healthCentiPct: Int?
     }
 
-    /// 本地日串投影（'YYYY-MM-DD'）：秒 → 日串（en_US_POSIX 固定格式防 locale
-    /// 漂移；startOfDay 先行，任意时刻投影到所属日）。DST 安全日界（23/25 小时
+    /// 本地日串投影（'YYYY-MM-DD'）：dateComponents 派生（0.23.18 随批 3——
+    /// DateFormatter 热路径退役：滚动路径每样本一次 87µs、迁移事务内 ~3.7s 放大
+    /// → 组件投影零 formatter 构造；输出与旧 en_US_POSIX "yyyy-MM-dd" 版逐字节
+    /// 等价——两位补零 + 4 位年由 %04d-%02d-%02d 承接，时区语义由 calendar 承接，
+    /// startOfDay 归一不再必要〔组件投影直达所属日〕）。DST 安全日界（23/25 小时
     /// 日）由 Calendar 派生承接——**禁 86400 乘法**（评审 P2 修正）。
     public static func dayString(for date: Date, calendar: Calendar = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: calendar.startOfDay(for: date))
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else {
+            return ""
+        }
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
     /// 回填聚合（迁移一次性：samples 全表 → 按日分组日行序列，day ASC）。
@@ -297,8 +301,8 @@ public enum StatsTrend {
         return calendar
     }()
 
-    /// 'YYYY-MM-DD' 严格解析（段数 3 + 定宽 + 数值域；en_US_POSIX 自解析——
-    /// DateFormatter 实例非 Sendable，纯函数内免共享可变面）。非法 → nil。
+    /// 'YYYY-MM-DD' 严格解析（段数 3 + 定宽 + 数值域；手写解析零 formatter——
+    /// 纯函数无共享可变面）。非法 → nil。
     private static func dayDate(_ day: String) -> Date? {
         let parts = day.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 3,
@@ -319,17 +323,19 @@ public enum StatsTrend {
         return utcCalendar.dateComponents([.day], from: Date(timeIntervalSince1970: 0), to: date).day
     }
 
-    /// 序数 → 日串（窗起止呈现面；与 ordinal 同锚互逆）。
+    /// 序数 → 日串（窗起止呈现面；与 ordinal 同锚互逆）。dateComponents 派生
+    /// （0.23.18 随批 3——输出与旧 en_US_POSIX "yyyy-MM-dd" 版逐字节等价，时区
+    /// 语义由 utcCalendar 承接）。
     private static func dayStringFromOrdinal(_ ordinal: Int) -> String {
         let date = utcCalendar.date(
             byAdding: .day, value: ordinal,
             to: Date(timeIntervalSince1970: 0)
         ) ?? Date(timeIntervalSince1970: 0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = utcCalendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        let components = utcCalendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else {
+            return ""
+        }
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
     /// 非空降序排序（空输入 → nil——空窗跳过判据）。

@@ -292,3 +292,20 @@ public func evaluateClientIdentity(_ facts: ClientIdentityFacts, expected: Pinne
     }
     return .match
 }
+// MARK: - BTM 锚点漂移疑似态（0.23.18 §2.6② 随批 2）
+
+/// BTM 锚点漂移疑似判定（纯函数，全值输入输出）。BTM 事故 lesson（锚点翻转到
+/// ephemeral bundle → 重启后失联·路线未知）的特征态 = **已启用 ∧ 路线未知 ∧
+/// XPC 失联**——三条件同时成立时面板守护进程节呈「疑似漂移」引导行
+///（panel.daemon.btmDrift），引导用户重装守护进程。
+///
+/// **措辞「疑似」如实登记**：launchctl print 瞬态失败可能误报（route 判定依赖
+/// print 输出，job 未加载瞬态即 unknown）——行级提示可接受（refresh 重开面板自纠
+/// ——registrationChanged/refreshOnce 双路线回包即复位），不做去抖（方案 §2.6②）。
+public func btmAnchorDriftSuspected(
+    registration: RegistrationStatus,
+    route: DaemonRoute,
+    connection: ConnectionState
+) -> Bool {
+    registration == .enabled && route == .unknown && connection == .unreachable
+}
