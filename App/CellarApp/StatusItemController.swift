@@ -70,7 +70,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 图标 + 面板内容装配（幂等）。六依赖全部 static shared 单例静态可达
     ///（StatusController.shared + 五控制器同批单例化），装配无时序前提。
     func wire() {
-        NSLog("B8-DEBUG wire fired, wired=\(wired)")
         guard !wired else { return }
         wired = true
         installIconContent()
@@ -170,7 +169,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func statusItemClicked() {
         // 残留左键吞除（毛刺修复）：右键菜单收起窗内的左键事件一律吞掉。
         if NSApp.currentEvent?.type == .leftMouseUp, Date() < swallowLeftClickUntil {
-            NSLog("B8-DEBUG swallow residual left click")
             return
         }
         guard let button = statusItem.button else { return }
@@ -267,7 +265,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// → applyLimits 全链（runControl 单槽队列承载连点）。hysteresis 取 daemon
     /// 真相（面板预设同语义）；`?? 2` 兜底在整区禁用门下不可达，防御性保留（§2.2）。
     @objc private func applyPreset(_ sender: NSMenuItem) {
-        NSLog("B8-DEBUG applyPreset fired, tag=\(sender.tag)")
         let controller = StatusController.shared
         let hysteresis = controller.daemonStatus?.hysteresis ?? 2
         do {
@@ -296,7 +293,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 菜单收起复位：statusItem.menu = nil——左键 togglePopover 通路恢复
     ///（menu 态残留会吞点击）。此为右键形态的生命周期闭环点。
     func menuDidClose(_ menu: NSMenu) {
-        NSLog("B8-DEBUG menuDidClose")
         statusItem.menu = nil
     }
 }

@@ -112,4 +112,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = StatusController.shared
         StatusItemController.shared.install()
     }
+
+    // B8 真机第三修（2026-11-10 死亡相机定案）：AppKit「最后窗口关闭→自动退出」
+    // 排程检查误杀。机制：0.23.14/0.15 场景清单含 MenuBarExtra——SwiftUI 对该
+    // 检查的回答恒为「不退出」（菜单栏场景 = 常驻锚点）；B8 删除 MenuBarExtra 后
+    // 场景清单只剩 Window("main")（LSUIElement 下永不打开 = 关闭态），而菜单栏
+    // 存在感已迁 AppKit NSStatusItem——**SwiftUI 场景账本看不见它**。任何窗口数
+    // 变化（安装授权弹窗抢焦点关掉 popover / 面板开合）都会触发 AppKit 排程检查
+    // → SwiftUI 判「无窗口无可见场景」→ terminate 干净退出（无 .ips，真机实证
+    // 两次独立死亡：装 daemon 后 3ms、面板关闭后 83s——触发面不同判决恒同；
+    // 0.19.11「无场景即退出」同机制家族，死亡相机全栈点名
+    // _scheduleCheckForTerminateAfterLastWindowClosed）。修法 = 菜单栏应用标准
+    // 消防出口：本方法恒 false——只关「关窗自动退出」路，显式退出（菜单「退出」
+    // NSApp.terminate）不受影响。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }
