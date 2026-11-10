@@ -20,6 +20,10 @@ import os
 /// 模型下都安全（正式实例的 init 必自跑 load）。
 @MainActor
 final class DisplaySettingsController: ObservableObject {
+    /// 0.23.16 B8：单例化（五控制器同批——见 LoginItemController 注记；
+    /// StatusItemIconRoot NSHostingView 宿主亦需此引用，静态可达是前提）。
+    static let shared = DisplaySettingsController(store: AppConfigStore.shared)
+
     /// 菜单栏电量百分比显隐（nil = 未设置 = 关；本文件内自写，可用 private(set)）。
     @Published private(set) var percentageVisible = false
     /// 菜单栏电池电量图标显隐（0.18 T3 D-3b 自 windowBatteryIconVisible 迁移；

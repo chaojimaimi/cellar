@@ -19,6 +19,9 @@ import os
 /// daemon 同源）+ F0Ac/F1Ac 转速键；零写键。
 @MainActor
 final class CpuFanMonitor: ObservableObject {
+    /// 0.23.16 B8：单例化（五控制器同批——见 LoginItemController 注记）。
+    static let shared = CpuFanMonitor()
+
     /// CPU 表面温度 °C（nil = 未采样/探测未命中——CPU 格隐藏，D-5e）。
     @Published private(set) var cpuSkinTempC: Double?
     /// CPU 核心参考温度 °C（Tp00，0.22.0 §4.3；nil = 键缺席/传输故障——行隐藏）。

@@ -129,7 +129,7 @@ struct MenuBarIconLabel: View {
 /// @MainActor：仅被 View body（主线程）调用；Swift 6 严格并发下缓存随之
 /// 主线程隔离，无需额外锁。
 @MainActor
-private enum MenuBarBatteryIconRenderer {
+enum MenuBarBatteryIconRenderer {
     /// 位图缓存键（label 刷新频繁，同参数复用；参数域有界，字典容量无虞）。
     private struct Key: Hashable {
         let percent: Int, charging: Bool, plugged: Bool, low: Bool

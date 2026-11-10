@@ -30,6 +30,14 @@ extension RegistrationStatus {
 /// （使用处创建，不存成员）。本类型 @MainActor 全隔离——Swift 6 严格并发下状态只属主线程。
 @MainActor
 final class DaemonInstaller: ObservableObject {
+    /// 0.23.16 B8：单例化（StatusController.shared / NotificationService.shared
+    /// 先例形态）。动机：registration/loaded didSet 自转发（接线挂点迁出主窗口
+    /// 内容链——LSUIElement 形态该链永不具象化，真机实证图标空壳 0×33）需要
+    /// 任意时点可达的稳定引用；static let = 唯一实例零临时（0.23.6 陷阱归零）。
+    /// init 内 refresh() 自标定 = 首次访问即启动注册态刷新（原 @StateObject
+    /// 形态同语义——App 组合根注释「App 启动即刷新注册态」由 static 首访承接）。
+    static let shared = DaemonInstaller()
+
     /// SMAppService daemon plist 名（按调用方主 bundle 的 Contents/Library/LaunchDaemons/
     /// 解析）。⚠️ 必须带 `.plist` 扩展名——缺扩展名报 code=108「Unable to read plist」
     /// （2026-09-01 真机实证，用户首次安装失败的根因）。
@@ -41,7 +49,20 @@ final class DaemonInstaller: ObservableObject {
     /// 授权轮询时长上限（秒，§2.6 定版）。
     nonisolated static let pollingLimitSeconds = 120
 
-    @Published private(set) var registration: RegistrationStatus = .notRegistered
+    /// 0.23.16 B8：didSet 自转发（接线挂点自主窗口内容链迁入——LSUIElement 形态
+    /// 该链永不具象化，真机实证 StatusItem 图标空壳 + 下游接线死代码）。didSet 在
+    /// 赋值必经路径上（@Published 全部赋值发生于 @MainActor refresh 通路），零时序
+    /// 依赖；同值幂等（refresh 重试期重复转发，下游全部幂等）。
+    @Published private(set) var registration: RegistrationStatus = .notRegistered {
+        didSet {
+            guard registration != oldValue else { return }
+            StatusController.shared.registrationChanged(registration)
+            OnboardingController.shared.registrationChanged(registration)
+            // 图标/面板内容装配（幂等）——首回包即渲染，图标启动期可见（真机
+            // 回归修复：原 Window onAppear 锚点在 LSUIElement 形态永不触发）。
+            StatusItemController.shared.wire()
+        }
+    }
     @Published private(set) var route: DaemonRoute = .unknown
     @Published private(set) var guidance: MigrationGuidance = .normalInstall
     @Published private(set) var hasLegacyPlist = false
@@ -55,7 +76,15 @@ final class DaemonInstaller: ObservableObject {
     @Published private(set) var lastError: String?
     /// 首次 refresh 回包已置位（WP5 P1-3 竞态守卫）：引导门在 loaded == false 时
     /// 不判定（常规面板呈现），防已注册用户启动瞬间引导闪现。
-    @Published private(set) var loaded = false
+    /// 0.23.16 B8：didSet 自转发（registration 同批——首回包早于 registration
+    /// 变更时的 wire 兜底锚点；loaded 只经 false→true 一次，无同值重复）。
+    @Published private(set) var loaded = false {
+        didSet {
+            guard !oldValue, loaded else { return }
+            OnboardingController.shared.registrationChanged(registration)
+            StatusItemController.shared.wire()
+        }
+    }
     /// refresh 自愈重试计数（看门狗；成功回包清零，上限 3 次防永久轮询）。
     private var refreshRetries = 0
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "installer")

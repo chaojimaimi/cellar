@@ -12,6 +12,12 @@ import os
 /// 反馈上屏（不静默）。
 @MainActor
 final class StyleController: ObservableObject {
+    /// 0.23.16 B8：单例化（五控制器同批——见 LoginItemController 注记）。
+    /// ⚠️ 消费形态注意：App body 不观察 static shared——主窗口主题切换的重评
+    /// 由 MainWindowView 自持 @ObservedObject（= .shared）承接；面板/图标宿主
+    /// 同形态（StatusItemPanelRoot/StatusItemIconRoot）。
+    static let shared = StyleController(store: AppConfigStore.shared)
+
     /// 当前生效风格（resolve 注入链的唯一输入；变更即触发全树重算）。
     @Published private(set) var style: PanelStyle = .native
     /// 持久化偏好是否已加载（设置外观 Picker 在 loaded 前禁用，防半程态回写）。

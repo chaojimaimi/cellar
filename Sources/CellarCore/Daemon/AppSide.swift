@@ -271,6 +271,12 @@ public struct AppConfig: Codable, Equatable, Sendable {
 public actor AppConfigStore {
     public let url: URL
 
+    /// 0.23.16 B8：组合根唯一共享实例（风格/登录项/引导完成/显示设置四写者共用；
+    /// 照 NotificationService.shared / StatusController.shared 单例化先例——控制器
+    /// 提升为 static shared 后，AppKit 域组装（StatusItemController）在任意时点
+    /// 取到的都是同一 store，@StateObject 临时实例陷阱归零）。
+    public static let shared = AppConfigStore(url: AppConfigStore.defaultURL)
+
     /// 默认位置：用户域 `~/Library/Application Support/Cellar/app-config.json`。
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

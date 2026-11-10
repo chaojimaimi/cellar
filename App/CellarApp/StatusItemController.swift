@@ -1,6 +1,7 @@
 import AppKit
 import CellarCore
 import CellarUI
+import Combine
 import SwiftUI
 
 // 0.23.16 B8-1 方案 B（§2.1 spike 定版）：MenuBarExtra `.window` 整体退役 →
@@ -30,30 +31,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 左键面板宿主（.transient = 点击外部自动收起——MenuBarExtra .window 原行为）。
     private let popover = NSPopover()
 
-    /// 依赖组装标记（wire 幂等守卫——组装锚点见 CellarApp Window 内容 onAppear 注记）。
+    /// 依赖组装标记（wire 幂等守卫——组装锚点见 DaemonInstaller didSet 自转发 +
+    /// AppDelegate didFinishLaunching 双触发注记）。
     private var wired = false
-
-    // 六对象注入（§2.1 B 必验面①——逐项：缺 displaySettings 即 crash
-    //〔MenuBarPercentageRow @EnvironmentObject〕；缺 cpuFanMonitor 同罪）。
-    // statusController 固定取 StatusController.shared（单例化定版，无需传递）。
-    private var installer: DaemonInstaller?
-    private var loginItems: LoginItemController?
-    private var onboarding: OnboardingController?
-    private var displaySettings: DisplaySettingsController?
-    private var cpuFanMonitor: CpuFanMonitor?
-    private var styleController: StyleController?
+    /// 图标内容双源订阅（daemonStatus 1Hz 快照 + 百分比显隐——内容变化即重挂
+    /// button.image/title）。低电量阈值同源引用（MenuBarIconLabel 既有常量）。
+    private var iconSink: AnyCancellable?
+    private var visibilitySink: AnyCancellable?
 
     private override init() {
         super.init()
-        // popover 常驻配置（内容控制器 wire 时挂——依赖五 @StateObject 组装锚点）。
+        // popover 常驻配置（内容控制器 wire 时挂——依赖六 shared 单例静态可达）。
         popover.behavior = .transient
     }
 
-    // MARK: - 装配（两段式：shell 启动即渲染，内容经 wire 锚点注入）
+    // MARK: - 装配（shell 启动即渲染，内容 wire 补齐；wire 无参——六依赖全部
+    // static shared 单例静态可达，@StateObject 临时实例陷阱归零）
 
-    /// 状态项 shell 装配（AppDelegate.applicationDidFinishLaunching 锚点——图标
-    /// 启动即出现；文字内容由 wire 补齐）。幂等：与 wire 无先后顺序约束
-    ///（didFinishLaunching 与 Window 内容构建的相对时序未文档化，两段均幂等）。
+    /// 状态项 shell + 内容装配（AppDelegate.applicationDidFinishLaunching 锚点，
+    /// 另有 DaemonInstaller.registration/loaded didSet 自转发双触发——首个回包
+    /// 即渲染，图标启动期可见；真机回归修复 2026-11-10：原 Window onAppear 锚点
+    /// 在 LSUIElement 形态永不触发）。幂等。
     func install() {
         guard let button = statusItem.button else { return }
         button.target = self
@@ -62,75 +60,104 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // 置，系统弹菜单不重入 action）。
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        wire()
     }
 
-    /// 六对象注入 + 图标/面板内容装配（幂等）。
-    ///
-    /// ⚠️ 组装锚点 = CellarApp Window 内容 onAppear（唯一安全传递点）：五依赖仍
-    /// 为 CellarApp @StateObject——App.init 早期访问拿到的是被 SwiftUI 丢弃的临时
-    /// 实例（0.23.6 deinit 尸体链实锤）；Window 内容闭包上下文 = 环境注入真身
-    /// 同域（:122 起 environmentObject 链实测真身，「幸存实例 = 组合根同一
-    /// @StateObject」），onAppear 在真身安装后触发。didFinishLaunching 先行时
-    /// shell 已在位（install 幂等），本方法只补内容。
-    func wire(
-        installer: DaemonInstaller,
-        loginItems: LoginItemController,
-        onboarding: OnboardingController,
-        displaySettings: DisplaySettingsController,
-        cpuFanMonitor: CpuFanMonitor,
-        styleController: StyleController
-    ) {
+    /// 图标 + 面板内容装配（幂等）。六依赖全部 static shared 单例静态可达
+    ///（StatusController.shared + 五控制器同批单例化），装配无时序前提。
+    func wire() {
         guard !wired else { return }
         wired = true
-        self.installer = installer
-        self.loginItems = loginItems
-        self.onboarding = onboarding
-        self.displaySettings = displaySettings
-        self.cpuFanMonitor = cpuFanMonitor
-        self.styleController = styleController
-
         installIconContent()
         installPopoverContent()
     }
 
-    /// 图标内容：NSHostingView 包 ThemeProvider + MenuBarIconLabel（**维持现有
-    /// @ObservedObject 双直注形态**，勿改 environmentObject——v1.10 M2 定版）；
-    /// 风格随 styleController 观察（StatusItemIconRoot）实时换肤。
+    /// 图标内容：**button.image/title 系统管道**（0.23.16 真机回归定版——原
+    /// NSHostingView 子视图形态两连败：①variableLength 自适应只询问 button cell，
+    /// 约束子视图不参与 → 16pt 视口裁掉 45.5pt 内容（图标隐形）；②SwiftUI 模板
+    /// 渲染跟随 NSHostingView effectiveAppearance（浅色=黑）而非状态栏管道恒白，
+    /// 浅色外观 + 深色壁纸形态黑上加黑。button.image（isTemplate）走
+    /// NSStatusBarButton cell 渲染 = 菜单栏明暗自适应系统管道，title 同理）。
+    /// 双源订阅重挂：daemonStatus（电量/充电态/失联）+ 百分比显隐。
     private func installIconContent() {
-        guard let button = statusItem.button,
-              let displaySettings, let styleController else { return }
-        let iconView = NSHostingView(rootView: StatusItemIconRoot(
-            styleController: styleController,
-            controller: .shared,
-            settings: displaySettings
-        ))
-        iconView.sizingOptions = [.intrinsicContentSize]   // variableLength：宽度随内容（百分比显隐）自适应
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        button.subviews.forEach { $0.removeFromSuperview() }
-        button.addSubview(iconView)
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            iconView.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            iconView.topAnchor.constraint(equalTo: button.topAnchor),
-            iconView.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-        ])
+        guard statusItem.button != nil else { return }
+        iconSink = StatusController.shared.$daemonStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncIconAndTitle() }
+        visibilitySink = DisplaySettingsController.shared.$menuBarBatteryIconVisible
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncIconAndTitle() }
+        syncIconAndTitle()
+    }
+
+    /// 图标 + 百分比标题同步（MenuPresetModel 同源判定输入；电池形态回退链 =
+    /// CellarCore.menuBarBatteryForm 纯函数——MenuBarIconLabel.batteryForm 同源）。
+    private func syncIconAndTitle() {
+        guard let button = statusItem.button else { return }
+        let controller = StatusController.shared
+        let settings = DisplaySettingsController.shared
+
+        // 失联告警态：⚠ 符号（模板自适应明暗；红 tint 在 button cell 模板管道
+        // 不可用——登记降级，alert 形态语义由符号形状承载）。
+        if controller.iconState == .alert {
+            button.image = NSImage(systemSymbolName: resolvedAlertSymbol(),
+                                   accessibilityDescription: CellarL10n.s("common.axMenuBarIcon"))
+            button.title = settings.percentageVisible ? percentageTitle(controller) : ""
+            return
+        }
+
+        // 电池位图形态（MenuBarBatteryIconRenderer——isTemplate = !low，
+        // button cell 渲染自适应明暗；低电量红非模板实绘保留）。
+        let battery = menuBarBatteryForm(
+            snapshotPercent: controller.batterySnapshot?.percent,
+            snapshotIsCharging: controller.batterySnapshot?.isCharging,
+            snapshotExternalConnected: controller.batterySnapshot?.externalConnected,
+            powerOverride: controller.powerOverride,
+            daemonPercent: controller.daemonStatus?.lastPercent)
+        if let battery {
+            button.image = MenuBarBatteryIconRenderer.image(
+                percent: battery.percent,
+                charging: battery.charging,
+                plugged: battery.plugged,
+                low: battery.percent < MenuBarIconLabel.lowBatteryThresholdPercent)
+        } else {
+            // 电池形态缺席回退：iconState 符号（符号解析三级降级同源复刻——
+            // MenuBarIconLabel.resolvedSymbol 私有，此处最小复刻）。
+            let state = controller.iconState
+            let primary = menuBarSymbolName(for: state)
+            let fallback = menuBarSymbolFallbackName(for: state)
+            button.image = NSImage(systemSymbolName: primary, accessibilityDescription: nil)
+                .map { $0.isTemplate = true; return $0 }
+                ?? NSImage(systemSymbolName: fallback, accessibilityDescription: nil)
+                .map { $0.isTemplate = true; return $0 }
+                ?? NSImage(systemSymbolName: "circle.dashed", accessibilityDescription: nil)
+        }
+        button.title = percentageTitle(controller)
+    }
+
+    /// 百分比标题（MenuBarIconLabel.percentageText 同语义：开关开 ∧ lastPercent
+    /// 非 nil；裸数字无单位）。nil/关 = 空 title（不占位）。
+    private func percentageTitle(_ controller: StatusController) -> String {
+        guard DisplaySettingsController.shared.percentageVisible,
+              let percent = controller.daemonStatus?.lastPercent else { return "" }
+        return "\(percent)"
+    }
+
+    /// 失联告警符号（运行时存在性三级降级——MenuBarIconLabel.resolvedSymbol 同款）。
+    private func resolvedAlertSymbol() -> String {
+        let state = MenuBarIconState.alert
+        let primary = menuBarSymbolName(for: state)
+        if NSImage(systemSymbolName: primary, accessibilityDescription: nil) != nil { return primary }
+        let fallback = menuBarSymbolFallbackName(for: state)
+        if NSImage(systemSymbolName: fallback, accessibilityDescription: nil) != nil { return fallback }
+        return "circle.dashed"
     }
 
     /// 面板内容：NSHostingController 承载 ThemeProvider + PanelView + **六对象
     /// 注入逐项**（与退役 MenuBarExtra 链 :87-97 逐项等价——cellarUpdater/
     /// statsSampler 原链即不注入：面板树零消费，About/Stats 页为主窗口专属）。
     private func installPopoverContent() {
-        guard let installer, let loginItems, let onboarding,
-              let displaySettings, let cpuFanMonitor, let styleController else { return }
-        popover.contentViewController = NSHostingController(rootView: StatusItemPanelRoot(
-            styleController: styleController,
-            installer: installer,
-            statusController: .shared,
-            loginItems: loginItems,
-            onboarding: onboarding,
-            displaySettings: displaySettings,
-            cpuFanMonitor: cpuFanMonitor
-        ))
+        popover.contentViewController = NSHostingController(rootView: StatusItemPanelRoot())
     }
 
     // MARK: - 左右键分流
@@ -220,7 +247,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 退出词：theme.word(.quit) 既有通路——resolve 产 theme 后取词（语汇只随
     /// style，scheme 入参为 resolve 签名必填、取词无关，任取 .light 并在此注记）。
     private var quitWord: String {
-        CellarTheme.resolve(style: styleController?.style ?? .native, scheme: .light).word(.quit)
+        CellarTheme.resolve(style: StyleController.shared.style, scheme: .light).word(.quit)
     }
 
     // MARK: - 菜单动作（全部 @MainActor——类隔离即保证）
@@ -261,42 +288,25 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 }
 
-// MARK: - SwiftUI 内容根（AppKit ↔ SwiftUI 桥）
-
-/// 图标内容根：观察 styleController（换肤重评 ThemeProvider）；MenuBarIconLabel
-/// 自身维持 @ObservedObject 直注（本处仅传引用，双观察形态不变）。
-private struct StatusItemIconRoot: View {
-    @ObservedObject var styleController: StyleController
-    @ObservedObject var controller: StatusController
-    @ObservedObject var settings: DisplaySettingsController
-
-    var body: some View {
-        ThemeProvider(style: styleController.style) {
-            MenuBarIconLabel(controller: controller, settings: settings)
-        }
-    }
-}
+// MARK: - 面板内容根（AppKit ↔ SwiftUI 桥）
 
 /// 面板内容根：六对象注入逐项（§2.1 B 必验面①——与退役 MenuBarExtra 链
-/// :87-97 逐项等价；缺任一 @EnvironmentObject 即运行时 crash）。
+/// :87-97 逐项等价；缺任一 @EnvironmentObject 即运行时 crash；单例化后全部
+/// 静态可达，构造参数归零）。主题观察内移：@ObservedObject StyleController.shared
+///（App body 不再观察控制器——主题切换重评由本根自持观察承接；图标走
+/// button.image 模板管道不依赖主题）。
 private struct StatusItemPanelRoot: View {
-    @ObservedObject var styleController: StyleController
-    let installer: DaemonInstaller
-    let statusController: StatusController
-    let loginItems: LoginItemController
-    let onboarding: OnboardingController
-    let displaySettings: DisplaySettingsController
-    let cpuFanMonitor: CpuFanMonitor
+    @ObservedObject private var styleController = StyleController.shared
 
     var body: some View {
         ThemeProvider(style: styleController.style) {
             PanelView()
-                .environmentObject(installer)
-                .environmentObject(statusController)
-                .environmentObject(loginItems)
-                .environmentObject(onboarding)
-                .environmentObject(displaySettings)
-                .environmentObject(cpuFanMonitor)
+                .environmentObject(DaemonInstaller.shared)
+                .environmentObject(StatusController.shared)
+                .environmentObject(LoginItemController.shared)
+                .environmentObject(OnboardingController.shared)
+                .environmentObject(DisplaySettingsController.shared)
+                .environmentObject(CpuFanMonitor.shared)
         }
     }
 }

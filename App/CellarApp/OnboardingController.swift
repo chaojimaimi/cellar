@@ -17,6 +17,9 @@ enum InstallGate: Equatable {
 /// （静默补写）、安装复检统一 wrapper、完成写标志（共享 store 原子 update + 内存先行）。
 @MainActor
 final class OnboardingController: ObservableObject {
+    /// 0.23.16 B8：单例化（五控制器同批——见 LoginItemController 注记）。
+    static let shared = OnboardingController(store: AppConfigStore.shared)
+
     @Published private(set) var step: OnboardingStep = .welcome
     /// 最近一次冲突检查折叠结果（nil = 未检查）。
     @Published private(set) var gate: ConflictGateOutcome?

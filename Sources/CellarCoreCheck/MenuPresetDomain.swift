@@ -124,16 +124,21 @@ func runMenuPresetDomainScenarios() {
               && controlSrc.contains(".disabled(isModeDisabled || isActionActive)"),
           "菜单源钉-1", "面板预设行零改动钉（80/70/60 三钮 + disabled 双条件无 busy——菜单 90/75/100 不镜像面板）")
 
-    // ---- 菜单源钉-2：组装薄层六注入逐项 + ThemeProvider 双包裹 + 面板零改动 ----
+    // ---- 菜单源钉-2：组装薄层六注入逐项 + 面板根主题观察 + 面板零改动 ----
+    // （0.23.16 真机回归重构后更新：六控制器单例化 → 注入 .shared 形态；图标
+    // button.image/title 管道不再包 ThemeProvider——面板根单包裹 + 图标模板
+    // 管道自适应明暗；原「双包裹」钉随图标宿主退役改单包裹语义。）
 
     let statusItemSrc = source("App/CellarApp/StatusItemController.swift")
-    let sixInjections = ["installer", "statusController", "loginItems", "onboarding",
-                         "displaySettings", "cpuFanMonitor"]
+    let sixInjections = ["DaemonInstaller.shared", "StatusController.shared", "LoginItemController.shared",
+                         "OnboardingController.shared", "DisplaySettingsController.shared", "CpuFanMonitor.shared"]
         .map { ".environmentObject(\($0))" }
     check(sixInjections.allSatisfy { statusItemSrc.contains($0) },
           "菜单源钉-2", "popover 六对象注入逐项在位（\(sixInjections.joined(separator: " / "))——缺 displaySettings 即 crash）")
-    check(statusItemSrc.components(separatedBy: "ThemeProvider(style: styleController.style)").count - 1 >= 2,
-          "菜单源钉-2", "ThemeProvider 双包裹（图标 + 面板——面板视图消费 .cellarTheme，§2.1 B 必验面①）")
+    check(statusItemSrc.components(separatedBy: "ThemeProvider(style: styleController.style)").count - 1 == 1
+              && !statusItemSrc.contains("StatusItemIconRoot")
+              && statusItemSrc.contains("button.image = MenuBarBatteryIconRenderer.image("),
+          "菜单源钉-2", "面板根单包裹 ThemeProvider + 图标 button.image 模板管道（图标宿主退役——模板着色走 NSStatusBarButton cell 自适应明暗，真机回归修复 2026-11-10）")
     // 原退役 MenuBarExtra 链 :87-97 即无 cellarUpdater/statsSampler（面板树零消费
     // ——About/Stats 页为主窗口专属）——popover 环境注入与其逐项等价（反钉缺席面）。
     check(!statusItemSrc.contains(#".environment(\.cellarUpdater"#)
@@ -168,13 +173,15 @@ func runMenuPresetDomainScenarios() {
               && !statusItemSrc.contains(#"@Environment(\.openWindow) private"#),
           "菜单源钉-3", "退出 = NSApp.terminate；主窗口不做（AppKit 域无 openWindow 通路——登记偏差，方案 §2.2）")
     let cellarAppSrc = source("App/CellarApp/CellarApp.swift")
+    let installerSrc = source("App/CellarApp/DaemonInstaller.swift")
     check(cellarAppSrc.contains("@NSApplicationDelegateAdaptor(AppDelegate.self)")
               && cellarAppSrc.contains("StatusItemController.shared.install()")
-              && cellarAppSrc.contains("StatusItemController.shared.wire(")
               && cellarAppSrc.contains(".environmentObject(StatusController.shared)")
               && !cellarAppSrc.contains("MenuBarExtra {")
-              && !cellarAppSrc.contains(".menuBarExtraStyle"),
-          "菜单源钉-3", "CellarApp 锚点在位（Adaptor + didFinishLaunching install + Window 内容 onAppear wire + StatusController.shared 注入；MenuBarExtra 场景退役反钉）")
+              && !cellarAppSrc.contains(".menuBarExtraStyle")
+              && installerSrc.contains("didSet 自转发")
+              && installerSrc.contains("StatusItemController.shared.wire()"),
+          "菜单源钉-3", "CellarApp 锚点在位（Adaptor + didFinishLaunching install + DaemonInstaller didSet 自转发 wire——LSUIElement 主窗口链永不具象化实证后的确定性锚点；StatusController.shared 注入；MenuBarExtra 场景退役反钉）")
 
     // ---- catalog 新 key 双语直读（三 key 有意增量登记：479 → 482）----
 

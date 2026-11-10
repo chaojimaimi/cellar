@@ -29,6 +29,10 @@ enum LoginItemRegistration: Equatable {
 /// 另行打包 helper app 时的形态，不适用）。
 @MainActor
 final class LoginItemController: ObservableObject {
+    /// 0.23.16 B8：单例化（StatusItemController AppKit 域组装 + @EnvironmentObject
+    /// 消费同源——StatusController.shared 先例形态；五控制器同批）。
+    static let shared = LoginItemController(store: AppConfigStore.shared)
+
     @Published private(set) var launchAtLogin = false
     @Published private(set) var busy = false
     @Published private(set) var feedback: String?

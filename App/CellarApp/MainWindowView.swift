@@ -18,13 +18,21 @@ import SwiftUI
 struct MainWindowView: View {
     @EnvironmentObject private var statusController: StatusController
     @EnvironmentObject private var installer: DaemonInstaller
-    @Environment(\.cellarTheme) private var theme
+    // 0.23.16 B8：主题观察内移（六控制器单例化后 App body 不再观察 StyleController
+    // ——主题切换重评由本视图自持 @ObservedObject 承接；cellarTheme 供子视图经
+    // body 内 ThemeProvider 注入，本视图自身直算（同 resolve 签名））。
+    @ObservedObject private var styleController = StyleController.shared
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: CellarTheme {
+        CellarTheme.resolve(style: styleController.style, scheme: colorScheme)
+    }
 
     @State private var selection: MainWindowPage = .dashboard
     /// 悬停行（逐行判别；自绘行的 hover 态 = 照面板 FooterLinks hover 语汇）。
     @State private var hoveredPage: MainWindowPage?
 
     var body: some View {
+        ThemeProvider(style: styleController.style) {
         HStack(spacing: 0) {
             sidebar
                 .frame(width: 216)
@@ -41,6 +49,7 @@ struct MainWindowView: View {
         .frame(minWidth: 920, minHeight: 620)
         .onAppear { statusController.setMainWindowVisible(true) }
         .onDisappear { statusController.setMainWindowVisible(false) }
+        }
     }
 
     // MARK: - 侧栏（自绘：品牌区 + 三段导航组 + footer daemon 状态行）
