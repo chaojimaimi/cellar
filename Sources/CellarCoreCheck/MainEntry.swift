@@ -501,6 +501,10 @@ struct Main {
         // activeMatch/isValidName；源钉与方案-9..11/随批-1..2 随 commit 2/3/4
         // 递增——ProfileDomain）。
         runProfileDomainScenarios()
+        // 0.23.21-alpha 整理批拆分：Profile 源钉面独立 runner（九个纯源码读取
+        // 钉块迁 ProfileDomain+Pins.swift——判定面/源钉-9 留守 ProfileDomain；
+        // 双注册场景总数相加不减，拆分静默丢失防线——0.23.20 评审 P1 实证先例）。
+        runProfileDomainPinsScenarios()
         let failures = FailureCounter.shared.count
         print(failures == 0 ? "\n全部 \(FailureCounter.shared.scenarioCount) 个场景通过 ✅" : "\n\(failures) 个场景失败 ❌")
         exit(failures == 0 ? 0 : 1)
