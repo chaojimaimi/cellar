@@ -201,6 +201,62 @@ public enum ProfileApplyStep: Equatable, Sendable {
     case setMagSafeLed(UInt8)
 }
 
+/// 逐域比较报告（0.23.19 热修取证装具 §2——**纯新增值类型**：把 applyPlan/
+/// activeMatch 共用的比较域结论逐域展开供日志消费，判定面单源不变）。
+///
+/// nil 未捕获与 false 匹配不可混：profile 未捕获的旋钮域（payload 字段 nil）
+/// 不参与收敛判定（skip = true）——skip 标记与 matched 布尔分立承载，防「未捕获」
+/// 被误读成「已比对且匹配」。
+public struct MatchReport: Sendable, Equatable {
+    public let mode: Bool
+    public let limits: Bool
+    public let fan: Bool
+    public let thermal: Bool
+    public let schedule: Bool
+    public let calibration: Bool
+    public let ch: Bool
+    public let led: Bool
+    /// nil 未捕获跳过域标记（六旋钮域；mode/limits 恒参与比较无 skip 形态）。
+    public let fanSkipped: Bool
+    public let thermalSkipped: Bool
+    public let scheduleSkipped: Bool
+    public let calibrationSkipped: Bool
+    public let chSkipped: Bool
+    public let ledSkipped: Bool
+
+    public init(
+        mode: Bool,
+        limits: Bool,
+        fan: Bool,
+        thermal: Bool,
+        schedule: Bool,
+        calibration: Bool,
+        ch: Bool,
+        led: Bool,
+        fanSkipped: Bool,
+        thermalSkipped: Bool,
+        scheduleSkipped: Bool,
+        calibrationSkipped: Bool,
+        chSkipped: Bool,
+        ledSkipped: Bool
+    ) {
+        self.mode = mode
+        self.limits = limits
+        self.fan = fan
+        self.thermal = thermal
+        self.schedule = schedule
+        self.calibration = calibration
+        self.ch = ch
+        self.led = led
+        self.fanSkipped = fanSkipped
+        self.thermalSkipped = thermalSkipped
+        self.scheduleSkipped = scheduleSkipped
+        self.calibrationSkipped = calibrationSkipped
+        self.chSkipped = chSkipped
+        self.ledSkipped = ledSkipped
+    }
+}
+
 // MARK: - 模型纯函数集
 
 public enum ProfileModel {
@@ -411,5 +467,31 @@ public enum ProfileModel {
     private static func ledFieldMatches(_ profile: ProfilePayload, _ status: DaemonStatus) -> Bool {
         guard let ledMode = profile.magSafeLedMode else { return true }
         return ledMode == status.magSafeLed?.mode?.rawValue
+    }
+
+    // MARK: - 取证装具出口（0.23.19 热修 §2——纯新增，上方比较域 helper 一行不动）
+
+    /// 逐域比较报告（ABORT 快照行 + abort 2s 延迟复核的取证消费面；**纯新增
+    /// 出口零判定逻辑改动**——复用上方比较域 private helper 单源，八布尔全真
+    /// ⇔ readbackMatches 真 ⇔ applyPlan 空，applyPlan/activeMatch 判定面一字
+    /// 不动）。skip 标记分立承载 nil 未捕获域（不参与收敛判定），与 matched
+    /// 布尔不可混。
+    public static func matchReport(profile: ProfilePayload, current: DaemonStatus) -> MatchReport {
+        MatchReport(
+            mode: profile.mode == current.mode,
+            limits: limitsMatch(profile, current),
+            fan: fanFieldMatches(profile, current),
+            thermal: thermalFieldMatches(profile, current),
+            schedule: scheduleFieldMatches(profile, current),
+            calibration: calibrationFieldMatches(profile, current),
+            ch: chFieldMatches(profile, current),
+            led: ledFieldMatches(profile, current),
+            fanSkipped: profile.fan == nil,
+            thermalSkipped: profile.thermal == nil,
+            scheduleSkipped: profile.scheduleJson == nil,
+            calibrationSkipped: profile.calibration == nil,
+            chSkipped: profile.chHysteresisEnabled == nil,
+            ledSkipped: profile.magSafeLedMode == nil
+        )
     }
 }

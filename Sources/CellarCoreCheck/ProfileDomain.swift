@@ -504,6 +504,7 @@ func runProfileDomainScenarios() {
             "control.profile.applied": "已应用方案「%@」",
             "control.profile.notConverged": "方案「%@」中止：守护进程读回未收敛，已停止切换",
             "panel.menu.profiles": "充电方案",
+            "panel.versionLine3": "守护进程 %1$@（协议兼容）· App %2$@ · %3$@",
         ]
         var allPresent = true
         for (key, zh) in expectations {
@@ -519,7 +520,22 @@ func runProfileDomainScenarios() {
                 allPresent = false
             }
         }
-        check(allPresent, "源钉-7", "catalog 新键逐字直读（zh-Hans 抽样 11 键逐字 + en 双语齐——extractionState manual 单一门面）")
+        check(allPresent, "源钉-7", "catalog 新键逐字直读（zh-Hans 抽样 12 键逐字 + en 双语齐——extractionState manual 单一门面）")
+        // 0.23.19 热修：versionLine3 双语新词面逐字（0.23.18 用户第 4 次误读——
+        // 「协议兼容」括注紧跟 daemon 版本，双数字并排的「落后/不一致」歧义消除；
+        // 位置参数 %1$@/%2$@/%3$@ 形态保留、after 字面无「握手」——「握手」由
+        // 第三参词串 panel.handshake.connected 自带，防「握手握手正常」缺陷串）。
+        func unit(_ key: String, _ locale: String) -> String? {
+            if let entry = strings[key] as? [String: Any],
+               let localizations = entry["localizations"] as? [String: Any],
+               let unit = (localizations[locale] as? [String: Any])?["stringUnit"] as? [String: Any] {
+                return unit["value"] as? String
+            }
+            return nil
+        }
+        check(unit("panel.versionLine3", "zh-Hans") == "守护进程 %1$@（协议兼容）· App %2$@ · %3$@"
+                  && unit("panel.versionLine3", "en") == "Daemon %1$@ (protocol compatible) · App %2$@ · %3$@",
+              "源钉-7", "versionLine3 双语新词面逐字（位置参数三形态保留 + 无「握手」前缀——零新键，ControlSectionView 消费零改动）")
     } else {
         check(false, "源钉-7", "catalog 键结构缺席（双语源钉红）")
     }
@@ -697,4 +713,93 @@ func runProfileDomainScenarios() {
     check(sectionViewSrc.contains("switchDisabled")
               && sectionViewSrc.contains(".opacity(switchDisabled ?"),
           "源钉-8", "P3 管理页行禁用视觉（switchDisabled 三门共源 + 行条件透明度——busy 置灰先例形态，CRUD 三钮不动作保持）")
+
+    // ---- 源钉-9：0.23.19 热修取证装具（.error 级反钉 + privacy .public 反钉 +
+    // matchReport/MatchReport public 纯新增反钉〔既有 helper 零改动〕+
+    // abortChain(status:) 签名 + 2s 延迟观测 + import os）----
+
+    // 装具通道在位（import os + com.cellar/profile-chain——AppConfigStore.log
+    // 先例形态；Logger Sendable 跨隔离安全）。
+    let profileApplySrc3 = source("App/CellarApp/StatusController+ProfileApply.swift")
+    check(profileApplySrc3.contains("import os")
+              && profileApplySrc3.contains("Logger(subsystem: \"com.cellar\", category: \"profile-chain\")"),
+          "源钉-9", "取证通道在位（import os + subsystem/category 双段——0.23.18 编排器文件纯观测加装具）")
+    // 级别反钉：打点恰八处全 .error（os_log info 级不落盘仅内存环形缓冲，log show
+    // 事后不可检索——0.23.13 钉扎行教训；取证装具必须持久化可查）。
+    check(profileApplySrc3.components(separatedBy: "Self.log.error(").count - 1 == 8
+              && !profileApplySrc3.contains("Self.log.info(")
+              && !profileApplySrc3.contains("Self.log.debug(")
+              && !profileApplySrc3.contains("Self.log.notice("),
+          "源钉-9", "级别反钉：装具打点恰八处全 .error（链启动/推进/ABORT 双臂/finish/dispatch/ABORT+2s 双臂——info/debug/notice 零使用）")
+    // 隐私反钉：全部插值 privacy: .public（os_log 隐私默认私有——否则 log show
+    // 侧只见 <private> 取证失效；`, privacy: .public)` 恰 31 处 = 八打点行插值
+    // 逐个标注的精确总数）。
+    check(profileApplySrc3.components(separatedBy: ", privacy: .public)").count - 1 == 31,
+          "源钉-9", "隐私反钉：Logger 插值恰 31 处全 privacy: .public（数值/String/面串逐个标注——八行插值总数精确断言）")
+    // 六打点字面在位（§2 打点面五处 + 延迟复核；plan 步型序列 String(describing:)
+    // 逐元素全形重建 T1 实际步序）。
+    check(profileApplySrc3.contains("chain start name=")
+              && profileApplySrc3.contains("advance #executed=")
+              && profileApplySrc3.contains("ABORT name=")
+              && profileApplySrc3.contains("finish name=")
+              && profileApplySrc3.contains("dispatch step=")
+              && profileApplySrc3.contains("ABORT+2s name=")
+              && profileApplySrc3.contains("Self.forensicPlan(plan)"),
+          "源钉-9", "六打点字面在位（chain start / advance / ABORT / finish / dispatch / ABORT+2s + plan 数组 String(describing:) 重建）")
+    // abortChain(status:) 定版签名 + 双调用点形态 + 清链前捕获（评审 P1-2）。
+    check(profileApplySrc3.contains("private func abortChain(status: DaemonStatus?)")
+              && !profileApplySrc3.contains("private func abortChain()"),
+          "源钉-9", "abortChain(status:) 定版签名（无参形态退役——DaemonStatus? 可选承载「有/无现读回」两臂）")
+    check(profileApplySrc3.contains("abortChain(status: status)")
+              && profileApplySrc3.contains("abortChain(status: nil)"),
+          "源钉-9", "双调用点形态（守卫臂传现读回——在作用域处；LED 非法 raw 臂传 nil——省略 match/status 段）")
+    let abortSegment = profileApplySrc3.components(
+        separatedBy: "private func abortChain(status: DaemonStatus?)").dropFirst().first ?? ""
+    check(abortSegment.range(of: "let payload = profileChain?.payload")?.lowerBound
+              ?? abortSegment.startIndex
+              < abortSegment.range(of: "profileChain = nil")?.lowerBound ?? abortSegment.endIndex,
+          "源钉-9", "清链前捕获 payload（2s 延迟复核的输入——清链后 profileChain 为 nil；name→捕获→清链→拒绝上屏原行序不变）")
+    // 2s 延迟单发观测（P3-2 + 二轮 P3 补比较基准）：abort 2s 后 daemonStatus
+    // 快照 + matchReport 八域复核布尔——收敛结论直接落日志不靠肉眼比对。
+    check(profileApplySrc3.contains("Task.sleep(for: .seconds(2))")
+              && profileApplySrc3.contains("StatusController.shared.daemonStatus")
+              && profileApplySrc3.contains("ProfileModel.matchReport(profile: payload, current: now)"),
+          "源钉-9", "2s 延迟单发观测（Task sleep 2s → 读 shared.daemonStatus → matchReport 复核——「abort 某瞬态、后收敛 ✓ 亮而横幅残留」缺陷形态的后半程取证）")
+    // matchReport/MatchReport public 纯新增反钉（消费方在 App 目标跨模块——
+    // 返回类型可见性须 ≥ 函数可见性；applyPlan/activeMatch 先例同 public 形态）。
+    let profileModelSrc2 = source("Sources/CellarCore/Control/ProfileModel.swift")
+    check(profileModelSrc2.contains("public struct MatchReport: Sendable, Equatable")
+              && profileModelSrc2.contains("public static func matchReport(profile: ProfilePayload, current: DaemonStatus) -> MatchReport"),
+          "源钉-9", "matchReport/MatchReport public 纯新增（Sendable/Equatable 值类型——CellarCore 纯值层纪律）")
+    check(profileModelSrc2.components(separatedBy: "private static func").count - 1 == 11,
+          "源钉-9", "既有比较域 helper 零改动（private static func 恰 11 个原数不变——纯新增出口复用 limitsMatch/六域 helper 单源，判定面一行不动）")
+    check(profileModelSrc2.contains("mode: profile.mode == current.mode")
+              && profileModelSrc2.contains("limits: limitsMatch(profile, current)")
+              && profileModelSrc2.contains("fan: fanFieldMatches(profile, current)")
+              && profileModelSrc2.contains("thermal: thermalFieldMatches(profile, current)")
+              && profileModelSrc2.contains("schedule: scheduleFieldMatches(profile, current)")
+              && profileModelSrc2.contains("calibration: calibrationFieldMatches(profile, current)")
+              && profileModelSrc2.contains("ch: chFieldMatches(profile, current)")
+              && profileModelSrc2.contains("led: ledFieldMatches(profile, current)")
+              && profileModelSrc2.contains("fanSkipped: profile.fan == nil")
+              && profileModelSrc2.contains("ledSkipped: profile.magSafeLedMode == nil"),
+          "源钉-9", "MatchReport 八域映射复用既有 helper + skip 分立承载 nil 未捕获（nil 未捕获与 false 匹配不可混；八布尔全真 ⇔ readbackMatches 真同源）")
+    // 行为面（评审方向之外加严——matchReport 纯函数直测：全匹配 / 单域翻转 /
+    // nil 跳过三形态）。
+    let reportHit = ProfileModel.matchReport(profile: capturedProfile(from: base), current: base)
+    check(reportHit == MatchReport(mode: true, limits: true, fan: true, thermal: true,
+                                   schedule: true, calibration: true, ch: true, led: true,
+                                   fanSkipped: false, thermalSkipped: false, scheduleSkipped: false,
+                                   calibrationSkipped: false, chSkipped: false, ledSkipped: false),
+          "源钉-9", "行为面：全匹配报告（八域全 true + 六 skip 全 false——与 readbackMatches 全真 / applyPlan 空同判）")
+    var driftedReportProfile = capturedProfile(from: base)
+    driftedReportProfile.upperLimit = 65
+    let reportDrift = ProfileModel.matchReport(profile: driftedReportProfile, current: base)
+    check(!reportDrift.limits && reportDrift.mode && reportDrift.fan && reportDrift.led,
+          "源钉-9", "行为面：限值漂移仅 limits 翻假（逐域独立——余域布尔如实保留不连坐）")
+    var noFanReportProfile = capturedProfile(from: base)
+    noFanReportProfile.fan = nil
+    let reportSkip = ProfileModel.matchReport(profile: noFanReportProfile, current: base)
+    check(reportSkip.fanSkipped && reportSkip.fan && !reportSkip.thermalSkipped && reportSkip.thermal,
+          "源钉-9", "行为面：nil 未捕获域 skip 标记分立（fan 快照缺席 → fanSkipped true 且域布尔按 skip 语义不参与判——与 false 匹配失败不可混）")
 }

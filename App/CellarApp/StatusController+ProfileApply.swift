@@ -1,11 +1,19 @@
 import CellarCore
 import CellarUI
 import Foundation
+import os
 
 // MARK: - 多 Profile 切换编排器（0.23.18 方案 §2.3；extension 文件——
 // StatusController 行数纪律拆分先例，LED/LimitExecution 同款）
 
 extension StatusController {
+
+    // 取证打点通道（0.23.19 热修 §2——AppConfigStore.log 先例形态；Logger
+    // Sendable 跨隔离安全）。级别纪律（0.23.13 钉扎行教训）：全部打点 .error
+    // ——os_log info 级不落盘（仅内存环形缓冲，log show 事后不可检索），取证
+    // 装具必须持久化可查；全部插值 privacy: .public（os_log 隐私默认私有，
+    // 否则 log show 侧只见 <private> 取证失效）。
+    private nonisolated static let log = Logger(subsystem: "com.cellar", category: "profile-chain")
 
     /// 链会话状态（值类型；存储槽 `profileChain` 在主类声明——extension 不能声明
     /// 存储属性，LED magSafeLedPending 同款拆分先例）。
@@ -49,6 +57,8 @@ extension StatusController {
             reportLocalRejection(CellarL10n.s("common.parameterInvalid", "profileSwitchOccupied"))
             return
         }
+        // 取证打点①（0.23.19 热修 §2）：链启动——方案名/id/限值/模式 + 现值基线。
+        Self.log.error("chain start name=\(payload.name, privacy: .public) id=\(payload.id, privacy: .public) limits=\(payload.upperLimit, privacy: .public)/\(payload.hysteresis, privacy: .public) mode=\(payload.mode, privacy: .public) | current(mode=\(current.mode, privacy: .public), upper=\(current.upperLimit, privacy: .public), hys=\(current.hysteresis, privacy: .public))")
         profileChain = ProfileChainState(payload: payload, lastStep: nil, executed: 0)
         advanceProfileChain(from: current)
     }
@@ -74,6 +84,9 @@ extension StatusController {
         // 方案。计划空 ⇔ 全旋钮读回匹配（与 activeMatch 共用比较 helper——评审
         // P3 实现纪律钉死 + 方案-11 场景互证）。
         let plan = ProfileModel.applyPlan(profile: chain.payload, current: status)
+        // 取证打点②（0.23.19 热修 §2）：每推进入口——plan 步型序列 String(describing:)
+        // 逐元素全形重建 T1 实际步序（ProfileApplyStep 含关联值 enum）。
+        Self.log.error("advance #executed=\(chain.executed, privacy: .public) lastStep=\(Self.forensicStep(chain.lastStep), privacy: .public) | plan=[\(Self.forensicPlan(plan), privacy: .public)] | status(mode=\(status.mode, privacy: .public), upper=\(status.upperLimit, privacy: .public), hys=\(status.hysteresis, privacy: .public))")
         // 链尾判定前置（评审收口 P1）：计划空 → 聚合反馈 + 意图更新 + 清链——
         // **必须先于收敛守卫**（见函数头注：守卫二先行会误杀满序链的收敛尾）。
         guard let step = plan.first else {
@@ -89,7 +102,9 @@ extension StatusController {
         if ProfileModel.chainGuardShouldAbort(
             lastStep: chain.lastStep, nextStep: step, executed: chain.executed
         ) {
-            abortChain()
+            // 取证装具 §2 P1-2：守卫臂传现读回（在作用域处——abortChain 内
+            // 清链前打 ABORT 快照行 + 2s 延迟复核）。
+            abortChain(status: status)
             return
         }
         profileChain?.lastStep = step
@@ -102,6 +117,9 @@ extension StatusController {
     /// 仅链尾 finishProfileChain 一笔聚合反馈；失败即停：onFailure 清链（横幅
     /// 本体由 classifyControlFailure 既有三态落位——onFailure 不重复落横幅）。
     private func dispatchProfileStep(_ step: ProfileApplyStep) {
+        // 取证打点⑤（0.23.19 热修 §2）：发步——关联值全形（LED 非法 raw 臂的
+        // ABORT 行前置即本行，步载荷可直读）。
+        Self.log.error("dispatch step=\(String(describing: step), privacy: .public)")
         switch step {
         case .setLimits(let upperLimit, let hysteresis):
             runControl(
@@ -174,7 +192,8 @@ extension StatusController {
             // 手改配置防御：非法 raw 值（MagSafeLEDMode 白名单外）永不收敛——
             // 按未收敛中止（capture 只存合法 rawValue；UInt8 载荷为手编 Codable 容错面）。
             guard let mode = MagSafeLEDMode(rawValue: raw) else {
-                abortChain()
+                // 取证装具 §2 P1-2：本臂无现读回可传（省略 match/status 段）。
+                abortChain(status: nil)
                 return
             }
             runControl(
@@ -195,6 +214,11 @@ extension StatusController {
     /// 清链。
     private func finishProfileChain() {
         guard let payload = profileChain?.payload else { return }
+        // 取证打点④（0.23.19 热修 §2）：链尾收敛——executed 清链即灭，先取后清
+        // （原行序不变：guard → 清链 → 聚合反馈 → 意图更新；插值前落局部量——
+        // Logger 插值闭包内实例属性须显式 self，Swift 6 严格模式门）。
+        let executed = profileChain?.executed ?? 0
+        Self.log.error("finish name=\(payload.name, privacy: .public) executed=\(executed, privacy: .public)")
         profileChain = nil
         setSuccessFeedback(CellarL10n.s("control.profile.applied", payload.name))
         ProfileController.shared.setActiveIntent(id: payload.id)
@@ -202,10 +226,104 @@ extension StatusController {
 
     /// 链中止（收敛守卫一/二命中 + 非法 LED raw 防御）：统一清链 + 「未收敛」
     /// 拒绝上屏（非静默；横幅通道 = reportLocalRejection→controlFeedback）。
-    private func abortChain() {
+    ///
+    /// 0.23.19 热修改签名收 `status: DaemonStatus?`（取证装具 §2 P1-2 定版）：
+    /// 守卫臂传现读回（abort 时 matchReport + 全比较面现值一次读全）、LED 非法
+    /// raw 臂传 nil（省略 match/status 两段）。**零判定逻辑改动**——name 捕获 →
+    /// 清链 → 拒绝上屏原行序不变；装具打点（快照行 + 2s 延迟复核）纯观测面。
+    private func abortChain(status: DaemonStatus?) {
         let name = profileChain?.payload.name ?? ""
+        // 清链前捕获 payload/链面（§2 打点六：2s 延迟复核的输入——清链后
+        // profileChain 为 nil，捕获必须前置）。
+        let payload = profileChain?.payload
+        let lastStep = profileChain?.lastStep
+        let executed = profileChain?.executed ?? 0
+        if let payload = payload {
+            if let status = status {
+                // 快照行（评审 P2：matchReport 八域布尔 + status 侧全比较面现值
+                // 一次读全，不依赖相邻行拼凑）。nextStep = 同输入重推导计划首步
+                // （applyPlan 纯函数——与守卫臂触发时的 step 恒等）。
+                let report = ProfileModel.matchReport(profile: payload, current: status)
+                let plan = ProfileModel.applyPlan(profile: payload, current: status)
+                Self.log.error("ABORT name=\(name, privacy: .public) executed=\(executed, privacy: .public) lastStep=\(Self.forensicStep(lastStep), privacy: .public) nextStep=\(Self.forensicStep(plan.first), privacy: .public) | match(\(Self.forensicMatchFace(report), privacy: .public)) | status(\(Self.forensicStatusFace(status, scheduleExpected: payload.scheduleJson), privacy: .public))")
+            } else {
+                // LED 非法 raw 臂（status nil）：省略 match/status 段（无现值
+                // 可比——前置 dispatch 行已载该步全形）。
+                Self.log.error("ABORT name=\(name, privacy: .public) executed=\(executed, privacy: .public) lastStep=\(Self.forensicStep(lastStep), privacy: .public) nextStep=n/a | match(n/a——status 缺席（LED 非法 raw 臂）)")
+            }
+            scheduleAbortRecheck(payload: payload)
+        }
         profileChain = nil
         reportLocalRejection(CellarL10n.s("control.profile.notConverged", name))
+    }
+
+    // MARK: - 取证渲染 helper（0.23.19 热修 §2——纯观测装具配套，零判定消费）
+
+    /// 步型渲染（关联值 enum 全形——String(describing:)；nil → "nil" 字面）。
+    private static func forensicStep(_ step: ProfileApplyStep?) -> String {
+        step.map { String(describing: $0) } ?? "nil"
+    }
+
+    /// plan 步型序列渲染（String(describing:) 逐元素 + 逗号连接）。
+    private static func forensicPlan(_ plan: [ProfileApplyStep]) -> String {
+        plan.map { String(describing: $0) }.joined(separator: ", ")
+    }
+
+    /// Optional 渲染（nil → "nil" 字面——现值缺席与假值不可混）。
+    private static func forensicBool(_ value: Bool?) -> String {
+        value.map { String($0) } ?? "nil"
+    }
+
+    private static func forensicInt(_ value: Int?) -> String {
+        value.map { String($0) } ?? "nil"
+    }
+
+    private static func forensicUInt8(_ value: UInt8?) -> String {
+        value.map { String($0) } ?? "nil"
+    }
+
+    private static func forensicStrategy(_ value: FanStrategy?) -> String {
+        value.map { String(describing: $0) } ?? "nil"
+    }
+
+    /// matchReport 单域渲染：skip 域渲 "skip"（nil 未捕获与 false 匹配不可混）。
+    private static func forensicDomain(_ matched: Bool, _ skipped: Bool) -> String {
+        skipped ? "skip" : String(matched)
+    }
+
+    /// matchReport 八域渲染行（ABORT 快照行与 ABORT+2s 复核行同版式——逐行直读比对；
+    /// 逗号空格分隔与 status 段同构）。
+    private static func forensicMatchFace(_ report: MatchReport) -> String {
+        "mode=\(report.mode), limits=\(report.limits), fan=\(forensicDomain(report.fan, report.fanSkipped)), therm=\(forensicDomain(report.thermal, report.thermalSkipped)), sched=\(forensicDomain(report.schedule, report.scheduleSkipped)), cal=\(forensicDomain(report.calibration, report.calibrationSkipped)), ch=\(forensicDomain(report.ch, report.chSkipped)), led=\(forensicDomain(report.led, report.ledSkipped))"
+    }
+
+    /// DaemonStatus 全比较面现值渲染行（同上双行同版式；schedEq = 方案日程 JSON
+    /// 与现值 byte 等价布尔——JSON 长串不上日志，等价面即比较面）。
+    private static func forensicStatusFace(
+        _ status: DaemonStatus, scheduleExpected: String?
+    ) -> String {
+        let fan = status.fan
+        return "mode=\(status.mode), upper=\(status.upperLimit), hys=\(status.hysteresis), fanEn=\(forensicBool(fan?.enabled)), strat=\(forensicStrategy(fan?.strategy)), thresh=\(forensicInt(fan?.thresholdCentiC)), speed=\(forensicInt(fan?.speedPercent)), s2=\(forensicInt(fan?.stage2Percent)), s2rise=\(forensicInt(fan?.stage2RiseCentiC)), src=\(forensicInt(fan?.temperatureSource)), cpuT=\(forensicInt(fan?.cpuSkinThresholdCentiC)), cpuH=\(forensicInt(fan?.cpuSkinHysteresisCentiC)), therm=\(forensicInt(status.thermPauseCentiC))/\(forensicInt(status.thermHysteresisCentiC)), cal=\(forensicBool(status.calSchedEnabled))/\(forensicInt(status.calSchedIntervalDays))/\(forensicInt(status.calSchedStartHour)), ch=\(forensicBool(status.chHysteresisEnabled)), led=\(forensicUInt8(status.magSafeLed?.mode?.rawValue)), schedEq=\(scheduleExpected == status.scheduleJson)"
+    }
+
+    /// abort 2s 后单发观测（0.23.19 热修 §2 P3-2 + 二轮 P3 补比较基准）：瞬态
+    /// 竞态取证的后半程——「abort 发生在某瞬态、之后读回收敛使 ✓ 点亮而失败
+    /// 横幅残留」（§1 缺陷形态），2s 后 daemonStatus 快照 + matchReport 八域
+    /// 复核布尔把收敛结论直接落日志不靠肉眼比对。纯观测：只读 shared.daemonStatus
+    /// + 纯函数，零写入零反馈。
+    private func scheduleAbortRecheck(payload: ProfilePayload) {
+        let name = payload.name
+        let scheduleExpected = payload.scheduleJson
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard let now = StatusController.shared.daemonStatus else {
+                Self.log.error("ABORT+2s name=\(name, privacy: .public) | daemonStatus nil（失联——复核无现值可比）")
+                return
+            }
+            let recheck = ProfileModel.matchReport(profile: payload, current: now)
+            let plan = ProfileModel.applyPlan(profile: payload, current: now)
+            Self.log.error("ABORT+2s name=\(name, privacy: .public) planEmpty=\(plan.isEmpty, privacy: .public) | match(\(Self.forensicMatchFace(recheck), privacy: .public)) | status(\(Self.forensicStatusFace(now, scheduleExpected: scheduleExpected), privacy: .public))")
+        }
     }
 
     // MARK: - LED 链步重试 helper（ControlModels `.setMagSafeLed` case 恢复配套）
