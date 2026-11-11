@@ -14,8 +14,8 @@ cd "$(dirname "$0")/.."
 
 # 版本号单变量：zip/dmg 文件名由此派生；发布时与 App marketing 版本保持一致
 # （0.23.17 §2.7 双版本模型——daemon 协议版本常量另由 DAEMON_VERSION 承载，
-# App-only 批二者必然不同：App 0.23.18-alpha vs daemonVersion 0.23.16-alpha）。
-VERSION=0.23.18-alpha
+# App-only 批二者必然不同：App 0.23.19-alpha vs daemonVersion 0.23.16-alpha）。
+VERSION=0.23.19-alpha
 
 # daemon 协议版本（0.23.17 §2.7）：从 DaemonXPC.swift 行锚提取
 # `public static let daemonVersion = "…"` 字面量——0.23.17 起常量只在 daemon
