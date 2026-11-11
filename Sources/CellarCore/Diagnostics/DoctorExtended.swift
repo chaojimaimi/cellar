@@ -60,6 +60,21 @@ extension BTMState {
         if hasProgramIdentifier { return .running }
         return nil
     }
+
+    /// 从 `launchctl print system/com.cellar.daemon` 输出提取 BTM 记录的父应用
+    /// CFBundleVersion（行形如 `parent bundle version = 2318`——2026-11-11 事故
+    /// launchctl print 实测行）。行缺失（老 macOS 格式差异）或非数字 → nil，
+    /// 调用方降级（不误报）。行扫描纪律与 parseLaunchctlPrint 同款。
+    public static func parentBundleVersion(fromPrintOutput output: String) -> Int? {
+        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("parent bundle version = ") else { continue }
+            let tail = line.dropFirst("parent bundle version = ".count)
+                .trimmingCharacters(in: .whitespaces)
+            return Int(tail)
+        }
+        return nil
+    }
 }
 
 // MARK: - 检查 3 键在位矩阵

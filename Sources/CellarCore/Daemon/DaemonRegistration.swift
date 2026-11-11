@@ -309,3 +309,31 @@ public func btmAnchorDriftSuspected(
 ) -> Bool {
     registration == .enabled && route == .unknown && connection == .unreachable
 }
+
+// MARK: - 升级后签名失配（stale-pin）精确判定（0.23.22 §1.1）
+
+/// 升级后签名失配（stale-pin）精确判定：已启用 ∧ App 托管 ∧ spawn 反复失败
+/// ∧ BTM 记录父包版本 ≠ 当前 App 版本（2026-11-11 事故形态：App-only 升级后
+/// BTM 钉扎旧 cdhash 与新 ad-hoc 二进制失配 → daemon spawn 被 Launch
+/// Constraint Violation 拒，EX_CONFIG 78 循环）。parent/own 任一未知（nil）→
+/// false（降级通用 btmCorrupted 行，不误报）。speculative spawn 假愈面（运行中
+/// 失配）天然不报——daemon 实际在跑无故障，诚实呈现。
+///
+/// 判定五条件依据（全部本机实证）：①registration == .enabled——BTM 记录有效
+///（notRegistered/pending 是授权流过渡态，不报）；②③route == .appManaged ∧
+/// btmState == .spawnFailed——与既有 btmCorrupted 同源特征（last exit code = 78:
+/// EX_CONFIG / Could not find and/or execute program / copy_bundle_path 三族特征
+/// 行，parseLaunchctlPrint 0.20.1 起产线运行）；④⑤版本双非 nil 且不等——唯一
+/// 增量信号（BTM 钉扎于 register 时刻的父包版本 vs 磁盘现行 App 版本，release
+/// 纪律下每次发版必变）。
+public func stalePinSuspected(
+    registration: RegistrationStatus,
+    route: DaemonRoute,
+    btmState: BTMState?,
+    parentBundleVersion: Int?,
+    ownBundleVersion: Int?
+) -> Bool {
+    guard registration == .enabled, route == .appManaged, btmState == .spawnFailed else { return false }
+    guard let parent = parentBundleVersion, let own = ownBundleVersion else { return false }
+    return parent != own
+}

@@ -484,6 +484,33 @@ func runProfileDomainScenarios() {
               && !btmAnchorDriftSuspected(registration: .notRegistered, route: .unknown, connection: .unreachable),
           "随批-1", "边界负臂：连接恢复/连接未刷新/路线已判明/未注册全不报（「未注册失联 = 常态」语义不误报）")
 
+    // ---- 随批-3：stalePinSuspected 真值表（0.23.22 §1.3，8 行——a..h 共用一标签）----
+
+    check(stalePinSuspected(registration: .enabled, route: .appManaged, btmState: .spawnFailed,
+                            parentBundleVersion: 2318, ownBundleVersion: 2321),
+          "随批-3", "a：enabled ∧ appManaged ∧ spawnFailed ∧ 2318≠2321 → true（本案原形——升级后 BTM 钉扎旧 cdhash）")
+    check(!stalePinSuspected(registration: .enabled, route: .appManaged, btmState: .spawnFailed,
+                             parentBundleVersion: 2321, ownBundleVersion: 2321),
+          "随批-3", "b：版本一致 → false（R3 dev-bundle 覆盖形态降级通用 btmCorrupted 行）")
+    check(!stalePinSuspected(registration: .enabled, route: .appManaged, btmState: .running,
+                             parentBundleVersion: 2318, ownBundleVersion: 2321),
+          "随批-3", "c：运行中不报（speculative spawn 假愈面——daemon 在跑无故障，诚实呈现）")
+    check(!stalePinSuspected(registration: .notRegistered, route: .appManaged, btmState: .spawnFailed,
+                             parentBundleVersion: 2318, ownBundleVersion: 2321),
+          "随批-3", "d：未注册不报（授权流过渡态非 BTM 记录有效形态）")
+    check(!stalePinSuspected(registration: .enabled, route: .appManaged, btmState: .spawnFailed,
+                             parentBundleVersion: nil, ownBundleVersion: 2321),
+          "随批-3", "e：parent 解析降级（老格式行缺失）→ false（不误报）")
+    check(!stalePinSuspected(registration: .enabled, route: .appManaged, btmState: .spawnFailed,
+                             parentBundleVersion: 2318, ownBundleVersion: nil),
+          "随批-3", "f：own 解析降级（异常 CFBundleVersion）→ false（不误报）")
+    check(!stalePinSuspected(registration: .enabled, route: .manual, btmState: .spawnFailed,
+                             parentBundleVersion: 2318, ownBundleVersion: 2321),
+          "随批-3", "g：手工路线不归本形态（BTM 钉扎仅 SMAppService 托管路线）")
+    check(!stalePinSuspected(registration: .enabled, route: .appManaged, btmState: nil,
+                             parentBundleVersion: 2318, ownBundleVersion: 2321),
+          "随批-3", "h：print 解析失败（btmState nil）不误报")
+
     // ---- 源钉-9：0.23.19 热修取证装具（.error 级反钉 + privacy .public 反钉 +
     // matchReport/MatchReport public 纯新增反钉〔既有 helper 零改动〕+
     // abortChain(status:) 签名 + 2s 延迟观测 + import os）----

@@ -102,6 +102,35 @@ func runDoctorExtendedDomainScenarios() {
     check(BTMState.parseLaunchctlPrint("state = running\nlast exit code = 78: EX_CONFIG") == .running,
           "BTM-6", "running 优先：残留 exit 78 不误报 spawnFailed")
 
+    // ---- 0.23.22 §1.1：parentBundleVersion(fromPrintOutput:) 解析器（4 检共用
+    // 一标签——FailureCounter 按标签去重，场景总数 +1）----
+
+    // BTM-7：事故实测形态（2026-11-11 launchctl print 原文四行）→ 2318；同域
+    // fixture spawnFailedSample 复用（:31 已含 `parent bundle version = 2` 行，
+    // 形态同源）→ 2。
+    let stalePinIncidentSample = """
+    \tprogram identifier = Contents/Library/LaunchDaemons/cellar-daemon (mode: 2)
+    \tparent bundle identifier = com.cellar.app
+    \tparent bundle version = 2318
+    \tBTM uuid = EF433935-8E91-427B-8F20-C0D1594611DD
+    """
+    check(BTMState.parentBundleVersion(fromPrintOutput: stalePinIncidentSample) == 2318
+              && BTMState.parentBundleVersion(fromPrintOutput: spawnFailedSample) == 2,
+          "BTM-7", "事故实测四行原文（tab 缩进 trim 后匹配）→ 2318 + 既有 spawnFailedSample fixture 同源复用 → 2")
+
+    // BTM-7：行缺失（print 输出无该行——2026-09-02 老格式实测形态）→ nil。
+    check(BTMState.parentBundleVersion(fromPrintOutput: runningSample) == nil
+              && BTMState.parentBundleVersion(fromPrintOutput: "Could not find service \"com.cellar.daemon\" in domain for system") == nil,
+          "BTM-7", "行缺失（老格式 runningSample / 未注册输出）→ nil（降级不误报）")
+
+    // BTM-7：行值非数字 → nil（解析降级）。
+    check(BTMState.parentBundleVersion(fromPrintOutput: "parent bundle version = abc") == nil,
+          "BTM-7", "行值非数字（parent bundle version = abc）→ nil")
+
+    // BTM-7：空输出 → nil。
+    check(BTMState.parentBundleVersion(fromPrintOutput: "") == nil,
+          "BTM-7", "空输出 → nil")
+
     // ---- 检查 3 键世代标注 + 检查 6 进程命中（并入既有检查）----
 
     func healthy() -> DoctorInputs {
