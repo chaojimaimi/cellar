@@ -40,11 +40,27 @@ struct DaemonSectionView: View {
 
             // 0.20.1 §3.2：损坏 BTM 记录形态（App 托管 ∧ 反复 spawn 失败）——独立
             // 引导行（独立 @Published 检出，不动 MigrationGuidance 四象限枚举）。
+            // 0.23.22 §1.2 块内二分：升级失配精确形态（stalePinSuspected 检出）→
+            // 精确行 + 一键重注册（轻量路径——通用行指引 sudo sfltool resetbtm 对
+            // 本形态是误导性重锤：BTM 记录未损坏，resetbtm 反清全部良性记录）；
+            // 其余损坏形态维持通用行原文案原样式。
             if installer.btmCorrupted {
-                Text(CellarL10n.s("panel.daemon.btmCorrupted"))
-                    .font(.caption)
-                    .foregroundStyle(theme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                if installer.stalePinDetected {
+                    Text(CellarL10n.s("panel.daemon.stalePin"))
+                        .font(.caption)
+                        .foregroundStyle(theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(CellarL10n.s("panel.daemon.reRegister")) {
+                        installer.reRegister()
+                    }
+                    .controlSize(.small)
+                    .disabled(installer.busy)
+                } else {
+                    Text(CellarL10n.s("panel.daemon.btmCorrupted"))
+                        .font(.caption)
+                        .foregroundStyle(theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             // 0.23.18 §2.6② 随批 2：BTM 锚点漂移疑似行（btmCorrupted 行后同形态

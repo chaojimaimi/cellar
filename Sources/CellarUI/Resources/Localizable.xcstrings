@@ -8686,6 +8686,40 @@
           }
         }
       }
+    },
+    "panel.daemon.stalePin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon launch is rejected after the app upgrade (code-signature pin mismatch) — tap Re-register to fix; reinstalling the app is not required"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到 App 升级后守护进程启动被系统拒绝（签名钉扎失配）——点击重新注册守护进程即可修复，无需重装 App"
+          }
+        }
+      }
+    },
+    "panel.daemon.reRegister": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-register daemon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新注册守护进程"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

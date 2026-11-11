@@ -72,6 +72,14 @@ final class DaemonInstaller: ObservableObject {
     /// 对账会以同 label 顶掉手工 job）——独立呈现行，**不进 MigrationGuidance
     /// 四象限**（golden 影响最小化）。
     @Published private(set) var btmCorrupted = false
+    /// 升级后签名失配精确检出（0.23.22 §1.2）：stalePinSuspected 纯函数（CellarCore
+    /// DaemonRegistration.swift）的接线态——btmCorrupted 块内二分（精确行 + 一键
+    /// 重注册 vs 通用行）的唯一门控。SwiftUI 对 @Published 自动观察（btmCorrupted
+    /// 同款，无 didSet）。
+    @Published private(set) var stalePinDetected = false
+    /// BTM 记录的父应用 CFBundleVersion（launchctl print 解析——仅诊断值留存，
+    /// UI 本批不消费；nil = 行缺失/非数字降级形态）。
+    @Published private(set) var parentVersion: Int? = nil
     @Published private(set) var busy = false
     @Published private(set) var lastError: String?
     /// 首次 refresh 回包已置位（WP5 P1-3 竞态守卫）：引导门在 loaded == false 时
@@ -119,7 +127,7 @@ final class DaemonInstaller: ObservableObject {
         hasLegacyPlist = legacy
         Task.detached { [weak self] in
             let registration = RegistrationStatus(SMAppService.daemon(plistName: Self.plistName).status)
-            let (route, btmState) = Self.queryRouteAndBTM()
+            let (route, btmState, parentVersion) = Self.queryRouteAndBTM()
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.loaded = true   // P1-3：首次回包置位（引导门守卫）
@@ -129,6 +137,13 @@ final class DaemonInstaller: ObservableObject {
                 // 0.20.1 §3.2：同形态检出（appManaged ∧ spawn failed——与 doctor
                 // 检查 9 的路线再分流同源解析）。
                 self.btmCorrupted = route == .appManaged && btmState == .spawnFailed
+                // 0.23.22 §1.2：stale-pin 精确检出（版本不等为唯一增量信号——
+                // 判定五条件见 stalePinSuspected；parent/own 任一 nil 自动降级 false）。
+                self.parentVersion = parentVersion
+                self.stalePinDetected = stalePinSuspected(
+                    registration: registration, route: route, btmState: btmState,
+                    parentBundleVersion: parentVersion, ownBundleVersion: Self.ownBundleVersion
+                )
                 Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public)")
                 self.guidance = migrationGuidance(
                     legacyPlistExists: legacy,
@@ -193,6 +208,32 @@ final class DaemonInstaller: ObservableObject {
         Task.detached { [weak self] in
             let outcome = Self.unregisterBlocking()
             await MainActor.run { self?.handleUnregister(outcome) }
+        }
+    }
+
+    /// 一键重注册（stale-pin 修复，0.23.22 §1.2）：注销 BTM 记录（旧 cdhash 钉扎
+    /// 随之销毁）→ 重新 register（SMAppService 以现行二进制重钉）→ 既有
+    /// handleRegister 回路（refresh + pending 引导系统设置 + 120s 授权轮询）。
+    /// 用户手工「卸载 → 安装」修复路径（2026-11-11 事故定案）的程序化复刻。
+    /// **3s 退避**：bootout 后 launchd 清理竞态（BootstrapFailureGuidance.cleanupRace
+    /// 同源真机实证——立即 register 可能 EIO），退避一次；仍失败 lastError 诚实
+    /// 呈现，用户可再点（主按钮安装路径同出口）。
+    func reRegister() {
+        guard !busy else { return }
+        busy = true
+        lastError = nil
+        settingsOpened = false   // 评审 P1：settingsOpened 闩锁复位——同进程历史上
+                                 // 已 pending 过（如安装授权完成后原地升级）时，
+                                 // 不复位则 pending→openSettingsOnce 静默不拉起，
+                                 // 用户被晾在「等待系统授权」无引导（主修复旅程断链）。
+        Task.detached { [weak self] in
+            // unregister 结果有意忽略（_ =）：失败态下旧钉扎未销毁，register 照跑、
+            // 精确行保持亮起（诚实自纠闭环）；lastError 仅由 register 腿置位
+            //（二轮评审 P3-2 定版取舍——unregister 失败短路登记后续批候选）。
+            _ = Self.unregisterBlocking()
+            try? await Task.sleep(for: .seconds(3))
+            let outcome = Self.registerBlocking()
+            await MainActor.run { self?.handleRegister(outcome) }
         }
     }
 
@@ -284,13 +325,26 @@ final class DaemonInstaller: ObservableObject {
 
     // MARK: - 路由 / 文件探测
 
-    /// 路由 + BTM 注册态一次采集（防线 c；0.20.1 §3.2：损坏 BTM 记录形态检出——
-    /// appManaged ∧ spawn failed，与 doctor 检查 9 的路线再分流同源解析纯函数）。
-    /// 非 root 亦可读已加载系统服务（2026-09-01 实测）；同时识别手工格式与
-    /// SMAppService/BTM 托管格式（后者无 program 行，managed_by 行归因）。
-    private nonisolated static func queryRouteAndBTM() -> (route: DaemonRoute, btmState: BTMState?) {
+    /// 路由 + BTM 注册态 + 父包版本一次采集（防线 c；0.20.1 §3.2：损坏 BTM 记录
+    /// 形态检出——appManaged ∧ spawn failed，与 doctor 检查 9 的路线再分流同源
+    /// 解析纯函数；0.23.22 §1.2 第三元 parentBundleVersion 走新解析器——stale-pin
+    /// 判定输入）。非 root 亦可读已加载系统服务（2026-09-01 实测）；同时识别手工
+    /// 格式与 SMAppService/BTM 托管格式（后者无 program 行，managed_by 行归因）。
+    private nonisolated static func queryRouteAndBTM() -> (route: DaemonRoute, btmState: BTMState?, parentVersion: Int?) {
         let output = runLaunchctl(["print", "system/com.cellar.daemon"])
-        return (DaemonRoute.route(fromPrintOutput: output), BTMState.parseLaunchctlPrint(output))
+        return (
+            DaemonRoute.route(fromPrintOutput: output),
+            BTMState.parseLaunchctlPrint(output),
+            BTMState.parentBundleVersion(fromPrintOutput: output)
+        )
+    }
+
+    /// 主 bundle CFBundleVersion（0.23.22 §1.2；打包纪律 major×10000+minor×100+patch
+    /// 纯数字；plist 数值/字符串两形态容错）。dev plist 异常值 → nil → 判定降级
+    /// 不误报。
+    nonisolated static var ownBundleVersion: Int? {
+        let raw = Bundle.main.infoDictionary?["CFBundleVersion"]
+        return (raw as? Int) ?? Int((raw as? String) ?? "")
     }
 
     private static var embeddedPlistExists: Bool {

@@ -113,8 +113,8 @@ func runProfileDomainPinsScenarios() {
     if let data = try? Data(contentsOf: catalogURL),
        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let strings = root["strings"] as? [String: Any] {
-        check(strings.count == 511,
-              "源钉-7", "catalog 键数精确断言 511（491 + 16 profile 键 = 507〔commit 2〕+ 5 − 1 = 511〔commit 4：versionLine3/handshake 三键/btmDrift 入库、versionLine 退役〕——断言值随批推进）")
+        check(strings.count == 513,
+              "源钉-7", "catalog 键数精确断言 513（491 + 16 profile 键 = 507〔commit 2〕+ 5 − 1 = 511〔commit 4：versionLine3/handshake 三键/btmDrift 入库、versionLine 退役〕+ 2 = 513〔0.23.22 commit 2：panel.daemon.stalePin/reRegister 两键入库——stale-pin 精确行 + 一键重注册〕——断言值随批推进）")
         let expectations: [String: String] = [
             "control.profile.title": "充电方案",
             "control.profile.empty": "暂无方案。从当前设置创建第一个方案。",
