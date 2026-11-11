@@ -26,6 +26,10 @@
 // runProfileDomainPinsScenarios——Main.main 双注册，场景总数相加不减，注册行
 // 反钉在其源钉-10）；本文件留守判定面（方案-1..14 + 随批-1..2）+ 源钉-9
 // （行为面三断言 + capturedProfile/base fixture 不随迁）。
+//
+// 0.23.22-alpha 追加：随批-3 stalePinSuspected 真值表（8 行——升级后 BTM
+// 签名失配精确判定五条件 + 全部降级臂与方向性臂；2026-11-11 事故回归门）；
+// 留守判定面计数自此为「方案-1..14 + 随批-1..3」。
 
 import CellarCore
 import Foundation

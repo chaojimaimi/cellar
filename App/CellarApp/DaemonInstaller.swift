@@ -144,7 +144,7 @@ final class DaemonInstaller: ObservableObject {
                     registration: registration, route: route, btmState: btmState,
                     parentBundleVersion: parentVersion, ownBundleVersion: Self.ownBundleVersion
                 )
-                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public)")
+                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public) stalePin=\(self.stalePinDetected, privacy: .public) parentVersion=\(String(describing: parentVersion), privacy: .public) ownVersion=\(String(describing: Self.ownBundleVersion), privacy: .public)")
                 self.guidance = migrationGuidance(
                     legacyPlistExists: legacy,
                     registration: registration
@@ -222,6 +222,7 @@ final class DaemonInstaller: ObservableObject {
         guard !busy else { return }
         busy = true
         lastError = nil
+        Self.log.info("reRegister 请求（用户触发——stale-pin 修复路径）")
         settingsOpened = false   // 评审 P1：settingsOpened 闩锁复位——同进程历史上
                                  // 已 pending 过（如安装授权完成后原地升级）时，
                                  // 不复位则 pending→openSettingsOnce 静默不拉起，
