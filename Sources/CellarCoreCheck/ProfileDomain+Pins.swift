@@ -195,14 +195,22 @@ func runProfileDomainPinsScenarios() {
     check(!panelViewSrc3.contains("ProfileSectionView"),
           "源钉-4", "面板 PanelView 零改动（profile 节仅主窗充电控制页——方案 §2.5）")
     let sectionViewSrc = source("App/CellarApp/ProfileSectionView.swift")
-    check(sectionViewSrc.contains("ProfileModel.activeMatch(profiles: profileController.profiles, current: current) == profile.id")
+    // 0.23.21-alpha 整理批改钉（isActive 单次求值上提联动——原字面串
+    // 「ProfileModel.activeMatch(profiles: profileController.profiles,
+    // current: current) == profile.id」随上提消失）：钉新形态「body 内单次求值
+    // + activeID == profile.id 比较」+ 老逐行函数退役反钉（语义逐点等价——
+    // 同一纯函数同一输入；失联 nil 全不点亮不变）。
+    check(sectionViewSrc.contains("let activeID = statusController.daemonStatus.flatMap {")
+              && sectionViewSrc.contains("ProfileModel.activeMatch(profiles: profileController.profiles, current: $0)")
+              && sectionViewSrc.contains("activeID == profile.id")
+              && !sectionViewSrc.contains("func isActive(")
               && sectionViewSrc.contains("@ObservedObject private var profileController = ProfileController.shared")
               && sectionViewSrc.contains("ProfileModel.isValidName(renameDraft)")
               && sectionViewSrc.contains("control.profile.nameInvalid")
               && sectionViewSrc.contains("deletePendingID = profile.id")
               && sectionViewSrc.contains("control.profile.empty")
               && sectionViewSrc.contains("ProfileModel.capture(from: status) != nil"),
-          "源钉-4", "管理页面（✓ activeMatch 读回派生 / ProfileController.shared 直注非第七注入 / 行内红字命名校验 / 删除两步确认 / 空态引导 / 新建 capture 预检逐项）")
+          "源钉-4", "管理页面（✓ activeMatch 读回派生单次求值 activeID 比较——0.23.21 isActive 上提 O(n²)→O(n)，老函数退役反钉 / ProfileController.shared 直注非第七注入 / 行内红字命名校验 / 删除两步确认 / 空态引导 / 新建 capture 预检逐项）")
 
     // ---- 源钉-5：三随批消费面（版本行三口径 + btmDrift 行 + versionLine 退役）----
 

@@ -5549,13 +5549,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Accumulating trend (%lld/90 days)"
+            "value": "Accumulating trend (%1$lld/%2$lld days)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "趋势积累中（%lld/90 天）"
+            "value": "趋势积累中（%1$lld/%2$lld 天）"
           }
         }
       }
@@ -5600,13 +5600,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": ", reaching the 1000-cycle threshold in ≈%.1f months"
+            "value": ", reaching the %2$lld-cycle threshold in ≈%1$.1f months"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "，预计 %.1f 个月后到达 1000 循环阈值"
+            "value": "，预计 %1$.1f 个月后到达 %2$lld 循环阈值"
           }
         }
       }

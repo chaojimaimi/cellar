@@ -41,6 +41,13 @@ struct ProfileSectionView: View {
     @State private var deletePendingID: String?
 
     var body: some View {
+        // ✓ 单次求值上提（0.23.21-alpha 整理批——O(行×方案) → O(方案)）：
+        // activeMatch 纯函数 body 内单次求值，列表行统一走 activeID 比较（同一
+        // 纯函数同一输入，语义逐点等价；失联 daemonStatus nil → activeID nil →
+        // 全不点亮不变）。
+        let activeID = statusController.daemonStatus.flatMap {
+            ProfileModel.activeMatch(profiles: profileController.profiles, current: $0)
+        }
         VStack(alignment: .leading, spacing: 6) {
             Text(CellarL10n.s("control.profile.title"))
                 .font(.caption2)
@@ -56,7 +63,7 @@ struct ProfileSectionView: View {
                     .foregroundStyle(theme.secondaryText)
             } else {
                 ForEach(profileController.profiles, id: \.id) { profile in
-                    row(profile)
+                    row(profile, activeID: activeID)
                 }
             }
             newButton
@@ -78,7 +85,7 @@ struct ProfileSectionView: View {
 
     // MARK: - 列表行（行点击切换 + ✓ + 三行动词；重命名展开行内编辑器）
 
-    private func row(_ profile: ProfilePayload) -> some View {
+    private func row(_ profile: ProfilePayload, activeID: String?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if renamingID == profile.id {
                 renameEditor(profile)
@@ -87,9 +94,9 @@ struct ProfileSectionView: View {
                     Text(profile.name)
                         .font(.caption)
                         .multilineTextAlignment(.leading)
-                    if isActive(profile) {
-                        // ✓ 读回派生（activeMatch 命中——意图镜像不参与；字形为
-                        // 符号非文案，menu 侧同语义走 state .on）。
+                    if activeID == profile.id {
+                        // ✓ 读回派生（activeID = body 内 activeMatch 单次求值——
+                        // 意图镜像不参与；字形为符号非文案，menu 侧同语义走 state .on）。
                         Image(systemName: "checkmark")
                             .font(.caption2)
                             .foregroundStyle(theme.accent)
@@ -224,11 +231,5 @@ struct ProfileSectionView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(theme.accent)
-    }
-
-    /// ✓ 判定（读回派生单点——列表行共用；失联 → 全不点亮）。
-    private func isActive(_ profile: ProfilePayload) -> Bool {
-        guard let current = statusController.daemonStatus else { return false }
-        return ProfileModel.activeMatch(profiles: profileController.profiles, current: current) == profile.id
     }
 }

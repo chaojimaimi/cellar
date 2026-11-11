@@ -35,7 +35,9 @@ struct StatsTrendCard: View {
                     .font(.caption2)
                     .foregroundStyle(theme.tertiaryText)
                 if let days = daysOfData {
-                    Text(CellarL10n.s("stats.trend.band.hint", days))
+                    // 第二参门槛常量同源直传（0.23.21-alpha l10n 参数化——catalog
+                    // 内嵌 90 退役，StatsTrend.numericMinDays 单源）。
+                    Text(CellarL10n.s("stats.trend.band.hint", days, StatsTrend.numericMinDays))
                         .font(.caption2)
                         .foregroundStyle(theme.tertiaryText)
                 }
@@ -66,8 +68,9 @@ struct StatsTrendCard: View {
         StatsTrend.weeklyBands(daily: dailyRows)
     }
 
-    /// 跨日数（「N/90 天」提示 + a11y 摘要共用；门槛常量 numericMinDays 单源在
-    /// l10n 文案侧对齐——90 与 StatsTrend.numericMinDays 同值）。
+    /// 跨日数（「N/90 天」提示 + a11y 摘要共用；band.hint 第二参直传
+    /// StatsTrend.numericMinDays——0.23.21-alpha l10n 参数化后门槛常量
+    /// Swift 侧单源，catalog 不再内嵌字面）。
     private var daysOfData: Int? {
         guard let firstDay = dailyRows.first?.day else { return nil }
         return StatsTrend.crossDayCount(
@@ -207,6 +210,8 @@ struct StatsTrendCard: View {
             return CellarL10n.s("stats.trend.cycle.reached")
         }
         return CellarL10n.s("stats.trend.cycle.rate", projection.cyclesPerMonth)
-            + CellarL10n.s("stats.trend.cycle.eta", months)
+            // 第二参阈值常量同源直传（0.23.21-alpha l10n 参数化——catalog 内嵌
+            // 1000 退役，StatsTrend.cycleThreshold 单源；位置参数 %2$lld 钉语序）。
+            + CellarL10n.s("stats.trend.cycle.eta", months, StatsTrend.cycleThreshold)
     }
 }
