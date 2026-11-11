@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.22-alpha]
+
+> 背景：2026-11-11 daemon 失联事故的产品缺口修复批。事故定案：App-only 升级链（0.23.18→21 四轮换包）期间 BTM 记录钉扎的 daemon 二进制 cdhash 停留在 register 时刻（0.23.18 包），每个 release 的全新构建产生新 ad-hoc 签名 cdhash 而无人重注册——运行中的老 daemon 进程于心跳看门狗自杀后，launchd 重拉磁盘新二进制即被内核代码签名监视器以 Launch Constraint Violation 当场击杀（EX_CONFIG 78 每 10s 失败循环；`.ips` termination 域 CODESIGNING 定谳）。手工「卸载→安装」修复成功后开工本批：把面板从「笼统失联」升级为「精确诊断 + 一键修复」。方案 plan-reviewer 两轮审至 PASS（一轮 REVISE 2 项全采纳：P1 settingsOpened 闩锁致 pending 引导在 reRegister 路径静默断链——入口显式复位；P2 场景标签分配钉死）；code-reviewer 落地前全审 **APPROVE**（0 P0/P1/P2，2 P3 随 commit 4 收口：文件头注记推进 + reRegister/refresh 事后取证打点）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1025→**1027 场景全绿**（+2：解析器 BTM-7 一标签 4 检 + 真值表随批-3 一标签 8 行；check 断言 2636→2648）、golden 384=384、l10n 511→513（两新键双语）、打包产物启动实证、三断言。CFBundleVersion 2322 历史精确查（plist 键值形态）零碰撞。登记：doctor 检查 9 的 resetbtm 指引对本形态是误导性重锤（BTM 记录未损坏）——「doctor 文案按形态再分流」后续批候选；unregister 腿失败短路后续批候选；stale-pin 检出方向性注记（只看版本不等不看方向）。
+
+### **⚠️ 「升级免重装」措辞边界修正（覆盖 0.23.18–0.23.21 各条同款表述）**
+
+- **免重装的准确边界**：daemonVersion 常量不动只保证 **wire 协议兼容与运行中进程不受扰**——**不等于升级后无需重新注册**。BTM 钉扎的是 register 时刻的 daemon 二进制 cdhash，而每个 release 都是全新构建（ad-hoc 签名 cdhash 必变）；daemon 进程一旦重启（心跳看门狗自杀 / 崩溃 / 重启机），launchd 重拉的新二进制与旧钉扎失配即被拒（EX_CONFIG 78）。此前各批「升级免重装」在 daemon 进程恰好未重启时成立；2026-11-11 事故是该假设的破绽实证（speculative spawn 曾侥幸绕过约束一天，属假愈面）。
+- **0.23.22 起的正确操作**：升级后 daemon 若失联，面板守护进程节将呈精确行「检测到 App 升级后守护进程启动被系统拒绝（签名钉扎失配）」+ **「重新注册守护进程」一键修复**（程序化复刻手工卸载→安装路径，含 3s 退避防 bootout 清理竞态）；授权完成后自动恢复。
+
+### Added
+
+- **升级后 daemon 签名失配（stale-pin）精确检出**：`launchctl print` 输出新增解析 `parent bundle version`（BTM register 时刻的父应用版本）——与当前 App CFBundleVersion 比对 + spawn 失败特征（复用 0.20.1 起产线的 EX_CONFIG 特征行解析器），五条件纯函数 `stalePinSuspected` 判定（已启用 ∧ App 托管 ∧ spawn 反复失败 ∧ 版本双已知且不等）；解析失败/版本未知/手工路线/运行中假愈态（speculative spawn）全臂降级不误报——8 行真值表逐行钉死（2026-11-11 事故回归门）。
+- **面板一键重注册**：守护进程节损坏形态行内二分——版本失配时呈精确文案 + 「重新注册守护进程」按钮（注销旧 BTM 记录 → 3s 退避 → 重新 register → 既有授权引导 + 120s 轮询回路自动接管）；通用损坏行原文案不动（resetbtm 指引仅适用于真 BTM 损坏形态）。
+- **事后取证打点**：reRegister 触发与 refresh 判定三输入（stalePin/parentVersion/ownVersion）入 os_log——同类事故 `log show` 一次可溯源。
+
 ## [0.23.21-alpha]
 
 > 背景：整理批（技术债清收——0.23.17-20 四批评审登记项集中收口，零功能变化）。方案 plan-reviewer 两轮审至 PASS（P1 isActive 上提漏源钉-4 断言联动登记；P2 拆分行数预估修正）；code-reviewer 快审 **APPROVE**（0 问题——拆分字节级保真 + 残留 byte 比较受害者全仓排查零命中）。**实施期重大发现**：Foundation JSONEncoder 在 `-O` 优化下**同二进制同进程逐次输出两种键序**（探针零项目代码独立复现：解释器 3×300 零漂移 vs swiftc -O 5 进程各 7-9/300 摇摆）——0.23.20 根因叙事修正（非跨二进制恒定两形态，而是任意 -O 二进制概率性两形态；语义比较修复对任意漂移免疫，真机验收通过自证）；拆分引爆的 0.23.20 两条归一断言间歇红经主代理裁决选项 A 升语义域后恢复确定性全绿（44+ 连跑零失败）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：升级免重装**。门禁：**1025 场景全绿**（拆分前后标签数不变 / check 断言 2635→2636 仅增源钉-10 注册行反钉 1 条；独立复跑 5 连绿 + 审查侧 4 连绿）、golden 384=384、l10n 511 零变化（两键值参数化）、打包产物启动实证、三断言。登记：ProfileDomain 拆分后 650+322 双文件（源钉面拆分含 MainEntry 注册完整形态——0.23.20 评审实证的静默丢失面正面封堵）；`.sortedKeys` encoded 确定化登记为后续批候选；CFBundleVersion 2321 无历史碰撞。
