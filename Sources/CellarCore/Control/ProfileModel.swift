@@ -144,8 +144,10 @@ public struct ProfilePayload: Codable, Equatable, Sendable {
     public var hysteresis: Int
     public var fan: FanSnapshot?
     public var thermal: ThermalSnapshot?
-    /// 充电日程配置 JSON 原样存取（byte 透传——daemon 回读什么就存什么/发什么，
-    /// App 不解析不归一；diff = 字符串全等）。
+    /// 充电日程配置 JSON（capture 归一存——decoded 成功 → re-encode 存 App 形态，
+    /// 解码失败原样存不猜；下发 byte 透传——daemon decoded+validated 幂等消化
+    /// 形态差；diff = 语义比较（scheduleSemanticallyEqual）——byte 形态不在
+    /// 判定域）。
     public var scheduleJson: String?
     public var calibration: CalibrationSnapshot?
     public var chHysteresisEnabled: Bool?
@@ -280,6 +282,18 @@ public enum ProfileModel {
               let chHysteresisEnabled = status.chHysteresisEnabled,
               let ledStatus = status.magSafeLed
         else { return nil }
+        // capture 写时归一（0.23.20 热修 §2 稳定性加固）：scheduleJson 存储前
+        // decoded 成功 → re-encode 存 App 形态（`encoded ?? 原串`——全值类型
+        // encode 不可达失败，兜底仍诚实）；解码失败原样存（不可解串不猜）。
+        // 归一内联本函数（不新增 private helper——源钉「恰 11 个」计数保持）。
+        // 收益：存量字节自洽 + 未来任何 byte 消费者稳定；存量 profiles 旧形态串
+        // 不做迁移（语义比较已免疫，下次 capture 自然归一）。
+        let normalizedSchedule: String
+        if let decoded = try? ChargeScheduleConfig.decoded(from: scheduleJson) {
+            normalizedSchedule = decoded.encoded ?? scheduleJson
+        } else {
+            normalizedSchedule = scheduleJson
+        }
         return ProfilePayload(
             id: UUID().uuidString,
             name: "",
@@ -288,7 +302,7 @@ public enum ProfileModel {
             hysteresis: status.hysteresis,
             fan: fanSnapshot,
             thermal: ThermalSnapshot(pauseCentiC: pauseCentiC, hysteresisCentiC: thermHysteresis),
-            scheduleJson: scheduleJson,
+            scheduleJson: normalizedSchedule,
             calibration: CalibrationSnapshot(
                 enabled: calEnabled, intervalDays: calIntervalDays, startHour: calStartHour
             ),
@@ -324,7 +338,11 @@ public enum ProfileModel {
                 pauseCentiC: thermal.pauseCentiC, hysteresisCentiC: thermal.hysteresisCentiC
             ))))
         }
-        if let json = profile.scheduleJson, json != current.scheduleJson {
+        // schedule 域 diff = 语义比较（0.23.20 热修 §2——byte 形态免疫：daemon
+        // 回包键序与 App 存储形态跨二进制无契约）；`if let json` 绑定保留——步
+        // 载荷需非可选 json（禁强解包），仅条件换语义比较。
+        if let json = profile.scheduleJson,
+           !scheduleSemanticallyEqual(profile.scheduleJson, current.scheduleJson) {
             plan.append(.setChargeSchedule(json: json))
         }
         if let calibration = profile.calibration, !calibrationMatches(calibration, current) {
@@ -404,6 +422,29 @@ public enum ProfileModel {
 
     // MARK: - 比较域（applyPlan diff-skip 与 activeMatch 单源——评审 P3 实现纪律）
 
+    /// schedule JSON 语义相等（0.23.20 热修 §2 单源修复面——byte 形态免疫：
+    /// JSONEncoder 键序跨二进制无契约，§1 根因「scheduleJson byte 级比较跨
+    /// 二进制永不收敛」→ 每步重推导恒含同型步 → 守卫一 abortChain 的缺陷链
+    /// 从判定域根除）：双边 nil → true；单边 nil → false；双边解码成功 →
+    /// ChargeScheduleConfig Equatable（语义域——enabled + entries 全字段，
+    /// 真漂移不误判收敛）；任一解码失败 → 退回 byte 全等（诚实保守——不可解
+    /// 串不猜）。public：消费方跨模块（App 目标），matchReport/applyPlan 先例
+    /// 同形态。
+    public static func scheduleSemanticallyEqual(_ lhs: String?, _ rhs: String?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case (nil, _), (_, nil):
+            return false
+        case (let lhsJson?, let rhsJson?):
+            guard let lhsConfig = try? ChargeScheduleConfig.decoded(from: lhsJson),
+                  let rhsConfig = try? ChargeScheduleConfig.decoded(from: rhsJson) else {
+                return lhsJson == rhsJson
+            }
+            return lhsConfig == rhsConfig
+        }
+    }
+
     private static func limitsMatch(_ profile: ProfilePayload, _ status: DaemonStatus) -> Bool {
         profile.upperLimit == status.upperLimit && profile.hysteresis == status.hysteresis
     }
@@ -451,7 +492,7 @@ public enum ProfileModel {
 
     private static func scheduleFieldMatches(_ profile: ProfilePayload, _ status: DaemonStatus) -> Bool {
         guard let json = profile.scheduleJson else { return true }
-        return json == status.scheduleJson
+        return scheduleSemanticallyEqual(json, status.scheduleJson)
     }
 
     private static func calibrationFieldMatches(_ profile: ProfilePayload, _ status: DaemonStatus) -> Bool {

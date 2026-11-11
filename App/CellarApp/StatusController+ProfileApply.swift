@@ -245,7 +245,12 @@ extension StatusController {
                 // （applyPlan 纯函数——与守卫臂触发时的 step 恒等）。
                 let report = ProfileModel.matchReport(profile: payload, current: status)
                 let plan = ProfileModel.applyPlan(profile: payload, current: status)
-                Self.log.error("ABORT name=\(name, privacy: .public) executed=\(executed, privacy: .public) lastStep=\(Self.forensicStep(lastStep), privacy: .public) nextStep=\(Self.forensicStep(plan.first), privacy: .public) | match(\(Self.forensicMatchFace(report), privacy: .public)) | status(\(Self.forensicStatusFace(status, scheduleExpected: payload.scheduleJson), privacy: .public))")
+                // 0.23.20 热修 §2 装具补强：ABORT 行补双原串打点（schedRaw= 方案
+                // 侧 / expected= 现值侧——键名防与 match 段 sched= 布尔撞名）。
+                // 语义比较落地后 byte 差异不再进判定域，读回未收敛中止时人工
+                // 取证必须能看到双侧原串形态（schedEq 布尔是 byte 口径，真差异
+                // 只能靠原串对账）。截断见 forensicTruncated（单插值形态）。
+                Self.log.error("ABORT name=\(name, privacy: .public) executed=\(executed, privacy: .public) lastStep=\(Self.forensicStep(lastStep), privacy: .public) nextStep=\(Self.forensicStep(plan.first), privacy: .public) | match(\(Self.forensicMatchFace(report), privacy: .public)) | status(\(Self.forensicStatusFace(status, scheduleExpected: payload.scheduleJson), privacy: .public)) | schedRaw=\(Self.forensicTruncated(payload.scheduleJson), privacy: .public) expected=\(Self.forensicTruncated(status.scheduleJson), privacy: .public)")
             } else {
                 // LED 非法 raw 臂（status nil）：省略 match/status 段（无现值
                 // 可比——前置 dispatch 行已载该步全形）。
@@ -304,6 +309,23 @@ extension StatusController {
     ) -> String {
         let fan = status.fan
         return "mode=\(status.mode), upper=\(status.upperLimit), hys=\(status.hysteresis), fanEn=\(forensicBool(fan?.enabled)), strat=\(forensicStrategy(fan?.strategy)), thresh=\(forensicInt(fan?.thresholdCentiC)), speed=\(forensicInt(fan?.speedPercent)), s2=\(forensicInt(fan?.stage2Percent)), s2rise=\(forensicInt(fan?.stage2RiseCentiC)), src=\(forensicInt(fan?.temperatureSource)), cpuT=\(forensicInt(fan?.cpuSkinThresholdCentiC)), cpuH=\(forensicInt(fan?.cpuSkinHysteresisCentiC)), therm=\(forensicInt(status.thermPauseCentiC))/\(forensicInt(status.thermHysteresisCentiC)), cal=\(forensicBool(status.calSchedEnabled))/\(forensicInt(status.calSchedIntervalDays))/\(forensicInt(status.calSchedStartHour)), ch=\(forensicBool(status.chHysteresisEnabled)), led=\(forensicUInt8(status.magSafeLed?.mode?.rawValue)), schedEq=\(scheduleExpected == status.scheduleJson)"
+    }
+
+    /// 取证串截断渲染（0.23.20 热修 §2：os_log 动态内容截断域实证——8KB 上限
+    /// 串直打必被截，取证失效）。截断策略：各串取前 256 + 后 256 字节 + 总长
+    /// 标注，超 512 字节拼形态 `head…tail (len=N)`；≤512 字节原样全串。nil →
+    /// "nil" 字面（forensicBool 先例——缺席与空串不可混）。**单插值 helper 返回
+    /// 完整串**——ABORT 双原串各占一插值，源钉-9 privacy 计数恰 33 依赖此形态
+    /// （拆 head/tail/len 三插值则为 35，由计数钉强制对齐）。utf8 字节口径截断
+    /// （String(decoding:) 不可达失败；多字节切边界降级替换符不崩溃——日程
+    /// JSON 恒 ASCII 键名，实际不可达）。
+    private static func forensicTruncated(_ raw: String?) -> String {
+        guard let raw = raw else { return "nil" }
+        let byteCount = raw.utf8.count
+        guard byteCount > 512 else { return raw }
+        let head = String(decoding: raw.utf8.prefix(256), as: UTF8.self)
+        let tail = String(decoding: raw.utf8.suffix(256), as: UTF8.self)
+        return "\(head)…\(tail) (len=\(byteCount))"
     }
 
     /// abort 2s 后单发观测（0.23.19 热修 §2 P3-2 + 二轮 P3 补比较基准）：瞬态

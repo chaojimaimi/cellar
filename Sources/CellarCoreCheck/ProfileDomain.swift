@@ -14,6 +14,12 @@
 // 后续（本文件追加注册）：方案-9 MenuProfileModel（commit 3）、方案-10/11 收敛守卫
 // 向量表与 applyPlan/activeMatch 互证（commit 2）、随批-1..2 btmAnchorDriftSuspected
 // 真值表（commit 4）、源钉-1..7（commit 2/3/4 递增）。
+//
+// 0.23.20 热修追加：方案-12..14 schedule 语义比较向量表 / applyPlan 语义免疫
+// （§1 根因「byte 比较跨二进制永不收敛」回归门）/ capture 写时归一 + 源钉-10
+// （public 纯函数 + 双消费点 + 归一在位 + ABORT 双原串打点 + 截断形态）；
+// 既有断言联动：方案-1 归一断言改写、源钉-9 privacy 计数 31 → 33、方案-5 括注
+// 语义 diff 文案。
 
 import CellarCore
 import Foundation
@@ -100,7 +106,12 @@ func runProfileDomainScenarios() {
         }
         check(profile.thermal == ThermalSnapshot(pauseCentiC: 4000, hysteresisCentiC: 300),
               "方案-1", "therm 两键投影（4000/300）")
-        check(profile.scheduleJson == scheduleFixture, "方案-1", "scheduleJson byte 透传（不解析不归一）")
+        // 0.23.20 联动改写（原「byte 透传不解析不归一」随 capture 归一批过期）：
+        // daemon 形态 fixture 输入 → 存储串 == 同二进制 decoded!.encoded（基准
+        // 形态同方案-14——禁硬编码键序字面量，断言基准二进制无关）。
+        let normalizedExpectation = try! ChargeScheduleConfig.decoded(from: scheduleFixture).encoded
+        check(profile.scheduleJson == normalizedExpectation,
+              "方案-1", "scheduleJson capture 归一存（daemon 形态输入 → 同二进制 decoded!.encoded 形态——解码失败原样存负臂见方案-14）")
         check(profile.calibration == CalibrationSnapshot(enabled: false, intervalDays: 30, startHour: 1),
               "方案-1", "calSched 三键投影")
         check(profile.chHysteresisEnabled == true, "方案-1", "chHysteresisEnabled 投影")
@@ -257,7 +268,7 @@ func runProfileDomainScenarios() {
     check(singleKnobPlan({ $0.fan?.enabled = false }) == ["fan"], "方案-5", "仅 fan 差异 → 恰 [fan]")
     check(singleKnobPlan({ $0.thermal?.pauseCentiC = 4200 }) == ["thermal"], "方案-5", "仅 therm 差异 → 恰 [thermal]")
     check(singleKnobPlan({ $0.scheduleJson = #"{"enabled":true,"entries":[]}"# }) == ["schedule"],
-          "方案-5", "仅日程差异 → 恰 [schedule]（JSON 字符串全等 diff）")
+          "方案-5", "仅日程差异 → 恰 [schedule]（语义 diff——enabled 翻转语义异仍发步；byte 异语义同的不发步面见方案-13）")
     check(singleKnobPlan({ $0.calibration?.intervalDays = 60 }) == ["calSched"], "方案-5", "仅校准调度差异 → 恰 [calSched]")
     check(singleKnobPlan({ $0.chHysteresisEnabled = false }) == ["ch"], "方案-5", "仅 CHIE 开关差异 → 恰 [ch]")
     check(singleKnobPlan({ $0.magSafeLedMode = MagSafeLEDMode.system.rawValue }) == ["led"], "方案-5", "仅 LED 差异 → 恰 [led]")
@@ -732,10 +743,12 @@ func runProfileDomainScenarios() {
               && !profileApplySrc3.contains("Self.log.notice("),
           "源钉-9", "级别反钉：装具打点恰八处全 .error（链启动/推进/ABORT 双臂/finish/dispatch/ABORT+2s 双臂——info/debug/notice 零使用）")
     // 隐私反钉：全部插值 privacy: .public（os_log 隐私默认私有——否则 log show
-    // 侧只见 <private> 取证失效；`, privacy: .public)` 恰 31 处 = 八打点行插值
-    // 逐个标注的精确总数）。
-    check(profileApplySrc3.components(separatedBy: ", privacy: .public)").count - 1 == 31,
-          "源钉-9", "隐私反钉：Logger 插值恰 31 处全 privacy: .public（数值/String/面串逐个标注——八行插值总数精确断言）")
+    // 侧只见 <private> 取证失效；`, privacy: .public)` 恰 33 处 = 八打点行插值
+    // 逐个标注的精确总数。0.23.20 联动改写：ABORT 行双原串各 +1（31 → 33）——
+    // 单插值 helper（forensicTruncated 返回完整串）形态，拆三插值则为 35 由本
+    // 计数钉强制对齐）。
+    check(profileApplySrc3.components(separatedBy: ", privacy: .public)").count - 1 == 33,
+          "源钉-9", "隐私反钉：Logger 插值恰 33 处全 privacy: .public（数值/String/面串逐个标注——八行插值总数精确断言；0.23.20 ABORT 双原串 schedRaw/expected 各 +1：31 → 33）")
     // 六打点字面在位（§2 打点面五处 + 延迟复核；plan 步型序列 String(describing:)
     // 逐元素全形重建 T1 实际步序）。
     check(profileApplySrc3.contains("chain start name=")
@@ -802,4 +815,101 @@ func runProfileDomainScenarios() {
     let reportSkip = ProfileModel.matchReport(profile: noFanReportProfile, current: base)
     check(reportSkip.fanSkipped && reportSkip.fan && !reportSkip.thermalSkipped && reportSkip.thermal,
           "源钉-9", "行为面：nil 未捕获域 skip 标记分立（fan 快照缺席 → fanSkipped true 且域布尔按 skip 语义不参与判——与 false 匹配失败不可混）")
+
+    // ---- 方案-12：scheduleSemanticallyEqual 向量表（0.23.20 热修 §3——byte
+    // 形态免疫的语义域逐向量钉死；函数单源 = 判定域唯一 schedule 比较面）----
+
+    // byte 异语义同（两形态空配置字面量直构——JSONEncoder 键序跨二进制漂移的
+    // 两种现场形态：daemon enabled 在前 / App entries 在前，§1 物证表）→ true。
+    let daemonFormEmpty = scheduleFixture   // {"enabled":false,"entries":[]}（enabled 在前）
+    let appFormEmpty = #"{"entries":[],"enabled":false}"#   // entries 在前
+    check(ProfileModel.scheduleSemanticallyEqual(appFormEmpty, daemonFormEmpty)
+              && ProfileModel.scheduleSemanticallyEqual(daemonFormEmpty, appFormEmpty),
+          "方案-12", "byte 异语义同 → true（两形态空配置字面量直构、双向对称——键序漂移免疫主向量）")
+    check(ProfileModel.scheduleSemanticallyEqual(daemonFormEmpty, daemonFormEmpty),
+          "方案-12", "byte 同 → true（byte 全等平凡向量）")
+    let oneEntry = #"{"enabled":false,"entries":[{"id":"e1","weekdays":[1],"startMinute":540,"endMinute":1080,"upperLimit":80}]}"#
+    check(!ProfileModel.scheduleSemanticallyEqual(oneEntry, daemonFormEmpty)
+              && !ProfileModel.scheduleSemanticallyEqual(daemonFormEmpty, oneEntry),
+          "方案-12", "entries 数不同 → false（真漂移不误判收敛——Equatable 全字段 R1 守护面）")
+    check(!ProfileModel.scheduleSemanticallyEqual(#"{"enabled":true,"entries":[]}"#, daemonFormEmpty),
+          "方案-12", "enabled 不同 → false（enabled 单键翻转语义异）")
+    check(!ProfileModel.scheduleSemanticallyEqual(nil, daemonFormEmpty)
+              && !ProfileModel.scheduleSemanticallyEqual(daemonFormEmpty, nil),
+          "方案-12", "单边 nil → false（未捕获 ≠ 空配置——双向对称）")
+    check(ProfileModel.scheduleSemanticallyEqual(nil, nil),
+          "方案-12", "双边 nil → true（双双未捕获——语义等平凡真）")
+    check(ProfileModel.scheduleSemanticallyEqual("not-json", "not-json"),
+          "方案-12", "解码失败单边 → byte 兜底：byte 相等 → true（不可解串不猜）")
+    check(!ProfileModel.scheduleSemanticallyEqual("not-json", daemonFormEmpty),
+          "方案-12", "解码失败单边 → byte 兜底：byte 不等 → false（诚实保守——异串不判等）")
+
+    // ---- 方案-13：applyPlan 语义免疫（0.23.20 缺陷回归门——§1 根因「profile 串
+    // App 形态 / daemon 回包串 daemon 形态 byte 恒不等 → 链入口 diff 恒不等 →
+    // 每步重推导恒含同型步 → 守卫一 abortChain」的修复面）----
+
+    var semanticProfile = capturedProfile(from: base)
+    semanticProfile.scheduleJson = appFormEmpty   // App 形态（entries 在前）
+    // current = base（scheduleJson = daemon 形态 fixture 原文，enabled 在前）。
+    // 两字面量键序相反 → byte 恒不等（任何二进制下成立）；解码值全等 → 语义等。
+    let plan13 = ProfileModel.applyPlan(profile: semanticProfile, current: base)
+    check(semanticProfile.scheduleJson != base.scheduleJson,
+          "方案-13", "前提钉：两形态字面量 byte 恒不等（键序相反——本场景确实行使在 byte 差异面上，二进制无关）")
+    check(!kinds(plan13).contains("schedule"),
+          "方案-13", "语义等 → plan 不含 setChargeSchedule（byte 异语义同不再发步——读回未收敛中止缺陷回归门）")
+    check(plan13.isEmpty
+              && ProfileModel.activeMatch(profiles: [semanticProfile], current: base) == semanticProfile.id,
+          "方案-13", "整计划空 + activeMatch 命中（同比较域互证——✓ 标注对两形态同样免疫）")
+
+    // ---- 方案-14：capture 写时归一（0.23.20 热修 §2——存储串稳定性加固：
+    // 存量字节自洽 + 未来任何 byte 消费者稳定）----
+
+    // daemon 形态串输入 → 存储串 == 同二进制 ChargeScheduleConfig.decoded(from:
+    // 输入)!.encoded。断言基准二进制无关（评审 P2）：禁硬编码键序字面量——本
+    // 二进制 encode 形态若未来漂移，基准随 decoded/encoded 同源漂移断言仍真，
+    // 场景自身不得成为键序漂移受害者。
+    var normalizeStatus = fullStatus()
+    normalizeStatus.scheduleJson = daemonFormEmpty
+    let normalizedCapture = ProfileModel.capture(from: normalizeStatus)
+    let daemonFormNormalized = try! ChargeScheduleConfig.decoded(from: daemonFormEmpty).encoded
+    check(normalizedCapture?.scheduleJson == daemonFormNormalized,
+          "方案-14", "capture 归一存：daemon 形态串输入 → 存储串 == 同二进制 decoded!.encoded（断言基准二进制无关——禁硬编码键序字面量，场景自身不成为键序漂移受害者）")
+    // 归一保语义：存储串解码值 == 输入串解码值（归一只收形态，不改语义）。
+    check((try? ChargeScheduleConfig.decoded(from: normalizedCapture?.scheduleJson ?? ""))
+              == (try? ChargeScheduleConfig.decoded(from: daemonFormEmpty)),
+          "方案-14", "归一保语义：存储串解码值 == 输入串解码值（形态收敛非语义改写）")
+    // 非法串输入 → 原样存（解码失败不猜——诚实兜底）。
+    var invalidStatus = fullStatus()
+    invalidStatus.scheduleJson = #"{"enabled":false,"entries":[]"#   // 截断非法串
+    check(ProfileModel.capture(from: invalidStatus)?.scheduleJson == invalidStatus.scheduleJson,
+          "方案-14", "非法串输入 → 原样存（解码失败兜底不猜）")
+
+    // ---- 源钉-10：0.23.20 热修 schedule 语义比较（public 纯函数 + applyPlan/
+    // scheduleFieldMatches 双消费点 + capture 归一在位 + ABORT 双原串打点键名 +
+    // 256/256+len 截断形态）----
+
+    let profileModelSrc3 = source("Sources/CellarCore/Control/ProfileModel.swift")
+    check(profileModelSrc3.contains("public static func scheduleSemanticallyEqual(_ lhs: String?, _ rhs: String?) -> Bool"),
+          "源钉-10", "scheduleSemanticallyEqual public 纯函数（消费方跨模块——public 非 internal，matchReport/applyPlan 先例同形态）")
+    check(profileModelSrc3.contains("if let json = profile.scheduleJson,\n           !scheduleSemanticallyEqual(profile.scheduleJson, current.scheduleJson) {"),
+          "源钉-10", "applyPlan 消费点（if let json 绑定保留——步载荷需非可选 json 禁强解包；仅条件换语义比较）")
+    check(profileModelSrc3.contains("return scheduleSemanticallyEqual(json, status.scheduleJson)"),
+          "源钉-10", "scheduleFieldMatches 消费点（readbackMatches 的 schedule 域 → 语义比较——判定域 byte 形态退役）")
+    check(profileModelSrc3.contains("ChargeScheduleConfig.decoded(from: scheduleJson)")
+              && profileModelSrc3.contains("normalizedSchedule = decoded.encoded ?? scheduleJson")
+              && profileModelSrc3.contains("normalizedSchedule = scheduleJson"),
+          "源钉-10", "capture 归一在位（decoded 成功 → encoded ?? 原串；解码失败原样存——归一内联 capture 不新增 private helper）")
+    check(profileModelSrc3.components(separatedBy: "private static func").count - 1 == 11,
+          "源钉-10", "private static func 恰 11 反钉（scheduleSemanticallyEqual public + 归一内联——既有 helper 计数原数不变）")
+    let profileApplySrc4 = source("App/CellarApp/StatusController+ProfileApply.swift")
+    check(profileApplySrc4.contains("schedRaw=") && profileApplySrc4.contains("expected="),
+          "源钉-10", "ABORT 行双原串打点键名（schedRaw= 方案侧 / expected= 现值侧——防与 match 段 sched= 布尔撞名）")
+    check(profileApplySrc4.contains("private static func forensicTruncated(_ raw: String?) -> String")
+              && profileApplySrc4.contains("raw.utf8.prefix(256)")
+              && profileApplySrc4.contains("raw.utf8.suffix(256)")
+              && profileApplySrc4.contains("byteCount > 512")
+              && profileApplySrc4.contains("(len=\\(byteCount))"),
+          "源钉-10", "截断策略形态（head 256 + tail 256 字节 + 总长标注——超 512 拼 head…tail (len=N)；单插值 helper 返回完整串，privacy 计数恰 33 依赖此形态）")
+    check(profileApplySrc4.components(separatedBy: "Self.forensicTruncated(").count - 1 == 2,
+          "源钉-10", "双原串各恰一插值（payload.scheduleJson + status.scheduleJson——拆三插值则 privacy 35，计数钉强制对齐）")
 }
