@@ -9,10 +9,16 @@ import os
 extension StatusController {
 
     // 取证打点通道（0.23.19 热修 §2——AppConfigStore.log 先例形态；Logger
-    // Sendable 跨隔离安全）。级别纪律（0.23.13 钉扎行教训）：全部打点 .error
-    // ——os_log info 级不落盘（仅内存环形缓冲，log show 事后不可检索），取证
-    // 装具必须持久化可查；全部插值 privacy: .public（os_log 隐私默认私有，
-    // 否则 log show 侧只见 <private> 取证失效）。
+    // Sendable 跨隔离安全）。级别纪律（0.23.21-alpha 整理批分级定版）：正常链路
+    // 四条（chain start/advance/dispatch/finish）.debug——每次方案切换必打 5-18
+    // 行，日常零 error 噪音（缺陷已根治 + 方案-13 回归门兜底；debug 级事后
+    // log show 不可检索 = 正常链路放弃事后取证，取舍已登记）；异常路径四条
+    // （ABORT 双臂 + ABORT+2s 双臂）保持 .error 持久化可查——再发异常唯一事后
+    // 取证主通道（0.23.19 装具一次复现破案的价值通道，用户侧 log show 可操作）；
+    // .notice 中间档排除（default 级落盘可检索但用户 Console.app 常规视图可见
+    // ——四类打点每次切换对非开发者用户构成噪音）。全部插值 privacy: .public
+    // （os_log 隐私默认私有，否则 log show 侧只见 <private> 取证失效）——分级
+    // 只动级别不动插值，privacy 恰 33 不变。
     private nonisolated static let log = Logger(subsystem: "com.cellar", category: "profile-chain")
 
     /// 链会话状态（值类型；存储槽 `profileChain` 在主类声明——extension 不能声明
@@ -58,7 +64,7 @@ extension StatusController {
             return
         }
         // 取证打点①（0.23.19 热修 §2）：链启动——方案名/id/限值/模式 + 现值基线。
-        Self.log.error("chain start name=\(payload.name, privacy: .public) id=\(payload.id, privacy: .public) limits=\(payload.upperLimit, privacy: .public)/\(payload.hysteresis, privacy: .public) mode=\(payload.mode, privacy: .public) | current(mode=\(current.mode, privacy: .public), upper=\(current.upperLimit, privacy: .public), hys=\(current.hysteresis, privacy: .public))")
+        Self.log.debug("chain start name=\(payload.name, privacy: .public) id=\(payload.id, privacy: .public) limits=\(payload.upperLimit, privacy: .public)/\(payload.hysteresis, privacy: .public) mode=\(payload.mode, privacy: .public) | current(mode=\(current.mode, privacy: .public), upper=\(current.upperLimit, privacy: .public), hys=\(current.hysteresis, privacy: .public))")
         profileChain = ProfileChainState(payload: payload, lastStep: nil, executed: 0)
         advanceProfileChain(from: current)
     }
@@ -86,7 +92,7 @@ extension StatusController {
         let plan = ProfileModel.applyPlan(profile: chain.payload, current: status)
         // 取证打点②（0.23.19 热修 §2）：每推进入口——plan 步型序列 String(describing:)
         // 逐元素全形重建 T1 实际步序（ProfileApplyStep 含关联值 enum）。
-        Self.log.error("advance #executed=\(chain.executed, privacy: .public) lastStep=\(Self.forensicStep(chain.lastStep), privacy: .public) | plan=[\(Self.forensicPlan(plan), privacy: .public)] | status(mode=\(status.mode, privacy: .public), upper=\(status.upperLimit, privacy: .public), hys=\(status.hysteresis, privacy: .public))")
+        Self.log.debug("advance #executed=\(chain.executed, privacy: .public) lastStep=\(Self.forensicStep(chain.lastStep), privacy: .public) | plan=[\(Self.forensicPlan(plan), privacy: .public)] | status(mode=\(status.mode, privacy: .public), upper=\(status.upperLimit, privacy: .public), hys=\(status.hysteresis, privacy: .public))")
         // 链尾判定前置（评审收口 P1）：计划空 → 聚合反馈 + 意图更新 + 清链——
         // **必须先于收敛守卫**（见函数头注：守卫二先行会误杀满序链的收敛尾）。
         guard let step = plan.first else {
@@ -119,7 +125,7 @@ extension StatusController {
     private func dispatchProfileStep(_ step: ProfileApplyStep) {
         // 取证打点⑤（0.23.19 热修 §2）：发步——关联值全形（LED 非法 raw 臂的
         // ABORT 行前置即本行，步载荷可直读）。
-        Self.log.error("dispatch step=\(String(describing: step), privacy: .public)")
+        Self.log.debug("dispatch step=\(String(describing: step), privacy: .public)")
         switch step {
         case .setLimits(let upperLimit, let hysteresis):
             runControl(
@@ -218,7 +224,7 @@ extension StatusController {
         // （原行序不变：guard → 清链 → 聚合反馈 → 意图更新；插值前落局部量——
         // Logger 插值闭包内实例属性须显式 self，Swift 6 严格模式门）。
         let executed = profileChain?.executed ?? 0
-        Self.log.error("finish name=\(payload.name, privacy: .public) executed=\(executed, privacy: .public)")
+        Self.log.debug("finish name=\(payload.name, privacy: .public) executed=\(executed, privacy: .public)")
         profileChain = nil
         setSuccessFeedback(CellarL10n.s("control.profile.applied", payload.name))
         ProfileController.shared.setActiveIntent(id: payload.id)

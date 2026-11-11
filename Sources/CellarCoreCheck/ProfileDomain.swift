@@ -494,13 +494,16 @@ func runProfileDomainScenarios() {
     check(profileApplySrc3.contains("import os")
               && profileApplySrc3.contains("Logger(subsystem: \"com.cellar\", category: \"profile-chain\")"),
           "源钉-9", "取证通道在位（import os + subsystem/category 双段——0.23.18 编排器文件纯观测加装具）")
-    // 级别反钉：打点恰八处全 .error（os_log info 级不落盘仅内存环形缓冲，log show
-    // 事后不可检索——0.23.13 钉扎行教训；取证装具必须持久化可查）。
-    check(profileApplySrc3.components(separatedBy: "Self.log.error(").count - 1 == 8
+    // 级别反钉（0.23.21-alpha 整理批改写——装具分级定版）：.error 恰四（ABORT
+    // 双臂 + ABORT+2s 双臂——异常取证主通道，os_log error 级落盘持久化可查，
+    // 0.23.13 钉扎行教训）+ .debug 恰四（chain start/advance/dispatch/finish
+    // 正常链路——缺陷根治 + 方案-13 回归门兜底，事后取证放弃取舍已在装具
+    // 文件头登记）+ info/notice 负钉保留（防未来引入无钉）。
+    check(profileApplySrc3.components(separatedBy: "Self.log.error(").count - 1 == 4
+              && profileApplySrc3.components(separatedBy: "Self.log.debug(").count - 1 == 4
               && !profileApplySrc3.contains("Self.log.info(")
-              && !profileApplySrc3.contains("Self.log.debug(")
               && !profileApplySrc3.contains("Self.log.notice("),
-          "源钉-9", "级别反钉：装具打点恰八处全 .error（链启动/推进/ABORT 双臂/finish/dispatch/ABORT+2s 双臂——info/debug/notice 零使用）")
+          "源钉-9", "级别反钉（装具分级）：.error 恰四（ABORT 双臂 + ABORT+2s 双臂——异常取证主通道持久化可查）+ .debug 恰四（chain start/advance/dispatch/finish 正常链路）+ info/notice 负钉保留")
     // 隐私反钉：全部插值 privacy: .public（os_log 隐私默认私有——否则 log show
     // 侧只见 <private> 取证失效；`, privacy: .public)` 恰 33 处 = 八打点行插值
     // 逐个标注的精确总数。0.23.20 联动改写：ABORT 行双原串各 +1（31 → 33）——
