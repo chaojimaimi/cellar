@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.19-alpha]
+
+> 背景：0.23.18 真机回归缺陷热修——**取证装具批**（缺陷未修、装具取证中，如实登记）+ 版本行词面歧义收口（用户第 4 次误读实证）。方案 plan-reviewer 两轮审至 PASS（首轮 3 P1 全文档级：matchReport 单源可得路径 / abortChain 快照落点不可执行 / 词面按字面落地会渲染「握手握手正常」缺陷串）；code-reviewer 快审 **APPROVE**（0 问题——零判定逻辑改动有删除行级实证：旧文改动恰 3 行全为 abortChain 签名联动）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：升级免重装**。门禁：1020→**1021 场景全绿**（+1 源钉-9）、golden 384=384、l10n 511 零变化（值改键数不变）、打包产物启动实证、三断言。缺陷回溯：0.23.18 真机切换两方案（唯一差异 upperLimit 75→80，单步链）报「守护进程读回未收敛」中止而 ✓ 同时点亮——静态穷举全路径排除（daemon 回包组装恒 policy / 比较域单源 / XPC 独立连接 / 闭包捕获 / ✓ 读回派生），凶手为静态分析不可达的瞬态竞态；本批装具（profile-chain 通道六打点全 .error 持久化 + ABORT 全比较面快照 + abort 2s 后延迟复核）落地后用户复现一次即可定位（`log show --predicate 'subsystem == "com.cellar" AND category == "profile-chain"'`），0.23.20 真修。
+
+### Fixed
+
+- **切換中止缺陷取证装具（缺陷未修——如实登记）**：0.23.18 编排器全链路六类打点（chain start / advance 每步含 plan 步序 / dispatch / ABORT 全比较面快照八域布尔 + status 侧 18 字段现值 / finish / abort+2s 延迟复核收敛结论直落日志）——纯观测零行为变化；新 `MatchReport`/`matchReport` 纯函数出口（与 ✓ 判定 readbackMatches 同源比较域，private helper 一行未动）。
+
+### Changed
+
+- **面板版本行词面消歧**：「守护进程协议 0.23.16-alpha · App 0.23.19-alpha · 握手正常」→「**守护进程 0.23.16-alpha（协议兼容）** · App 0.23.19-alpha · 握手正常」——「协议兼容」括注紧跟 daemon 版本号，消除双数字并排的「版本落后/不一致」误读（App-only 批 daemon 协议版本恒滞后于 App 版本为设计常态，「握手正常」= 升级免重装成功态）。
+
 ## [0.23.18-alpha]
 
 > 背景：产品增量第二批「多 Profile」+ 三随批（0.23.17 评审登记收口两项 + BTM 锚点漂移事故教训横幅）。上游调研 docs/plans/research-health-trend-profiles.md Part B（决策点全按建议锁定：九类旋钮全含 + diff 跳过 / v1「当前设置另存为」编辑形态 / 菜单预设区与 profile 区并存）。方案 plan-reviewer 两轮审至放行（首轮 2 P1：LED 链步 ControlAttempt case 已于 v1.10 M2 退役需恢复 + 失败清链无回调落点需 onFailure 钩子；二轮新引 P1 = 方案伪代码收敛守卫 defer 时序崩溃路径 + l10n 键数三处矛盾）；code-reviewer 落地前全审 **REQUEST CHANGES**（1 P1 编排器守卫二次序——八步满序链必误报「未收敛」+ 1 P2 dayString 非公历历法等价性失实 + 2 P3）随批收口（de178e0）后复核 **APPROVE**（0 P0 / 0 P1，八步满序链 FINISH 实证）。**App-only 批——wire schema 零变化、daemon 代码零变化、daemonVersion 常量不动（0.23.16-alpha）：升级零重装**。门禁：1000→**1020 场景全绿**（+20：方案-1..11 / 随批-1..2 / 源钉-1..8）、golden 失败集合 384=384 逐条零差异、l10n 491→511（+21 −1 双语全查绿）、打包产物启动实证、三断言。登记项：LED 隔离纪律偏离如实登记（轻路径 UI 直调面不写 lastAttempt 不变，仅 profile 链内 LED 步走 runControl 通道承载重试/横幅/单槽语义）；CFBundleVersion 2318 无历史碰撞（0.23.17 §2.7 键碰撞教训闭环自愈）。
