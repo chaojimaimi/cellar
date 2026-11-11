@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.20-alpha]
+
+> 背景：0.23.18 真机切换中止缺陷的**真修复批**（根因由 0.23.19 取证装具 + 三探针定位）。方案 plan-reviewer 三轮审至 PASS（首轮 1 P1 既有断言联动未登记 + 2 P2 os_log 截断/场景基准二进制相关；二轮新 P1 拆分缺 MainEntry 注册的静默丢失面——采纳 b 路线本批不拆文件豁免登记）；code-reviewer 快审 **APPROVE**（0 问题——方案-13 回归门 byte 恒不等前提钉/方案-14 二进制无关基准判别性实证）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：升级免重装**。门禁：1021→**1025 场景全绿**（+4：方案-12..14 / 源钉-10）、golden 384=384、l10n 511 零变化、打包产物启动实证、三断言。登记：ProfileDomain.swift 915 行超 800 硬上限豁免（源钉面拆分含 MainEntry 注册完整形态登记后续整理批）；CFBundleVersion 2320 与 pre-Sparkle 时代 0.23.2-alpha 曾用键同值——功能面惰性（Sparkle 自 0.23.3 引入，在线用户 build 恒递增无比对面），如实登记。
+
+### Fixed
+
+- **切换「守护进程读回未收敛」中止——根治（0.23.18 缺陷闭合）**：根因 = **JSONEncoder 键序按 Swift 运行时反射字段序、跨二进制无契约**——daemon 二进制与 App 二进制对同一充电日程配置编出 byte 不同（语义完全相同）的串（`{"enabled":…}` vs `{"entries":…}`，三探针实证），Profile 的 byte 级 schedule 比较永不收敛 → 切换链恒发无害的 setChargeSchedule → 回包形态不变 → 每步重推导恒含同型步 → 收敛守卫如实中止。修复 = **语义比较**：schedule 域 diff 与 ✓ 读回判定改「解码后配置对象全等」（byte 形态彻底退出判定域；解码失败退 byte 比较保守不猜）；capture 写时归一（新捕获串统一 App 形态，存量旧形态串免疫免迁移）；链步下发 byte 透传零改动（daemon 解码校验幂等消化）。真漂移（条目/开关真不同）仍被守卫如实拦截；0.23.19 取证装具保留并在中止行补打双侧原串（截断策略 256+256+len）。
+
 ## [0.23.19-alpha]
 
 > 背景：0.23.18 真机回归缺陷热修——**取证装具批**（缺陷未修、装具取证中，如实登记）+ 版本行词面歧义收口（用户第 4 次误读实证）。方案 plan-reviewer 两轮审至 PASS（首轮 3 P1 全文档级：matchReport 单源可得路径 / abortChain 快照落点不可执行 / 词面按字面落地会渲染「握手握手正常」缺陷串）；code-reviewer 快审 **APPROVE**（0 问题——零判定逻辑改动有删除行级实证：旧文改动恰 3 行全为 abortChain 签名联动）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：升级免重装**。门禁：1020→**1021 场景全绿**（+1 源钉-9）、golden 384=384、l10n 511 零变化（值改键数不变）、打包产物启动实证、三断言。缺陷回溯：0.23.18 真机切换两方案（唯一差异 upperLimit 75→80，单步链）报「守护进程读回未收敛」中止而 ✓ 同时点亮——静态穷举全路径排除（daemon 回包组装恒 policy / 比较域单源 / XPC 独立连接 / 闭包捕获 / ✓ 读回派生），凶手为静态分析不可达的瞬态竞态；本批装具（profile-chain 通道六打点全 .error 持久化 + ABORT 全比较面快照 + abort 2s 后延迟复核）落地后用户复现一次即可定位（`log show --predicate 'subsystem == "com.cellar" AND category == "profile-chain"'`），0.23.20 真修。
