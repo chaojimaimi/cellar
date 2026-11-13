@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.23-alpha]
+
+> 背景：用户 dogfooding 实证 0.23.16 B8 迁移（MenuBarExtra → NSStatusItem + NSPopover）真机回归——面板弹出后点击其他应用不收起，须再点图标才消失。根因：LSUIElement accessory 应用点击状态项不激活 App → popover 窗口从不成为 key window → `.transient` 的「点击外部收起」（挂宿主激活态/关键窗口流转）全程哑火；`:31` 注释「.transient = 点击外部自动收起——MenuBarExtra .window 原行为」是未经真机验证的假设（B8 必验面①-④恰未列此维度，漏网）。方案 plan-reviewer 一轮 **PASS**（2 P2 全采纳：R6 证据链失实修正——SPM 门不编译 App target、`activate(ignoringOtherApps:)` 自 macOS 14 SDK deprecated、API 定版无参 `activate()`；§1.3 走查拆两层时序——主修复验证不后置发版；3 P3 采纳）；code-reviewer 全审 **APPROVE**（0 P0-P3，逐字核对任务书 + 3 文件名单终证零方案外触及）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1027 场景 2648 断言全绿（零新增持平）、golden 384=384（A/B stash 对比 diff 空）、l10n 513 零变化、xcodebuild BUILD SUCCEEDED（ci.yml scheme 形态——裸 xcodebuild 三连败为环境态 CoreSimulator 版本失配，如实登记）、红线双锚原样。**发版前真机硬门**：点其他应用 / ESC / Cmd+Tab 三步收起实测全过（macOS 27.2，R1 同步 activate 弹回风险证伪定案）。CFBundleVersion 2323 历史精确查（plist 键值形态）零碰撞。登记：PanelSections.swift:298 旧 deprecated activate 形态清理后续批候选（本批新代码不沿袭）；B8 必验面补登 ⑤（点击外部/ESC 收起）；CHANGELOG ~→~~ 腐蚀第 5 次同位置复发（发版前 checkout 已清除，腐蚀源仍未定位）。
+
+### Fixed
+
+- **菜单栏面板「点击外部自动收起」修复**：`togglePopover` show 分支补激活三连（`NSApp.activate()` → popover 窗口 `makeKey()`）——`transient` 收起机制从此武装。现在面板弹出后：点击其他应用窗口、Cmd+Tab 切走、按 ESC，面板均自动收起（修复前三者全部无效，只能再点图标）。单咽喉点改动，左键与右键菜单「打开面板」两条路同时获益；右键快捷菜单、图标 toggle 通路零触及。
+- **副作用说明**：面板打开期间 App 处于激活态——若主窗口恰好开着会被带向前台（同类菜单栏工具通行行为，方案评审已声明接受）；面板收起后激活态残留至下一次外部交互，无可感面。
+
 ## [0.23.22-alpha]
 
 > 背景：2026-11-11 daemon 失联事故的产品缺口修复批。事故定案：App-only 升级链（0.23.18→21 四轮换包）期间 BTM 记录钉扎的 daemon 二进制 cdhash 停留在 register 时刻（0.23.18 包），每个 release 的全新构建产生新 ad-hoc 签名 cdhash 而无人重注册——运行中的老 daemon 进程于心跳看门狗自杀后，launchd 重拉磁盘新二进制即被内核代码签名监视器以 Launch Constraint Violation 当场击杀（EX_CONFIG 78 每 10s 失败循环；`.ips` termination 域 CODESIGNING 定谳）。手工「卸载→安装」修复成功后开工本批：把面板从「笼统失联」升级为「精确诊断 + 一键修复」。方案 plan-reviewer 两轮审至 PASS（一轮 REVISE 2 项全采纳：P1 settingsOpened 闩锁致 pending 引导在 reRegister 路径静默断链——入口显式复位；P2 场景标签分配钉死）；code-reviewer 落地前全审 **APPROVE**（0 P0/P1/P2，2 P3 随 commit 4 收口：文件头注记推进 + reRegister/refresh 事后取证打点）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1025→**1027 场景全绿**（+2：解析器 BTM-7 一标签 4 检 + 真值表随批-3 一标签 8 行；check 断言 2636→2648）、golden 384=384、l10n 511→513（两新键双语）、打包产物启动实证、三断言。CFBundleVersion 2322 历史精确查（plist 键值形态）零碰撞。登记：doctor 检查 9 的 resetbtm 指引对本形态是误导性重锤（BTM 记录未损坏）——「doctor 文案按形态再分流」后续批候选；unregister 腿失败短路后续批候选；stale-pin 检出方向性注记（只看版本不等不看方向）。
