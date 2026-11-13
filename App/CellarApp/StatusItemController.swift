@@ -16,6 +16,8 @@ import SwiftUI
 // - ③PanelFooterView 的 @Environment(\.openWindow) 在 NSPopover 宿主内可用性
 //   （主窗口按钮——登记风险点，勿自行改造 PanelFooterView）；
 // - ④图标渲染形态：variableLength 宽度自适应（含百分比文字）/模板着色/alert 红。
+// - ⑤点击外部/ESC 收起面板（0.23.23 补登——B8 漏验项，.transient 在 LSUIElement
+//   宿主单独设置不生效，真机实证后由 togglePopover 激活三连修复）；
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     /// 进程级单例（0.23.16 B8；照 0.23.6 B1-3 NotificationService.shared 先例）：
@@ -28,7 +30,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// NSStatusItem **无人强持即释放消失**——本类单例进程生存期持有，防图标蒸发。
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-    /// 左键面板宿主（.transient = 点击外部自动收起——MenuBarExtra .window 原行为）。
+    /// 左键面板宿主（.transient + 弹出时显式激活 App——点击外部/ESC/Cmd+Tab 收起
+    /// 的前置条件：popover 窗口成为 key window。LSUIElement 下 .transient 单独
+    /// 设置不生效，见 togglePopover 注记——0.23.23 补全，MenuBarExtra .window 原行为）。
     private let popover = NSPopover()
 
     /// 依赖组装标记（wire 幂等守卫——组装锚点见 DaemonInstaller didSet 自转发 +
@@ -188,6 +192,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             popover.performClose(nil)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // LSUIElement 应用点击状态项不激活 App → popover 窗口从不成为 key window，
+            // .transient 的「点击外部收起」（挂宿主激活态/关键窗口流转）全程哑火
+            //（0.23.16 B8 迁移真机回归，用户实证 2026-11-13：点其他应用面板不收）。
+            // 显式激活三连——社区对「状态项 + NSPopover」宿主的标准解法：
+            NSApp.activate()   // macOS 14+ 无参形态（deployment target 26.0 无兼容负担；无条件激活语义 = 旧 ignoringOtherApps:true）。本仓 PanelSections.swift:298 旧 deprecated 形态不沿袭——遗留清理登记后续批（R6）
+            popover.contentViewController?.view.window?.makeKey()   // activate 后 AppKit 是否自动 key 化 popover 无契约——显式 makeKey 幂等兜底（R3）
         }
     }
 
