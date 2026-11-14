@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.24-alpha]
+
+> 背景：整理批（工程债七项一车清收——0.23.22/23 两批发版后与用户对齐的登记清单，零功能变化意图）。方案 plan-reviewer 一轮 **REVISE**（2 P1 断言联动漏路由——源钉-10 contains 钉与热修-医生-1 连续子串在新文案下必红，全数折入修订）后通过；code-reviewer 全审 **APPROVE 0 P0-P3**（四项落地偏差均独立核验核准：.map→.flatMap 编译强制、os.Logger privacy 尾参删除、commit 1 amend 修 App 编译面、doctor 文案两行化）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1027 场景 2648 断言全绿（持平）、l10n 513→**514**（+1 键——reRegister 短路错误文案）、xcodebuild BUILD SUCCEEDED 且 **internal(set) 警告根除**（0.22.2 起三年既有警告源清零）、快照 384=384、红线双锚原样 + daemon 侧 encode 六文件零触及实证。**腐蚀排查**：七路静态排查全排除（zcode hooks/git hooks/shell history/打包脚本/CI/xattr/文件监控进程）→ 未定位；建立哨兵实验（未跟踪 CORRUPTION-SENTINEL.md 三方基线入档，跨会话观测）+ checkout 惯例永久化。CFBundleVersion 2324 历史精确查零碰撞。登记：daemon 侧状态文件编码 sortedKeys 确定化（五处——需 daemonVersion bump 行为批）；doctor CLI 端 stale-pin 真判定（收益低或永不立项）；reRegister 短路分支不调 refresh（后续统一「失败后刷新」可考虑）；AppSide load() .info 打点分级（同纪律后续整理批）。
+
+### Fixed
+
+- **面板「重新注册守护进程」失败诚实停链**：卸载旧注册失败时立即中止并上屏明确错误（此前静默继续重注册，失败态下可能产生混乱中间状态）——旧行为退役，新行为 = 停链 + 可操作文案。
+- **升级后签名失配检出可事后溯源**：检出与重注册触发升级为持久化日志级别（此前 info 级不入盘，事后无法检索——0.22.2 起同类排查教训收口）。
+
+### Changed
+
+- **doctor 指引双层化**：守护进程反复启动失败的修复指引改为「首选打开 App 面板——升级后失配形态有『重新注册守护进程』一键修复；仅当面板无该提示（真 BTM 记录损坏）才用 resetbtm 重锤」——避免对失配形态误用 resetbtm 反清全部良性 BTM 记录（0.23.22 登记项收口；CLI install 失败指引同款双层化）。
+- **配置文件写入形态确定化**：充电方案捕获与 App 偏好存储的 JSON 写入启用键排序（此前编码键序跨进程逐次漂移——0.23.20/21 取证定案的不确定形态根除；存量文件无需迁移，语义比较本已免疫）。
+- **打点分级**（0.23.21 纪律推广）：面板打开周期打点降 debug 级（Console 常规视图零噪音）；异常链路（检出/重注册/失败）error 级取证主通道。
+
 ## [0.23.23-alpha]
 
 > 背景：用户 dogfooding 实证 0.23.16 B8 迁移（MenuBarExtra → NSStatusItem + NSPopover）真机回归——面板弹出后点击其他应用不收起，须再点图标才消失。根因：LSUIElement accessory 应用点击状态项不激活 App → popover 窗口从不成为 key window → `.transient` 的「点击外部收起」（挂宿主激活态/关键窗口流转）全程哑火；`:31` 注释「.transient = 点击外部自动收起——MenuBarExtra .window 原行为」是未经真机验证的假设（B8 必验面①-④恰未列此维度，漏网）。方案 plan-reviewer 一轮 **PASS**（2 P2 全采纳：R6 证据链失实修正——SPM 门不编译 App target、`activate(ignoringOtherApps:)` 自 macOS 14 SDK deprecated、API 定版无参 `activate()`；§1.3 走查拆两层时序——主修复验证不后置发版；3 P3 采纳）；code-reviewer 全审 **APPROVE**（0 P0-P3，逐字核对任务书 + 3 文件名单终证零方案外触及）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1027 场景 2648 断言全绿（零新增持平）、golden 384=384（A/B stash 对比 diff 空）、l10n 513 零变化、xcodebuild BUILD SUCCEEDED（ci.yml scheme 形态——裸 xcodebuild 三连败为环境态 CoreSimulator 版本失配，如实登记）、红线双锚原样。**发版前真机硬门**：点其他应用 / ESC / Cmd+Tab 三步收起实测全过（macOS 27.2，R1 同步 activate 弹回风险证伪定案）。CFBundleVersion 2323 历史精确查（plist 键值形态）零碰撞。登记：PanelSections.swift:298 旧 deprecated activate 形态清理后续批候选（本批新代码不沿袭）；B8 必验面补登 ⑤（点击外部/ESC 收起）；CHANGELOG ~→~~ 腐蚀第 5 次同位置复发（发版前 checkout 已清除，腐蚀源仍未定位）。
