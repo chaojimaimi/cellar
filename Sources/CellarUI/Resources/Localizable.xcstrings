@@ -8720,6 +8720,23 @@
           }
         }
       }
+    },
+    "panel.daemon.reRegisterUnregisterFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-register aborted: failed to unregister the old daemon (%@) — retry later or reinstall the daemon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新注册中断：卸载旧守护进程注册失败（%@）——请稍后重试或重装守护进程"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

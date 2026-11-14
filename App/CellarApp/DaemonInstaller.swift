@@ -122,7 +122,7 @@ final class DaemonInstaller: ObservableObject {
     /// loaded 永假 → 面板冻结初始态、引导门失效、用户点安装「毫无反应」——
     /// 4 秒未回包自愈重试（有界 3 次），超限后面板诚实呈现「初始化中」。
     func refresh() {
-        Self.log.info("refresh 开始（自愈重试计数 \(self.refreshRetries)）")
+        Self.log.debug("refresh 开始（自愈重试计数 \(self.refreshRetries)）")
         let legacy = FileManager.default.fileExists(atPath: Self.legacyPlistPath)
         hasLegacyPlist = legacy
         Task.detached { [weak self] in
@@ -144,7 +144,13 @@ final class DaemonInstaller: ObservableObject {
                     registration: registration, route: route, btmState: btmState,
                     parentBundleVersion: parentVersion, ownBundleVersion: Self.ownBundleVersion
                 )
-                Self.log.info("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public) stalePin=\(self.stalePinDetected, privacy: .public) parentVersion=\(String(describing: parentVersion), privacy: .public) ownVersion=\(String(describing: Self.ownBundleVersion), privacy: .public)")
+                // stale-pin 检出 .error 打点（0.23.24 整理批——0.23.22 遗留登记项收口：
+                // 检出/重注册打点 info 不落盘、事后取证不可检索）。检出态持续期间每次
+                // refresh 一条 error：量级 = 用户开面板次数，异常态取证优先可容忍（R2）。
+                if self.stalePinDetected {
+                    Self.log.error("stale-pin 精确检出（升级后签名失配形态）：parentVersion=\(String(describing: parentVersion), privacy: .public), ownVersion=\(String(describing: Self.ownBundleVersion), privacy: .public)——面板一键重注册可修复")
+                }
+                Self.log.debug("refresh 完成：registration=\(String(describing: registration), privacy: .public) route=\(String(describing: route), privacy: .public) btmCorrupted=\(self.btmCorrupted, privacy: .public) stalePin=\(self.stalePinDetected, privacy: .public) parentVersion=\(String(describing: parentVersion), privacy: .public) ownVersion=\(String(describing: Self.ownBundleVersion), privacy: .public)")
                 self.guidance = migrationGuidance(
                     legacyPlistExists: legacy,
                     registration: registration
@@ -194,7 +200,7 @@ final class DaemonInstaller: ObservableObject {
         guard !busy else { return }
         busy = true
         lastError = nil
-        Self.log.info("install 请求（用户触发）")
+        Self.log.debug("install 请求（用户触发）")
         Task.detached { [weak self] in
             let outcome = Self.registerBlocking()
             await MainActor.run { self?.handleRegister(outcome) }
@@ -222,16 +228,31 @@ final class DaemonInstaller: ObservableObject {
         guard !busy else { return }
         busy = true
         lastError = nil
-        Self.log.info("reRegister 请求（用户触发——stale-pin 修复路径）")
+        // .error（0.23.24 打点分级——异常修复路径：0.23.22 取证动机但 info 不落盘
+        // 等于白打，.info 不持久化教训；本路径打点必须入盘可事后溯源）。
+        Self.log.error("reRegister 请求（用户触发——stale-pin 修复路径）")
         settingsOpened = false   // 评审 P1：settingsOpened 闩锁复位——同进程历史上
                                  // 已 pending 过（如安装授权完成后原地升级）时，
                                  // 不复位则 pending→openSettingsOnce 静默不拉起，
                                  // 用户被晾在「等待系统授权」无引导（主修复旅程断链）。
         Task.detached { [weak self] in
-            // unregister 结果有意忽略（_ =）：失败态下旧钉扎未销毁，register 照跑、
-            // 精确行保持亮起（诚实自纠闭环）；lastError 仅由 register 腿置位
-            //（二轮评审 P3-2 定版取舍——unregister 失败短路登记后续批候选）。
-            _ = Self.unregisterBlocking()
+            // 短路语义（0.23.24 整理批——原「unregister 结果有意忽略」取舍退役）：
+            // .failure 即停链（busy=false + lastError 上屏，不继续 register）。
+            // 依据：unregisterBlocking 已把 notRegistered 容忍为 .success，能到
+            // .failure 的都是真失败（权限/服务异常），继续 register 大概率失败且
+            // 可能产生双记录中间态——诚实停链（0.23.18 编排器失败停链先例）。
+            if case .failure(let error) = Self.unregisterBlocking() {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.busy = false
+                    self.lastError = CellarL10n.s(
+                        "panel.daemon.reRegisterUnregisterFailed", error.localizedDescription
+                    )
+                }
+                return
+            }
+            // .success 照原路：3s 退避（bootout 后 launchd 清理竞态）→ register →
+            // 既有 handleRegister 回路。
             try? await Task.sleep(for: .seconds(3))
             let outcome = Self.registerBlocking()
             await MainActor.run { self?.handleRegister(outcome) }
@@ -302,7 +323,7 @@ final class DaemonInstaller: ObservableObject {
         let daemon = SMAppService.daemon(plistName: plistName)
         do {
             try daemon.register()
-            Self.log.info("register: OK")
+            Self.log.debug("register: OK")
         } catch {
             let status = RegistrationStatus(daemon.status)
             Self.log.error("register 抛错：\(error, privacy: .public)；status=\(String(describing: status), privacy: .public)")

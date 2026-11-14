@@ -295,7 +295,9 @@ struct PanelFooterView: View {
         FooterLinksView(
             onMainWindow: {
                 // LSUIElement 前置修正（R-8：不激活主窗口会落在前台应用后面）。
-                NSApp.activate(ignoringOtherApps: true)
+                // 无参 activate（0.23.24 整理批——旧 ignoringOtherApps 形态 deprecated；
+                // macOS 14+ 形态 deployment target 26.0 无兼容负担，无条件激活语义等价）。
+                NSApp.activate()
                 openWindow(id: "main")
             },
             onQuit: {

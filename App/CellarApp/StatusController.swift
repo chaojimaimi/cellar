@@ -139,10 +139,10 @@ final class StatusController: ObservableObject {
     /// suppression 恢复结果横幅数据源（0.22.2 §4；通用页警示块第三行消费）。
     /// at = 派发时刻（HH:mm 格式化上屏）、recovered = 写结果。仅内存态，App
     /// 重启清零；赋值钉死在 dispatchSuppressionRecovery 的 MainActor.run 块内
-    /// （勿落组合根闭包）。⚠️ internal setter（偏离本类 private(set) 纪律，
-    /// magSafeLedPending 同款先例）——WHY：写入面在外迁 extension 文件
-    /// StatusController+LimitExecution.swift，private(set) 跨文件只读不可写。
-    @Published internal(set) var suppressionRecoveryInfo: (at: Date, recovered: Bool)?
+    /// （勿落组合根闭包）。同 module 跨文件写面（外迁 extension
+    /// StatusController+LimitExecution.swift）默认即达，private(set) 才不可跨
+    /// 文件写——显式 internal(set) 冗余移除（0.22.2 起警告，本批清理）。
+    @Published var suppressionRecoveryInfo: (at: Date, recovered: Bool)?
 
     /// 通知分类基线（ingest 每样本推进；首样本语义见 CellarCore notificationEvents）。
     private var notificationBaseline: DaemonStatus?
