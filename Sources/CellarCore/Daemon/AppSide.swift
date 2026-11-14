@@ -323,7 +323,11 @@ public actor AppConfigStore {
     /// 写：编码 → 临时文件 → chmod 0644 → rename（原子替换）。错误原样上抛
     /// （面板上屏失败文案，不静默）。
     public func save(_ config: AppConfig) throws {
-        let data = try JSONEncoder().encode(config)
+        // 局部 sortedKeys encoder（0.23.24 整理批 §1.5②）：用户域存储文件形态
+        // 确定化（调试 diff 稳定）；daemon 不消费该文件，零风险。
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(config)
         let directory = url.deletingLastPathComponent()
         // 首写建目录（用户域，无需特权；失败即上抛，绝不静默）。
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

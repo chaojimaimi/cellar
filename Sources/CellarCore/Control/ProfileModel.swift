@@ -282,15 +282,19 @@ public enum ProfileModel {
               let chHysteresisEnabled = status.chHysteresisEnabled,
               let ledStatus = status.magSafeLed
         else { return nil }
-        // capture 写时归一（0.23.20 热修 §2 稳定性加固）：scheduleJson 存储前
-        // decoded 成功 → re-encode 存 App 形态（`encoded ?? 原串`——全值类型
-        // encode 不可达失败，兜底仍诚实）；解码失败原样存（不可解串不猜）。
+        // capture 写时归一（0.23.20 热修 §2 稳定性加固；0.23.24 整理批形态定版）：
+        // decoded 成功 → 局部 JSONEncoder（.outputFormatting = [.sortedKeys]）
+        // re-encode 存**恒 sorted 单形态**（0.23.21 实证 -O 同进程逐次键序漂移的
+        // 两形态不确定根除；encode 失败兜底原串——全值类型 encode 不可达失败，
+        // ?? scheduleJson 双兜底保形）；解码失败原样存（不可解串不猜）。
         // 归一内联本函数（不新增 private helper——源钉「恰 11 个」计数保持）。
-        // 收益：存量字节自洽 + 未来任何 byte 消费者稳定；存量 profiles 旧形态串
-        // 不做迁移（语义比较已免疫，下次 capture 自然归一）。
+        // 收益：capture 文件形态确定 + 下发串（= capture 归一形态透传）确定；
+        // 存量 profiles 旧形态串不做迁移（语义比较已免疫，下次 capture 自然归一）。
         let normalizedSchedule: String
         if let decoded = try? ChargeScheduleConfig.decoded(from: scheduleJson) {
-            normalizedSchedule = decoded.encoded ?? scheduleJson
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            normalizedSchedule = (try? encoder.encode(decoded)).flatMap { String(data: $0, encoding: .utf8) } ?? scheduleJson
         } else {
             normalizedSchedule = scheduleJson
         }

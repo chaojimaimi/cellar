@@ -161,16 +161,18 @@ func runRobustnessDomainScenarios() {
     }
 
     do {
-        // appManaged ∧ spawn failed → FAIL 新指引（面板卸载 + resetbtm——原「重启或
-        // sudo cellar install」在该形态下是死循环）。
+        // appManaged ∧ spawn failed → FAIL 双层指引（0.23.24 指引升级形态：面板
+        // 一键重注册优先 + resetbtm 兜底——原「重启或 sudo cellar install」在该
+        // 形态下是死循环）。
         let report = DoctorReportGenerator.generate(doctorInputs(
             btmState: .spawnFailed, daemonStatus: nil, route: .appManaged
         ))
         let btmCheck = report.checks.first { $0.name == "守护进程注册" }
         check(btmCheck?.status == .fail
-            && btmCheck?.detail.contains("App 托管 BTM 记录损坏") == true
+            && btmCheck?.detail.contains("真 BTM 记录损坏") == true
+            && btmCheck?.detail.contains("重新注册守护进程") == true
             && btmCheck?.detail.contains("sfltool resetbtm") == true,
-              "热修-医生-1", "appManaged ∧ spawnFailed → FAIL「App 托管 BTM 记录损坏…resetbtm」指引")
+              "热修-医生-1", "appManaged ∧ spawnFailed → FAIL 双层指引「面板一键重注册优先…真 BTM 记录损坏…resetbtm」")
         // manual / unknown / 未解析 → 保持原语义（README「更新 App」节指引）。
         for route in [DaemonRoute.manual, .unknown, nil] {
             let report = DoctorReportGenerator.generate(doctorInputs(

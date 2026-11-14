@@ -298,9 +298,10 @@ func runProfileDomainPinsScenarios() {
     check(profileModelSrc3.contains("return scheduleSemanticallyEqual(json, status.scheduleJson)"),
           "源钉-10", "scheduleFieldMatches 消费点（readbackMatches 的 schedule 域 → 语义比较——判定域 byte 形态退役）")
     check(profileModelSrc3.contains("ChargeScheduleConfig.decoded(from: scheduleJson)")
-              && profileModelSrc3.contains("normalizedSchedule = decoded.encoded ?? scheduleJson")
+              && profileModelSrc3.contains("encoder.outputFormatting = [.sortedKeys]")
+              && profileModelSrc3.contains("normalizedSchedule = (try? encoder.encode(decoded)).flatMap { String(data: $0, encoding: .utf8) } ?? scheduleJson")
               && profileModelSrc3.contains("normalizedSchedule = scheduleJson"),
-          "源钉-10", "capture 归一在位（decoded 成功 → encoded ?? 原串；解码失败原样存——归一内联 capture 不新增 private helper）")
+          "源钉-10", "capture 归一在位（0.23.24 改钉 sortedKeys 内联形态：decoded 成功 → 局部 sortedKeys encoder re-encode 恒 sorted 单形态、encode 失败兜底原串（?? scheduleJson 双兜底保形）；解码失败原样存——归一内联 capture 不新增 private helper）")
     check(profileModelSrc3.components(separatedBy: "private static func").count - 1 == 11,
           "源钉-10", "private static func 恰 11 反钉（scheduleSemanticallyEqual public + 归一内联——既有 helper 计数原数不变）")
     let profileApplySrc4 = source("App/CellarApp/StatusController+ProfileApply.swift")

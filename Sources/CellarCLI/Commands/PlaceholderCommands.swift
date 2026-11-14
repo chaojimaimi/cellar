@@ -435,7 +435,11 @@ enum DaemonInstaller {
             switch BootstrapFailureGuidance.classify(fromPrintOutput: printOutput) {
             case .btmCorruptedRecord:
                 print("   检出 BTM 损坏记录（App 托管注册生成即损坏 + smd 周期对账会反复顶掉手工 daemon）：")
-                print("   修复：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 sudo cellar install")
+                // 0.23.24 双层指引 install 语境适配（B4）：root 安装语境下面板一键
+                // 重注册不可达（daemon 装不上），以 resetbtm 兜底路径为主；面板精确行
+                // 作升级后场景补充说明。本批实证 CellarCoreCheck 对本文案零断言面。
+                print("   修复（root 安装语境面板一键重注册不可达，以兜底路径为主）：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 sudo cellar install")
+                print("   补充（App 升级后失配形态、daemon 已可启动时）：打开 App 面板守护进程节，若见『签名钉扎失配』提示点『重新注册守护进程』一键修复")
             case .cleanupRace:
                 print("   未检出托管注册（疑似 bootout 后 launchd 清理竞态）：等 60s 后重跑 sudo cellar install（幂等——bootout no-op 后 bootstrap 即成功）")
             case .other:

@@ -122,11 +122,12 @@ func runProfileDomainScenarios() {
         // 字节比较在任何 -O 二进制下都无法稳定（0.23.20「基准二进制无关」设计的
         // 单二进制形态恒定假设被现实推翻）。行为面升语义域：scheduleSemantically
         // Equal(stored, fixture) + 存储串 decode 可解析检；「归一在位」强度由源钉-10
-        // 的 ProfileModel 源码 contains 钉（decoded.encoded ?? scheduleJson）承载
-        // ——行为语义 + 源码存在双层，强度不低于原字节比较。
+        // 的 ProfileModel 源码 contains 钉（局部 sortedKeys encoder re-encode +
+        // ?? scheduleJson 双兜底，0.23.24 改钉）承载——行为语义 + 源码存在双层，
+        // 强度不低于原字节比较。
         check(ProfileModel.scheduleSemanticallyEqual(profile.scheduleJson, scheduleFixture)
                   && (try? ChargeScheduleConfig.decoded(from: profile.scheduleJson ?? "")) != nil,
-              "方案-1", "scheduleJson capture 归一存语义域（daemon 形态输入 → 存储串解码值 == 输入解码值 + 存储串可解析——decoded!.encoded 字节基准随 -O 逐次键序漂移退役；归一存在面由源钉-10 源码钉承载；解码失败原样存负臂见方案-14）")
+              "方案-1", "scheduleJson capture 归一存语义域（daemon 形态输入 → 存储串解码值 == 输入解码值 + 存储串可解析——decoded!.encoded 字节基准随 -O 逐次键序漂移退役；归一存在面由源钉-10 源码钉（sortedKeys re-encode 内联，0.23.24 改钉）承载；解码失败原样存负臂见方案-14）")
         check(profile.calibration == CalibrationSnapshot(enabled: false, intervalDays: 30, startHour: 1),
               "方案-1", "calSched 三键投影")
         check(profile.chHysteresisEnabled == true, "方案-1", "chHysteresisEnabled 投影")
@@ -661,7 +662,8 @@ func runProfileDomainScenarios() {
     // （登记偏差，主代理裁决批准）：原字节基准（== 同二进制 decoded!.encoded，
     // 评审 P2「禁硬编码键序字面量，场景自身不成为键序漂移受害者」）在 -O 逐次
     // 键序漂移下不稳定（方案-1 同款平台事实）→ 升语义域；归一存在面由源钉-10
-    // 源码钉承载（decoded.encoded ?? scheduleJson）。
+    // 源码钉承载（局部 sortedKeys encoder re-encode + ?? scheduleJson 双兜底，
+    // 0.23.24 改钉）。
     var normalizeStatus = fullStatus()
     normalizeStatus.scheduleJson = daemonFormEmpty
     let normalizedCapture = ProfileModel.capture(from: normalizeStatus)

@@ -246,8 +246,9 @@ extension DoctorReportGenerator {
     /// 检查 9：daemon 注册态。已探测（btmProbeAttempted）才渲染：
     /// running=PASS（XPC 探测失败 → WARN 注明「注册在位但 XPC 无响应」+ kickstart
     /// 指引，0.20.1 §3.3 检查 8/9 口径统一）；spawnFailed=FAIL 并按路线再分流
-    /// （0.20.1 §3.2：App 托管 BTM 损坏形态 → 面板卸载 + resetbtm；手工/未知保持
-    /// 原 README 指引——该指引在托管损坏形态下恰是死循环）；unregistered=INFO
+    /// （0.20.1 §3.2 路线再分流；0.23.24 指引升级形态：面板一键重注册精确行优先、
+    /// resetbtm 兜底——0.23.22 面板精确行产品化后 doctor 指引对齐）；手工/未知保持
+    /// 原 README 指引——该指引在托管损坏形态下恰是死循环；unregistered=INFO
     /// （双路线文案：手工路线正常形态 / 托管路线注册掉落）；解析失败=INFO（不误报）。
     static func btmRegistration(_ inputs: DoctorInputs) -> DoctorCheck? {
         guard inputs.btmProbeAttempted else { return nil }
@@ -267,10 +268,13 @@ extension DoctorReportGenerator {
             // 0.20.1 §3.2：旧 spawnFailed 分支按路线再分流（复用 DaemonRoute 解析，
             // 与 btmState 同一份 print 输出）——「重启或 sudo cellar install」在
             // App 托管 BTM 损坏形态下恰是死循环（smd 周期对账反复顶掉手工 job）。
+            // 0.23.24 指引双层再分流（B4）：面板一键重注册优先（0.23.22 精确行
+            // 产品化——doctor 无 App bundle 上下文不做 stale-pin 真判定，以面板
+            // 提示为判定面），resetbtm 兜底（真 BTM 记录损坏）；R5 两行化 \n。
             if inputs.daemonRoute == .appManaged {
                 return DoctorCheck(
                     name: "守护进程注册", status: .fail,
-                    detail: "App 托管 BTM 记录损坏且反复 spawn 失败（会周期性顶掉手工 daemon）——修复：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 install"
+                    detail: "App 托管守护进程反复启动失败——首选：打开 App 面板守护进程节，若见『签名钉扎失配』提示点『重新注册守护进程』一键修复（App 升级后失配形态）；\n仅当面板无该提示（真 BTM 记录损坏）才走：App 面板卸载注册 → sudo sfltool resetbtm → 重跑 install"
                 )
             }
             return DoctorCheck(
