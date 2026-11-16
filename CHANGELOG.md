@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.25-alpha]
+
+> 背景：用户真机报障「限充 75% 仍在持续充电」——powerd 日志铁证定位根因：macOS 27 powerd batterygauging 在电池距上次充满 ≥21 天（实测阈值 20.9 天不触发 / 21.0 天触发）且插电时，自动发起「维护充满」（Charge To Full override → SOC limit 充电上限政策被系统有意挂起 → 充电代理把上限覆写为 100 → 物理充满校准电量计）。Cellar 域写 75 正确但缠斗逻辑上赢不了，用户此前只能拔充电器或停用再启用。方案 plan-reviewer 一轮 **REVISE**（2 P1：退让态域读回数据流自相矛盾致恢复退化为 2h 超时；App 恢复写回路未设门会打破「不抢域写」语义——全数折入修订 R2）后 **PASS**（终审再收 P3×5）；code-reviewer 全审 **APPROVE**（P2×1 角点加固 + P3×1 单一真相提取随批顺手落为 commit 4，P3×1 登记不修）。**daemon 行为批——daemonVersion bump 0.23.16-alpha → 0.23.25-alpha（wire 仅追加可选字段，decodeIfPresent 兼容）：升级需重装守护进程**。门禁：1045 场景 2700 断言全绿（+18 场景 +52 断言：维护充满域 48 + 恢复门 4）、l10n 514→**516**、快照 384=384 失败名单逐行 diff 空 + 新增 MaintenanceBanner golden 6 张入库、xcodebuild BUILD SUCCEEDED 警告 0、红线 Topoff.swift 纯函数本体零 diff + 26 执法段零触及实证。R1 探针：通知名在 powerd 二进制 strings 实证 + 管线自测全通；`com.apple.system.powersources.*` 命名空间 notifyd 对非特权客户端不扇出的发现如实登记（真实 post 侧 root 有生产旁证，行为指纹保底 ≤90s 使架构对该发现鲁棒）。CFBundleVersion 2325 历史精确查零碰撞。登记：CHIE 硬对抗 escape hatch（检出维护充满时可选硬停充，默认关——系统会反复 retry、电量计校准可能永不完成）；last-full-date 读位待 IOKit 新键；suppressed 锁存与维护态并存的面板消歧深化。
+
+### Fixed
+
+- **限充上限失效不再失控（系统维护充满感知与退让）**：macOS 在电池约 21 天未充满时会主动发起一次「维护充满」——暂停一切充电上限直充到 100% 以校准电量计，且充电上限政策在系统层被有意挂起，任何限充工具都无法在系统层对抗。此前该过程完全不可见：面板照常显示限充管理中，实际却在持续充电直至充满。现在守护进程感知该过程（系统通知快路径 + 行为指纹保底 ≤90 秒双通道），期间暂停与系统的域写竞争、违规计数与恢复写（不再误报误降级），面板显示「系统维护充满进行中」横幅说明原因与预计时长（15-25 分钟），充满后自动无缝恢复限充管理，全程无需任何手动干预。
+- **维护充满期间的误报防线**：该过程不再触发「充电抑制」误判升级（此前缠斗被系统的间歇覆写反复打断计数，既不降级也无任何可见提示——本批同时补上「域一致但充电不收敛」这一不可见形态的感知面）。
+
+### Changed
+
+- **校准默认间隔 30 → 14 天**：低于系统 21 天维护充满触发阈值（留 7 天余量）。开启自动校准后，充满在 Cellar 控制下完成（有可见性、有流程），系统的「上次充满时间」随之刷新，系统就不再抢占——防复发正道。校准页新增说明引导；已有用户已显式设置的间隔不受影响。
+- **守护进程日志新增维护充满轨迹**：进入/退出让位、读回采样、超时兜底均持久化落盘可事后溯源。
+
+### 安装与升级
+
+- **本批守护进程有变更：升级后需重装守护进程**。升级后若守护进程节出现黄色提示行（App 升级后签名失配形态），点「重新注册守护进程」一键修复即可（0.23.22 既有功能）；也可在终端重跑安装命令。重装前旧守护进程继续正常工作，限充管理不受影响。
+- dmg 拖拽 / zip 解压覆盖 / Sparkle 应用内自动更新均可。
+
 ## [0.23.24-alpha]
 
 > 背景：整理批（工程债七项一车清收——0.23.22/23 两批发版后与用户对齐的登记清单，零功能变化意图）。方案 plan-reviewer 一轮 **REVISE**（2 P1 断言联动漏路由——源钉-10 contains 钉与热修-医生-1 连续子串在新文案下必红，全数折入修订）后通过；code-reviewer 全审 **APPROVE 0 P0-P3**（四项落地偏差均独立核验核准：.map→.flatMap 编译强制、os.Logger privacy 尾参删除、commit 1 amend 修 App 编译面、doctor 文案两行化）。**App-only 批——daemonVersion 常量不动（0.23.16-alpha）：wire schema 零变化，daemon 代码零触及**。门禁：1027 场景 2648 断言全绿（持平）、l10n 513→**514**（+1 键——reRegister 短路错误文案）、xcodebuild BUILD SUCCEEDED 且 **internal(set) 警告根除**（0.22.2 起三年既有警告源清零）、快照 384=384、红线双锚原样 + daemon 侧 encode 六文件零触及实证。**腐蚀排查**：七路静态排查全排除（zcode hooks/git hooks/shell history/打包脚本/CI/xattr/文件监控进程）→ 未定位；建立哨兵实验（未跟踪 CORRUPTION-SENTINEL.md 三方基线入档，跨会话观测）+ checkout 惯例永久化。CFBundleVersion 2324 历史精确查零碰撞。登记：daemon 侧状态文件编码 sortedKeys 确定化（五处——需 daemonVersion bump 行为批）；doctor CLI 端 stale-pin 真判定（收益低或永不立项）；reRegister 短路分支不调 refresh（后续统一「失败后刷新」可考虑）；AppSide load() .info 打点分级（同纪律后续整理批）。
