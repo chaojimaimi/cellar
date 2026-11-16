@@ -113,16 +113,7 @@ extension DaemonCore {
                 fullOnceWindow: fullOnceWindowActive, events: &events
             )
         }
-        let route = Topoff.convergenceRoute(
-            modeActive: policy.mode == "active",
-            chargingDisabledWindow: chargingDisabledWindowActive,
-            upperLimit: policy.upperLimit,
-            sub80Capable: sub80Capable,
-            actionActive: actionTrack.isActive,
-            // 0.21.0 §1.3：fullOnce 临时放开窗——汇聚目标强制 100（等价「完全
-            // 放开」：域随写 100，M1 模型 v2 域写值直接执法）。
-            fullOnceWindow: fullOnceWindowActive
-        )
+        let route = currentConvergenceRouteLocked()
         guard sub80Capable else { return }   // 非 sub80 机：零行为（26 回归锚）
         // 0.20.2 §2 诚实性状态持久化：**写入点钉在 sub80 门内**（26 平台不生成
         // 状态文件——红线）。defer 收口本方法全部变更路径；触发源判定
@@ -161,6 +152,11 @@ extension DaemonCore {
         // 26 定谳（方案 §4.5）：本函数 `guard sub80Capable` 先行于本守卫——删除为
         // 27-only 变更，26 红线无虞。
         guard let convergenceTarget = route.convergenceTarget else {
+            // 0.23.25 全审 P2-②：mode 关断拍同步清零 maintenance 退让态（臂③语义
+            // 在 daemon 结构承接处落位）——否则 off→on 复用期间窗毕域写被退让早退
+            // 吞 + banner 残亮（与 0.21.0 §1.4 校准清零先例对称）。
+            maintenanceFullChargeState = MaintenanceFullCharge.State.empty
+            maintenanceLastReadbackAt = nil
             topoffShutdownCleanupLocked(now: now, events: &events)
             return
         }
@@ -403,6 +399,25 @@ extension DaemonCore {
         maintenanceExitReassertLocked(now: now, events: &events)
     }
 
+    /// 0.23.25 全审 P3-1：convergenceRoute 单一真相提取（主路由与 B6 退出重申写
+    /// 原为六输入手工镜像——chargingDisabledWindow 输入源已现差异〔主路由局部变量
+    /// vs 本处属性重算〕；主路由未来加输入而镜像漏更时 B6 重申写会按陈旧路由判
+    /// owned）。⚠️ 锁内调用（读 policy/actionTrack/窗态——调用方持主锁）。
+    private func currentConvergenceRouteLocked() -> (
+        convergenceTarget: Int?, topoffOwned: Bool
+    ) {
+        Topoff.convergenceRoute(
+            modeActive: policy.mode == "active",
+            chargingDisabledWindow: chargingDisabledWindowActiveLocked,
+            upperLimit: policy.upperLimit,
+            sub80Capable: capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+            actionActive: actionTrack.isActive,
+            // 0.21.0 §1.3：fullOnce 临时放开窗——汇聚目标强制 100（等价「完全
+            // 放开」：域随写 100，M1 模型 v2 域写值直接执法）。
+            fullOnceWindow: fullOnceWindowActive
+        )
+    }
+
     /// 0.23.25 B6：maintenance 退出边沿显式重申写（**新增臂**——B5 允许：不动
     /// 既有函数本体）。channelTick 幂等写仅在 `lastWrittenLimit != target` 时发射
     ///（Topoff.swift 幂等分支），退让期 daemon 停写账面值保持 =target，恢复第一拍
@@ -412,14 +427,7 @@ extension DaemonCore {
     /// 全开窗（route 非 owned）→ 不写（既有链掌权——关断清理/动作维护分支/窗语义
     /// 域随写 100 各自承接）。
     private func maintenanceExitReassertLocked(now: Date, events: inout [LogEvent]) {
-        let route = Topoff.convergenceRoute(
-            modeActive: policy.mode == "active",
-            chargingDisabledWindow: chargingDisabledWindowActiveLocked,
-            upperLimit: policy.upperLimit,
-            sub80Capable: capabilities?.contains(DaemonXPC.capabilitySub80) == true,
-            actionActive: actionTrack.isActive,
-            fullOnceWindow: fullOnceWindowActive
-        )
+        let route = currentConvergenceRouteLocked()
         guard route.topoffOwned, let target = route.convergenceTarget else { return }
         topoffState.violationTicks = 0
         _ = topoffExecuteWriteLocked(limit: target, now: now, events: &events)

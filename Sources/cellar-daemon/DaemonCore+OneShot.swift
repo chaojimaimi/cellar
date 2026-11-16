@@ -45,6 +45,12 @@ extension DaemonCore {
         // ② 共存 suspected 清零（§1.4）：清零即退出抑制——同拍/外层汇聚路由恢复
         // 域写不被 suspected 吞（`.empty` = suspected=false ∧ 指纹计数归零）。
         calibrationCoexistenceState = CalibrationCoexistence.State.empty
+        // ③ maintenance 退让态清零（0.23.25 全审 P2-①，与 ①同款不对称修复）：
+        // 退让早退臂 return 于域随写卫生之前——窗毕恢复拍域写被吞时退让态不清零
+        // 会使臂①（读回≠100）永不命中、兜底拖到 2h 超时；窗清即退出退让，同拍
+        // 既有链恢复（channelTick 幂等重写 75）。
+        maintenanceFullChargeState = MaintenanceFullCharge.State.empty
+        maintenanceLastReadbackAt = nil
         switch reason {
         case .full:
             actionTrack.latchTerminalLiteral(OneShotLiteral.done())
