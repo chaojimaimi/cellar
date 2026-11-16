@@ -219,6 +219,12 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     /// 派生的显式字段——单一真相，勿由 App 侧再派生）。modernBackendTerminal
     /// 门内恒填。
     public var chargingDisabledWindowActive: Bool?
+    /// 0.23.25 §2.3 charge-to-full 系统维护充满退让态（27 观测段识别——
+    /// modernBackendTerminal 门内恒填）。true = 维护充满退让中（面板横幅 +
+    /// App SuppressionRecovery 恢复门〔§2.4——退让期恢复写 max(target,80) 会
+    /// 对抗维护充满，不派发〕数据源）；26/旧 daemon 缺席 = 无此特性
+    ///（decodeIfPresent wire 兼容先例）。
+    public var maintenanceFullChargeActive: Bool?
     /// 快照时刻（最近一次成功采样；未采样过为状态组装时刻）。
     public var timestamp: Date
 
@@ -259,6 +265,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         sub80MechanismSuppressed: Bool? = nil,
         fullOnceWindowActive: Bool? = nil,
         chargingDisabledWindowActive: Bool? = nil,
+        maintenanceFullChargeActive: Bool? = nil,
         timestamp: Date = Date()
     ) {
         self.version = version
@@ -297,6 +304,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.sub80MechanismSuppressed = sub80MechanismSuppressed
         self.fullOnceWindowActive = fullOnceWindowActive
         self.chargingDisabledWindowActive = chargingDisabledWindowActive
+        self.maintenanceFullChargeActive = maintenanceFullChargeActive
         self.timestamp = timestamp
     }
 }
@@ -411,7 +419,8 @@ public enum DaemonXPC {
     // 0.23.14-alpha（2026-11-09）：0.23.13 真机回归热修——0.23.13 启用的 App hardened runtime 的库验证对「ad-hoc 主程序 + SPM 引入的 Sparkle.framework（官方签名不同 Team ID）」在 dyld 加载期直接拒绝（SIGABRT 秒死，崩溃报告 DYLD "different Team IDs" 实证）→ 回退 pbxproj 两行（R3 既定回滚路径）；钉扎-18 场景反转为缺席断言防再引入；daemon 本体逻辑零变化，但 ≤0.23.12 升级路径仍随本次重装首次落地 B5/B6 daemon 变更 → **升级需重装守护进程**；wire 零 schema 变化。
     // 0.23.16-alpha（2026-11-09）：B8 菜单栏图标快捷预设批——MenuBarExtra `.window` 场景整体退役 → AppKit NSStatusItem + NSPopover 迁移（图标右键快捷预设菜单 60/70/75/80/90/100 + 打开面板 + 退出；NSStatusItem 强引用单例宿主 + 左右键分流 + LimitPolicy 预检 → applyLimits 全链）+ StatusController 单例化 + B8-2 percent 补遗（PowerFlowDiagramNodes batteryPercentText 手拼残留收口）；**零 daemon 变更（App-only 批）；但本批随版本矩阵 bump 了 daemonVersion 常量 → stale 门因此要求升级后重装守护进程方可下发控制指令（真机实证 0.23.16 App 对 0.23.15 daemon 变更命令被拦）——0.23.17 起纪律修正：App-only 批不再 bump 常量**；wire 零 schema 变化。
     // 0.23.15-alpha（2026-11-09）：B7 打磨无障碍批——a11y 标签全缺口收口（删除钮/滑杆九根/Stepper 两根标签 + 选中态 trait 三处 + 四曲线卡 a11y 值）+ WCAG AA 对比度钉表（tertiaryText 四主题实色化 + amberLight secondaryText + 警示横幅字色双口径）+ 字面量/单位格式统一（百分号 NumberFormatter 通路/单位 dashboard.unit.* key/°C 带空格统一/「--」占位换 common.nodata）+ 钉扎行落盘（resolveClientAnchor 三分支 persistLog + .notice——B6 冒烟缺憾闭环）+ 两登记警告清理（Theme.swift cacheLock nonisolated(unsafe) / FullChargeAutoRestoreDomain startAt）；**daemon 逻辑变更（B7-4 锚点解析落盘）——升级需重装守护进程**；wire 零 schema 变化。
-    public static let daemonVersion = "0.23.16-alpha"
+    // 0.23.25-alpha（2026-11-16）：charge-to-full 系统维护充满感知与退让批——macOS 27 powerd 维护充满（电池约 21 天未充满 ∧ 插电 → Charge To Full override → SOC limit 政策被系统有意挂起 → 物理充满 100%，缠斗赢不了）改为配合让位：Darwin 通知 chargingtofulloverride 快路径（全库首个 CFNotificationCenter 先例）+ 行为指纹保底（读回 100 ∧ 充电 ∧ 超限 3 拍 ≤90s）→ 三臂退让（strike/轻量重申/域随写暂停）+ 退出边沿显式重申写 target（B6）；wire **追加可选字段 maintenanceFullChargeActive**（decodeIfPresent 兼容——B3 仅追加）；App SuppressionRecovery.shouldAttempt 增 maintenanceActive 守卫（退让期恢复写 80 对抗维护充满——§2.4）；校准调度 default 30→14 天（维护充满防复发——§2.5）；**daemon 逻辑变更——升级需重装守护进程**。
+    public static let daemonVersion = "0.23.25-alpha"
     /// discharge 能力字面量（App/daemon 同源引用，§2.1）：daemon 启动探测通过
     /// （backend == "tahoe" ∧ CHIE getKeyInfo 在位，评审 P1-1 fail-closed）时置于
     /// `DaemonStatus.capabilities`。App 两态文案：nil = 需升级守护进程（面板卸载

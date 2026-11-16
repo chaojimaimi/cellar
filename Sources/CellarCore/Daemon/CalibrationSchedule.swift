@@ -21,12 +21,18 @@ public struct CalibrationSchedulePolicy: Codable, Equatable, Sendable {
         self.startHour = startHour
     }
 
-    /// 默认策略（R2 P3 钉死：enabled false / 30 天 / 01:00——月度校准常规节奏；
-    /// App Picker 预选 30、窗口起点预选 01:00）。buildStatusLocked 对未配置用户
+    /// 默认策略（0.23.25 §2.5 改钉：enabled false / **14 天** / 01:00——原 30 天
+    /// 月度节奏随维护充满防复发批退役：macOS 在电池约 21 天未充满时主动发起维护
+    /// 充满（实证阈值 20.9 天判 too recent / 21.0 天判 try and charge to full，
+    /// 任务书 §0/§2.5）——14 天 < 21 天阈值留 7 天余量，开启自动校准的用户在
+    /// Cellar 控制下完成充满，避免系统抢占。App Picker 预选 14（由 .default
+    /// 派生播种）、窗口起点预选 01:00）。buildStatusLocked 对未配置用户
     /// **恒填本值**（照 fanStatusLocked `policy.fan ?? .default` 先例，UD-7——
-    /// 不恒填则 opt-in 默认关状态下新装用户全被误判旧 daemon）。
+    /// 不恒填则 opt-in 默认关状态下新装用户全被误判旧 daemon）。已有用户 profile
+    /// 显式存 30 天不受 default 改动影响（显式值不迁移——校准页引导行为主要
+    /// 触达面，§2.5）。
     public static let `default` = CalibrationSchedulePolicy(
-        enabled: false, intervalDays: 30, startHour: 1
+        enabled: false, intervalDays: 14, startHour: 1
     )
 
     /// 窗口长度（小时；方案 §2.1 定版 4——凌晨低负载窗口）。

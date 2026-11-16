@@ -12,8 +12,9 @@ struct Cellar: ParsableCommand {
         // WP2' L1：与 DaemonXPC.daemonVersion 同步——**随 daemonVersion 同步——
         // 仅 daemon 行为/协议变更时 bump（0.23.17 起纪律显式化，App-only 批
         // 不动）**（0.20.1 起漏更停在 0.20.0，0.22.1 批修正；防 CLI 对 stale
-        // daemon 诊断混淆，评审 F-3 同款核对依据）。
-        version: "0.23.16-alpha",
+        // daemon 诊断混淆，评审 F-3 同款核对依据）。0.23.25：维护充满退让批
+        // （daemon 行为/协议变更——wire 追加 maintenanceFullChargeActive）。
+        version: "0.23.25-alpha",
         subcommands: [
             StatusCommand.self,
             DoctorCommand.self,

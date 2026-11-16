@@ -107,11 +107,14 @@ func runCalibrationScheduleDomainScenarios() throws {
 
     // ---- ③ validated 值域 ----
 
-    // 调度-7：默认值钉死（R2 P3：false / 30 / 1）+ 默认整体过 validated。
+    // 调度-7：默认值钉死（0.23.25 §2.5 改钉：false / **14** / 1——原 30 天月度节奏
+    // 随维护充满防复发批退役：macOS 电池约 21 天未充满即主动发起维护充满〔实证
+    // 阈值 20.9/21.0 天，任务书 §0/§2.5〕，14 天留 7 天余量；R2 P3 原 false/30/1
+    // 钉面历史见 CalibrationSchedule.swift 头注）+ 默认整体过 validated。
     do {
         let d = CalibrationSchedulePolicy.default
-        check(!d.enabled && d.intervalDays == 30 && d.startHour == 1,
-              "调度-7", ".default = enabled false / 30 天 / 01:00（App Picker 预选 30、起点预选 01:00）")
+        check(!d.enabled && d.intervalDays == 14 && d.startHour == 1,
+              "调度-7", ".default = enabled false / 14 天 / 01:00（App Picker 预选 14〔由 .default 派生播种〕、起点预选 01:00；0.23.25 起 30→14——21 天维护充满阈值留余量，防复发 §2.5）")
         check(CalibrationSchedulePolicy.validated(
             enabled: d.enabled, intervalDays: d.intervalDays, startHour: d.startHour
         ) == d, "调度-7", "默认值整体过 validated")
@@ -393,10 +396,10 @@ func runCalibrationScheduleDomainScenarios() throws {
 
         var off = DaemonStatus(
             version: "fixture", mode: "active", upperLimit: 80, hysteresis: 2,
-            calSchedEnabled: false, calSchedIntervalDays: 30, calSchedStartHour: 1
+            calSchedEnabled: false, calSchedIntervalDays: 14, calSchedStartHour: 1
         )
         check(off.calibrationSchedule == CalibrationSchedulePolicy.default && off.nextAutoCalibrationEstimate == nil,
-              "调度-18", "未配置恒填 .default（非 nil = 正常 off 态，勿当旧 daemon）+ 禁用预估 nil")
+              "调度-18", "未配置恒填 .default（非 nil = 正常 off 态，勿当旧 daemon；0.23.25 起默认 14 天——fixture 随调度-7 同步改钉）+ 禁用预估 nil")
         off.calSchedEnabled = true
         off.lastCalStart = Int(Date().timeIntervalSince1970) + 3600   // 锚点在未来
         check(off.nextAutoCalibrationEstimate == nil,

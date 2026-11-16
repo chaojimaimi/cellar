@@ -733,10 +733,10 @@ func runDoctorExtendedDomainScenarios() {
         let constantLines = daemonXPCSrc.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.hasPrefix("public static let daemonVersion = ") }
-        check(constantLines.count == 1 && constantLines[0].contains("\"0.23.16-alpha\""),
-              "医生-源钉-1", "daemonVersion 常量唯一且为 0.23.16-alpha（App-only 批零变更）")
-        check(cliSrc.contains("version: \"0.23.16-alpha\","),
-              "医生-源钉-1", "CLI version 字面量 == daemonVersion（同为协议版本口径——App-only 批不动）")
+        check(constantLines.count == 1 && constantLines[0].contains("\"0.23.25-alpha\""),
+              "医生-源钉-1", "daemonVersion 常量唯一且为 0.23.25-alpha（0.23.25 维护充满退让批——daemon 行为/协议变更 bump，B2）")
+        check(cliSrc.contains("version: \"0.23.25-alpha\","),
+              "医生-源钉-1", "CLI version 字面量 == daemonVersion（同为协议版本口径——0.23.25 双锚同步）")
         check(daemonXPCSrc.contains("0.23.17 起显式化") && daemonXPCSrc.contains("App-only 批不再 bump 常量"),
               "医生-源钉-1", "版本史纪律段 + 0.23.16 条目纠错在位（§2.6 原文照落）")
         check(!cliSrc.contains("随发版必更") && cliSrc.contains("仅 daemon 行为/协议变更时 bump"),

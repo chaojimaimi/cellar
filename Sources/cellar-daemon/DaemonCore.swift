@@ -181,6 +181,22 @@ final class DaemonCore: @unchecked Sendable {
     /// 识别窗；strike 有 20 tick 窗 + ×3 封顶兜底，识别空窗不构成执法回归，零新增
     /// 落盘面）。
     var calibrationCoexistenceState = CalibrationCoexistence.State()
+    /// 0.23.25 §2.2 charge-to-full 系统维护充满退让态（结构体定义在 CellarCore
+    /// MaintenanceFullCharge.swift；决策全在纯函数，副作用在 DaemonCore+Topoff.swift
+    /// 的 topoffConvergenceRouteLocked 推进/早退臂消费段——27 观测段封闭，B1）。
+    /// **不持久化**（B8——照 calibrationCoexistenceState 先例：退让中 daemon 重启
+    /// → ≤90s 指纹重识别空窗，期间回既有缠斗（良性，任务书 §5 R7 登记），零新增
+    /// 落盘面）。
+    var maintenanceFullChargeState = MaintenanceFullCharge.State()
+    /// 0.23.25 §2.1 Darwin 通知边沿旗标（main.swift CFNotificationCenter 回调经
+    /// noteMaintenanceFullChargeSignal 锁内置位；topoffConvergenceRouteLocked 推进
+    /// 拍读清）。**内存态不持久化**（通知丢失仅影响响应时延——行为指纹 ≤90s 保底，
+    /// §2.1；重启即清无语义损失）。
+    var maintenanceSignalPending = false
+    /// 0.23.25 §2.2 maintenance-scoped 读回节奏簿记（周期 10 min + 信号边沿拍立即
+    /// 一次；**读尝试即推进**——失败不加速重试，失败周期 10 min 盲区有界，照
+    /// topoffState.lastPeriodicReadbackAt 评审 P2-2 先例）。**内存态不持久化**。
+    var maintenanceLastReadbackAt: Date?
     /// 0.20.2 §2 topoff 诚实性状态持久化（topoff-state.json；路径注入缝照
     /// calibrationStateStore 先例——可测。写入纪律：主锁内 tmp+rename 直写，
     /// 26 平台不生成状态文件）。
@@ -1411,6 +1427,11 @@ final class DaemonCore: @unchecked Sendable {
             // App 侧从 scheduleActiveId 再派生）。
             status.fullOnceWindowActive = fullOnceWindowActive
             status.chargingDisabledWindowActive = chargingDisabledWindowActiveLocked
+            // 0.23.25 §2.3：charge-to-full 系统维护充满退让态（27 观测段识别——
+            // B1；26/旧 daemon 缺席 = 无此特性，decodeIfPresent wire 兼容先例）。
+            // App 侧双消费面：MaintenanceBanner 横幅（§2.3）+ SuppressionRecovery
+            // 恢复门（§2.4——退让期恢复写 max(target,80) 对抗维护充满，不派发）。
+            status.maintenanceFullChargeActive = maintenanceFullChargeState.active
         }
         // 0.21.1 §1.1 门 c → **0.23.0 恒 false**：振荡熔断随自动放电自动机退役，
         // wire 字段保留（零 wire 变化——旧 App 横幅面恒不出现）。

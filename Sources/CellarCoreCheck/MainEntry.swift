@@ -467,6 +467,12 @@ struct Main {
         // 清单 ≥7 case：边沿/首包破例/current nil·false 全拒/mode 非 active
         // skip/冷却窗三分支——纯函数面，SuppressionRecoveryDomain）。
         runSuppressionRecoveryDomainScenarios()
+        // 0.23.25 §3：charge-to-full 系统维护充满感知与退让场景域（状态机全真值
+        // 表：指纹矩阵/双进入通道〔通知边沿 + 行为指纹 3 拍〕/三退出臂〔读回 != 100
+        // /超时 2h 强退/mode 关断结构承接注记〕/读回节奏 10 min + 边沿拍/常量关系
+        // 与校准共存交互〔3 < 10 证据优先序〕/B8 重启语义/wire 三态 round-trip
+        // ——纯函数面，MaintenanceFullChargeDomain）。
+        runMaintenanceFullChargeDomainScenarios()
         // 0.22.3 锁存持续性与周期读回场景域（方案 §1-§6：释放持续性〔单次一致
         // 不释放、连续两次 + 120s 瞬态守卫〕/确认拍置位与消费循环/周期到期纯函数/
         // 失速锚点推进与 stallDue/healTick degraded 簿记/未锁存全清/nil readback/

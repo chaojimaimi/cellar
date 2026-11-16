@@ -123,6 +123,10 @@ registerPowerNotifications(core: core)
 // 6.5 IOPS 插拔即时执法（WP3 折叠项：插电恢复充电从 ≤30s 缩到 1-2s）。
 registerPowerSourceWatcher()
 
+// 6.6 0.23.25 §2.1 charge-to-full 维护充满通知（Darwin 中心快路径；注册失败/
+//    通知不可达 → 行为指纹保底 ≤90s 检出——架构对通知不可达鲁棒，R1）。
+registerMaintenanceFullChargeWatcher()
+
 lifecycleLog.info("daemon 启动完成：version=\(DaemonXPC.daemonVersion, privacy: .public)")
 
 // 常驻：主 RunLoop 驱动定时器与电源通知；XPC/信号在各自队列。
@@ -331,4 +335,40 @@ private func registerPowerSourceWatcher() {
     }
     iopsSource = source
     CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+}
+
+// MARK: - 0.23.25 §2.1 charge-to-full 维护充满通知（全库首个 CFNotificationCenter
+// 先例——本批新引；Darwin 中心基于 <notify.h>，随进程终止自清，无显式注销先例 §2.6）
+
+/// Darwin 通知名（§0 实证：powerd Charge To Full System Level Request → post）。
+/// ⚠️ nonisolated(unsafe)：非隔离上下文（C 函数指针回调邻接的装配函数）引用——
+/// CFString 常量不可变，照文件头全局桥 nonisolated(unsafe) 纪律。
+nonisolated(unsafe) private let maintenanceFullChargeNotifyName =
+    "com.apple.system.powersources.chargingtofulloverride" as CFString
+
+/// Darwin 通知回调（**C 函数指针形态**——无 Swift 闭包捕获，context/observer 传
+/// nil：只读全局 daemonCore，照 iopsPowerCallback context 纪律）。Darwin 通知无
+/// payload——边沿语义由锁内 tick 状态机判定（MaintenanceFullCharge.tick），不假设
+/// post 次数；回调只转发（锁内置位 + 立即跑一拍，语义决策全在锁内 tick）。
+/// ⚠️ suspensionBehavior 注记（§2.1 如实注记）：Darwin 中心**忽略该参数**（头文档
+/// 钉死「no suspension behaviors (always deliver immediately)」——取 .coalesce
+/// 占位无语义；DarkWake 投递语义实证不可达，R1 探针留真机验收）。
+private func maintenanceFullChargeCallback(
+    center: CFNotificationCenter?, observer: UnsafeMutableRawPointer?,
+    name: CFNotificationName?, object: UnsafeRawPointer?, userInfo: CFDictionary?
+) {
+    guard let core = daemonCore else { return }
+    core.noteMaintenanceFullChargeSignal()
+    core.sampleAndEnforce()
+}
+
+/// 注册 charge-to-full 通知（Darwin 中心；回调在主 RunLoop 派发——与电源通知/
+/// 心跳同串行，core 内部有锁无重入风险）。注册失败 → error 日志（行为指纹
+/// ≤90s 保底仍在，**不退出**——通知丢失只影响响应时延，§2.1）。
+private func registerMaintenanceFullChargeWatcher() {
+    let center = CFNotificationCenterGetDarwinNotifyCenter()
+    CFNotificationCenterAddObserver(
+        center, nil, maintenanceFullChargeCallback,
+        maintenanceFullChargeNotifyName, nil, .coalesce)
+    lifecycleLog.info("charge-to-full 维护充满通知监听已注册（\(maintenanceFullChargeNotifyName, privacy: .public)）")
 }

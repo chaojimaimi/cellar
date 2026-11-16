@@ -62,6 +62,41 @@ extension DaemonCore {
             Self.persistLog("校准共存：\(message)")
             events.append(LogEvent(category: .control, level: .info, message: message))
         }
+        // 0.23.25 §2.2：charge-to-full 系统维护充满状态机推进（校准 tick 同位——
+        // 决策纯函数 MaintenanceFullCharge.tick——CellarCoreCheck 场景域钉死）。
+        // 信号边沿读清（main.swift CFNotificationCenter 回调经
+        // noteMaintenanceFullChargeSignal 锁内置位——本拍消费；语义决策全在锁内
+        // tick，照 IOPS watcher「回调只转发」纪律）。tick 消费**上拍锁存读回**
+        // （进入前由既有五臂读回预检回填〔下方 owned 分支〕、退让期由
+        // maintenance-scoped 读回回填〔下方早退臂〕——终审 P3 数据流钉死）。边沿
+        // 副作用：进入拍 violationTicks 清零（证据优先，照校准抑制 R1-P2-4 同款）
+        // + 退出拍 B6 边沿重申写 + 进出 persistLog + LogEvent（0.20.1 可观测纪律）。
+        let maintenanceSignalBeat = maintenanceSignalPending
+        maintenanceSignalPending = false
+        let maintenanceTick = MaintenanceFullCharge.tick(
+            state: maintenanceFullChargeState,
+            signalPending: maintenanceSignalBeat,
+            readback: maintenanceFullChargeState.lastReadbackLimit,
+            percent: snapshot.percent,
+            externalConnected: snapshot.externalConnected,
+            isCharging: snapshot.isCharging,
+            target: policy.upperLimit,
+            now: now)
+        maintenanceFullChargeState = maintenanceTick.state
+        if maintenanceTick.risingEdge {
+            // plan.violationTicksReset 消费（证据优先——退让开始即不带旧违规证据，
+            // 防出退让后首拍误 strike；非持久化字段，零落盘面）。
+            topoffState.violationTicks = 0
+            let channel = maintenanceSignalBeat
+                ? "通知边沿（chargingtofulloverride post——快路径）"
+                : "行为指纹（读回 limit=100 ∧ 充电 ∧ 超限 ≥\(MaintenanceFullCharge.fingerprintTicksRequired) 拍——保底路径）"
+            let message = "维护充满退让进入：charge-to-full override 识别命中（\(channel)）——三臂退让（strike/轻量重申/域随写暂停），配合系统充满（预计 15-25 min，期间充电上限由系统临时接管）；读回节奏 \(Int(MaintenanceFullCharge.readbackInterval / 60)) min + 边沿拍，系统恢复后自动恢复执法（超时 \(Int(MaintenanceFullCharge.timeout / 3600)) h 强退兜底）"
+            Self.persistLog("维护充满：\(message)")
+            events.append(LogEvent(category: .control, level: .info, message: message))
+        } else if maintenanceTick.fallingEdge {
+            maintenanceFallingEdgeLocked(
+                timeoutExit: maintenanceTick.timeoutExit, now: now, events: &events)
+        }
         // 0.21.0 §2.2：迟滞 tick 消费（**sub80 门内——26 零触及**；置于路由计算之前，
         // convergenceRoute 以本拍挂载结论为输入）。fullOnce 临时放开窗并入退出臂
         // （语义同 chargingDisabled 窗——「完全放开」期充到 100 是预期，迟滞执法
@@ -145,6 +180,52 @@ extension DaemonCore {
         if suppression.suspendTopoffArms {
             return
         }
+        // 0.23.25 §2.2：maintenance 退让早退臂（**不与校准早退并列后置**——结构 =
+        // 「按节奏 maintenance-scoped 读回 → 读回值写 state.lastReadback → 状态机
+        // 重评退出 → 未退出才 return」）。读回节奏：周期 10 min（照健康稳态 2 子
+        // 进程/10 min 成本口径）+ 信号边沿拍立即一次——充满完成时 powerd 恢复
+        // SOC limit → PowerUIAgent 重写域 → 下一读回即见 limit != 100；15-25 min
+        // 充满窗内 2-3 次读回即覆盖恢复检出，不退化为 2h 超时。**B5 红线**：本臂
+        // 为新增臂——Topoff.swift 纯函数本体零改动；退让 = 调用侧早退 + 退出边沿
+        // 副作用（B6——maintenanceFallingEdgeLocked）。既有五臂读回预检（下方
+        // owned 分支）零改动；校准抑制活跃期本臂不可达（上方校准早退先于本臂——
+        // 评审 P3 登记：指纹通道结构性不可达，仅通知通道可进入，校准完成后自然
+        // 退出，R8）。
+        if maintenanceFullChargeState.active {
+            if MaintenanceFullCharge.readbackDue(
+                last: maintenanceLastReadbackAt,
+                signalPending: maintenanceSignalBeat,
+                now: now
+            ) {
+                let fresh = TopoffWriter.read(run: Self.runProcessCapture)
+                maintenanceFullChargeState.lastReadbackLimit = fresh.map { $0.limit }
+                // 读尝试即推进节奏簿记（无论成败——评审 P2-2：失败不加速重试）。
+                maintenanceLastReadbackAt = now
+                Self.persistLog("维护充满退让读回（\(maintenanceSignalBeat ? "信号边沿拍" : "周期拍")）：limit=\(fresh?.limit.map(String.init) ?? "缺席/读失败")——\(fresh?.limit == MaintenanceFullCharge.overrideLimit ? "override 仍在位（继续退让）" : "系统已恢复（本拍重评退出）")")
+                // 同拍重评退出（新鲜读回注入；signalPending 已在推进拍消费——重评
+                // 只走退出臂，不重走进入通道）。
+                let reevaluated = MaintenanceFullCharge.tick(
+                    state: maintenanceFullChargeState,
+                    signalPending: false,
+                    readback: maintenanceFullChargeState.lastReadbackLimit,
+                    percent: snapshot.percent,
+                    externalConnected: snapshot.externalConnected,
+                    isCharging: snapshot.isCharging,
+                    target: policy.upperLimit,
+                    now: now)
+                maintenanceFullChargeState = reevaluated.state
+                if reevaluated.fallingEdge {
+                    // 退出拍不早退——既有链同拍恢复（五臂读回预检/channelTick 接管；
+                    // B6 重申写已落，幂等分支不重复发射）。
+                    maintenanceFallingEdgeLocked(
+                        timeoutExit: reevaluated.timeoutExit, now: now, events: &events)
+                } else {
+                    return   // 未退出：三臂早退（suspendEnforcementArms 消费点）
+                }
+            } else {
+                return   // 非读回拍：静默退让（零子进程成本——15-25 min 窗内仅 2-3 次读回）
+            }
+        }
         if route.topoffOwned {
             // 通道承载（<80 或域承载全区间）：off 清除（重新承载）→ 状态机推进。
             // **0.23.1 编排退役**：原「单通道互斥簿记」（discardStaleOrchestration-
@@ -198,6 +279,10 @@ extension DaemonCore {
             }
             if let readbackArm {
                 domainReadback = TopoffWriter.read(run: Self.runProcessCapture)
+                // 0.23.25：读回值回填 maintenance 锁存（「tick 消费上拍锁存值」
+                // 数据流——进入前由本臂回填，供下拍指纹通道/退出评估消费；臂面
+                // 本体零改动——B5）。
+                maintenanceFullChargeState.lastReadbackLimit = domainReadback.map { $0.limit }
                 // 读尝试即推进周期簿记 + 清确认拍请求（无论读成败——评审 P2-2）。
                 topoffState.lastPeriodicReadbackAt = now
                 topoffState.pendingSuppressionConfirmation = false
@@ -287,6 +372,57 @@ extension DaemonCore {
         if topoffState.lastWrittenLimit != convergenceTarget {
             _ = topoffExecuteWriteLocked(limit: convergenceTarget, now: now, events: &events)
         }
+    }
+
+    // MARK: - 0.23.25 §2.2 charge-to-full 维护充满（daemon 侧边沿副作用/信号转发）
+
+    /// Darwin 通知边沿置位（main.swift CFNotificationCenter 回调只转发——语义
+    /// 决策全在锁内 tick，照 IOPS watcher 纪律）。锁内置位即返回；消费点 =
+    /// topoffConvergenceRouteLocked 推进拍（读清）。回调随后触发
+    /// sampleAndEnforce 立即拍（信号 → ≤1s 响应，照插拔即时执法成本口径）。
+    func noteMaintenanceFullChargeSignal() {
+        lock.lock()
+        maintenanceSignalPending = true
+        lock.unlock()
+    }
+
+    /// maintenance 退出边沿副作用（persistLog + LogEvent + B6 边沿重申写）。
+    /// 超时强退 warn（R2：缠斗回既有链——strike 验证窗/重申/降级语义照旧，诚实
+    /// 降级对覆写形态无益是既有钉死语义，不新增对抗）；读回退出 info。仅 27
+    /// 观测段消费链内可达（26 红线零触及）。
+    private func maintenanceFallingEdgeLocked(
+        timeoutExit: Bool, now: Date, events: inout [LogEvent]
+    ) {
+        let message = timeoutExit
+            ? "维护充满退让退出：超时 \(Int(MaintenanceFullCharge.timeout / 3600)) h 强退（系统 override 未在预期 15-25 min 窗内撤销——兜底系统 hang；缠斗回既有链：strike 验证窗/重申/降级语义照旧，warn 可溯源）"
+            : "维护充满退让退出：最近域读回 limit ≠ 100（powerd 已恢复 SOC limit ∧ PowerUIAgent 重写域）——既有链恢复（B6 边沿重申写 target + violationTicks 清零起步；边沿写失败由既有覆写签名重写臂兜底）"
+        Self.persistLog("维护充满：\(message)")
+        events.append(LogEvent(
+            category: .control, level: timeoutExit ? .warn : .info, message: message
+        ))
+        maintenanceExitReassertLocked(now: now, events: &events)
+    }
+
+    /// 0.23.25 B6：maintenance 退出边沿显式重申写（**新增臂**——B5 允许：不动
+    /// 既有函数本体）。channelTick 幂等写仅在 `lastWrittenLimit != target` 时发射
+    ///（Topoff.swift 幂等分支），退让期 daemon 停写账面值保持 =target，恢复第一拍
+    /// 该分支不发射——故恢复 = 边沿显式重申写 target + violationTicks 清零起步。
+    /// 边沿写失败的兜底 = 既有读回覆写签名重写臂（topoffExecuteWriteLocked 失败
+    /// 不簿记，幂等分支不发射——下拍读回签名命中走重写自愈）。mode 关/动作活跃/
+    /// 全开窗（route 非 owned）→ 不写（既有链掌权——关断清理/动作维护分支/窗语义
+    /// 域随写 100 各自承接）。
+    private func maintenanceExitReassertLocked(now: Date, events: inout [LogEvent]) {
+        let route = Topoff.convergenceRoute(
+            modeActive: policy.mode == "active",
+            chargingDisabledWindow: chargingDisabledWindowActiveLocked,
+            upperLimit: policy.upperLimit,
+            sub80Capable: capabilities?.contains(DaemonXPC.capabilitySub80) == true,
+            actionActive: actionTrack.isActive,
+            fullOnceWindow: fullOnceWindowActive
+        )
+        guard route.topoffOwned, let target = route.convergenceTarget else { return }
+        topoffState.violationTicks = 0
+        _ = topoffExecuteWriteLocked(limit: target, now: now, events: &events)
     }
 
     /// 域写入执行（TopoffWriter 接线：defaults/notifyutil 子进程；daemon root 上下文）。
