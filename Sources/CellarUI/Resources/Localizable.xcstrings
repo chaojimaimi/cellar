@@ -8737,6 +8737,42 @@
           }
         }
       }
+    },
+    "panel.maintenance.banner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System maintenance full charge in progress: macOS detected the battery has gone about %lld days without a full charge and is charging to full to recalibrate the gauge (est. 15–25 min) — the charge limit is temporarily managed by the system and enforcement resumes automatically when done."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统维护充满进行中：macOS 检测到电池约 %lld 天未充满，正在主动充满校准电量计（预计 15-25 分钟）——期间充电上限由系统临时接管，充满后自动恢复"
+          }
+        }
+      },
+      "comment": "0.23.25 §2.3：维护充满退让横幅（单参 %lld = 约 N 天未充满阈值；消歧副句「期间充电上限由系统临时接管」并入本键——§2.3 并存面登记：sub80MechanismSuppressed 警示行同源消歧不遮蔽）"
+    },
+    "calibration.page.maintenanceNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS proactively starts a maintenance full charge when the battery has gone about 21 days without one (pausing the charge limit meanwhile). Turning on automatic calibration (14 days recommended) completes the full charge under Cellar's control and avoids the system takeover."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS 会在电池约 21 天未充满时主动发起一次维护充满（期间暂停限充上限）。开启自动校准（建议 14 天）可在 Cellar 控制下完成充满，避免系统抢占。"
+          }
+        }
+      },
+      "comment": "0.23.25 §2.5：校准页维护充满引导行（中性措辞——机制在 26 上是否存在未实证，文案不绑死 27）"
     }
   },
   "version": "1.0"

@@ -531,7 +531,7 @@ func runStatsTrendDomainScenarios() async {
                 }
             }
             check(allPresent, "统计62", "catalog 新键九项双语在位（stats.trend.* §3 清单逐字）")
-            expectEqual(strings.count, 514, "统计62", "键数增量登记 507 → 511（0.23.18 commit 4：+5 −1——panel.versionLine3/handshake 三键/btmDrift 入库、panel.versionLine 退役——本域九键 482 → 491、profile 批 491 → 507）→ 513（0.23.22 commit 2：+2——panel.daemon.stalePin/reRegister 两键入库——stale-pin 精确行 + 一键重注册）→ 514（0.23.24 commit 1：+1——panel.daemon.reRegisterUnregisterFailed 入库——reRegister unregister 腿失败短路上屏新键；断言值随批推进）")
+            expectEqual(strings.count, 516, "统计62", "键数增量登记 507 → 511（0.23.18 commit 4：+5 −1——panel.versionLine3/handshake 三键/btmDrift 入库、panel.versionLine 退役——本域九键 482 → 491、profile 批 491 → 507）→ 513（0.23.22 commit 2：+2——panel.daemon.stalePin/reRegister 两键入库——stale-pin 精确行 + 一键重注册）→ 514（0.23.24 commit 1：+1——panel.daemon.reRegisterUnregisterFailed 入库——reRegister unregister 腿失败短路上屏新键）→ 516（0.23.25 commit 2：+2——panel.maintenance.banner/calibration.page.maintenanceNote 两键入库——维护充满横幅 + 校准页引导行；断言值随批推进）")
         } else {
             check(false, "统计62", "catalog 键结构缺席（双语源钉红）")
         }

@@ -1015,6 +1015,21 @@ private func buildCases() -> [SnapshotCase] {
                 })
             })
 
+            // 0.23.25 §2.3：系统维护充满退让横幅（「……期间充电上限由系统临时接管，
+            // 充满后自动恢复」——消费 daemonStatus.maintenanceFullChargeActive；
+            // 缺省 visible=false → EmptyView（既有宿主构造零 diff——组件缺省形态即
+            // 空渲染）；新组 6 张全新文件，golden regen 随批次 CI macos-26 权威对账
+            //（同上流程）。
+            cases.append(SnapshotCase(
+                name: "MaintenanceBanner_active_\(style.rawValue)_\(scheme == .dark ? "dark" : "light")",
+                width: 304, height: nil, style: style, scheme: scheme
+            ) {
+                AnyView(wrap(style, scheme) {
+                    MaintenanceBanner(visible: true)
+                        .frame(width: 304, alignment: .leading)
+                })
+            })
+
             // **0.23.1 编排退役**：原 Orchestration_readback / Orchestration_embedded /
             // Orchestration_embeddedOff 三组 18 张（WP3 读回展示 + set 可用态 + 关态
             // 分流）随编排节组件删除——通用页「系统限充执行」节与读回行整体退役；

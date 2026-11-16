@@ -424,6 +424,11 @@ final class StatusController: ObservableObject {
             // 0.23.3 §4：新增 calibrationActive（校准在轨不派发——恢复写 80 钉住
             // 充满相；输入 = status.isCalibrationAction 结构化 action.kind 派生，
             // 非 lastAction 字面量匹配）。
+            // 0.23.25 §2.4：新增 maintenanceActive（charge-to-full 系统维护充满
+            // 退让期不派发——SOC limit 政策被系统有意挂起，恢复写 max(target,80)
+            // 对抗维护充满〔缠斗赢不了，配合让位〕；输入 = status.
+            // maintenanceFullChargeActive，与上方输入同源钉死取 ingest 入参——
+            // self.daemonStatus 本拍下方才赋值，退让门陈旧一拍即误派发）。
             // 旧 0.22.0 边沿直投通知退役（评审 P1-4）——通知一律由恢复写完成
             // 回调驱动，防「先手动指引后已恢复」双通知。
             // 回合清理（0.22.2 code-review P2 → 0.22.4 简化）：锁存释放拍清横幅
@@ -441,6 +446,7 @@ final class StatusController: ObservableObject {
                 fullOpenWindow: status.fullOnceWindowActive == true
                     || status.chargingDisabledWindowActive == true,
                 calibrationActive: status.isCalibrationAction,
+                maintenanceActive: status.maintenanceFullChargeActive == true,
                 now: Date()
             ) {
                 dispatchSuppressionRecovery(status)

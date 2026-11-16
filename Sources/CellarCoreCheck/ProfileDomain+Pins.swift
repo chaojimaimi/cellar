@@ -113,8 +113,8 @@ func runProfileDomainPinsScenarios() {
     if let data = try? Data(contentsOf: catalogURL),
        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let strings = root["strings"] as? [String: Any] {
-        check(strings.count == 514,
-              "源钉-7", "catalog 键数精确断言 514（491 + 16 profile 键 = 507〔commit 2〕+ 5 − 1 = 511〔commit 4：versionLine3/handshake 三键/btmDrift 入库、versionLine 退役〕+ 2 = 513〔0.23.22 commit 2：panel.daemon.stalePin/reRegister 两键入库——stale-pin 精确行 + 一键重注册〕+ 1 = 514〔0.23.24 commit 1：panel.daemon.reRegisterUnregisterFailed 入库——reRegister unregister 腿失败短路上屏新键〕——断言值随批推进）")
+        check(strings.count == 516,
+              "源钉-7", "catalog 键数精确断言 516（491 + 16 profile 键 = 507〔commit 2〕+ 5 − 1 = 511〔commit 4：versionLine3/handshake 三键/btmDrift 入库、versionLine 退役〕+ 2 = 513〔0.23.22 commit 2：panel.daemon.stalePin/reRegister 两键入库——stale-pin 精确行 + 一键重注册〕+ 1 = 514〔0.23.24 commit 1：panel.daemon.reRegisterUnregisterFailed 入库——reRegister unregister 腿失败短路上屏新键〕+ 2 = 516〔0.23.25 commit 2：panel.maintenance.banner/calibration.page.maintenanceNote 两键入库——维护充满横幅 + 校准页引导行；消歧副句并入 banner 键未立第 3 键——B4 落定如实登记〕——断言值随批推进）")
         let expectations: [String: String] = [
             "control.profile.title": "充电方案",
             "control.profile.empty": "暂无方案。从当前设置创建第一个方案。",

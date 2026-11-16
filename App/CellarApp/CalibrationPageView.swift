@@ -41,6 +41,12 @@ struct CalibrationPageView: View {
                 Text(CellarL10n.s("calibration.page.intro"))
                     .font(.system(size: 13))
                     .foregroundStyle(theme.secondaryText)
+                // 0.23.25 §2.5：维护充满引导行（防复发——开启自动校准可在 Cellar
+                // 控制下完成充满、避免系统抢占；中性措辞不绑死 27 平台）。
+                Text(CellarL10n.s("calibration.page.maintenanceNote"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 statusCard
                 scheduleCard
                 lastCard

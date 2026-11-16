@@ -88,6 +88,11 @@ struct PanelView: View {
                 // 识别态；nil/false = 旧 daemon/26 平台/未识别 → 零渲染）。
                 CalibrationBanner(visible: statusController.daemonStatus?.calibrationSuspected == true)
 
+                // 0.23.25 §2.3：charge-to-full 系统维护充满退让横幅（daemon 回读
+                // maintenanceFullChargeActive——退让配合态；nil/false = 旧 daemon/26
+                // 平台/未退让 → 零渲染）。
+                MaintenanceBanner(visible: statusController.daemonStatus?.maintenanceFullChargeActive == true)
+
                 GaugeView(state: gaugeState)
                     .frame(width: 150, height: 150)
                     .padding(.top, 4)
